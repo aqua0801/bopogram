@@ -19,9 +19,9 @@
 | 中文維基百科 dump（2026-11-01） | https://dumps.wikimedia.org/zhwiki/ | CC BY-SA 4.0、GFDL | 語言模型訓練語料（低權重） |
 | 中文維基新聞 dump（2026-11-02） | https://dumps.wikimedia.org/zhwikinews/ | CC BY 2.5 | 語言模型訓練語料 |
 | 立法院公報原始檔案（資料集 41） | https://data.ly.gov.tw/getds.action?id=41 | 立法院網站資料開放宣告（可重製、改作，須註明出處） | 語言模型訓練語料（口語逐字稿）。資料來源：立法院開放資料服務平台 |
+| 司法院裁判書（資料集分類 051） | https://opendata.judicial.gov.tw/ | 司法院網站資料開放宣告（可重製、改作，須註明出處） | 語言模型訓練語料（法律文書，佔比上限 15%）。資料來源：司法院資料開放平台。依「Delete-Infor」清單剔除已撤下的裁判書 |
 
 ## 待查證（尚未使用）
 
-- 司法院裁判書（https://opendata.judicial.gov.tw/）
 - 行政院新聞稿、公視新聞
 - 教育部辭典（字典來源，CC BY-ND；採「本機建置、不散布成品」方案）
