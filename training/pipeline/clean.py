@@ -29,6 +29,11 @@ from collections import Counter
 from pathlib import Path
 
 TERMS_FILE = Path(__file__).parent / "data" / "cn_terms.tsv"
+BOILERPLATE_FILE = Path(__file__).parent / "data" / "boilerplate.txt"
+BOILERPLATE = {
+    line for line in BOILERPLATE_FILE.read_text(encoding="utf-8").splitlines()
+    if line and not line.startswith("#")
+}
 
 MIN_CJK = 4          # minimum CJK characters in a sentence
 MIN_CJK_RATIO = 0.7  # CJK characters / non-space characters
@@ -62,7 +67,7 @@ def split_sentences(text: str) -> list[str]:
     out = []
     for raw in _RE_SPLIT.split(text):
         s = _RE_SPACES.sub(" ", _RE_SPACE_IN_CJK.sub("", raw)).strip(_STRIP)
-        if not s or len(s) > MAX_SENT_LEN:
+        if not s or len(s) > MAX_SENT_LEN or s in BOILERPLATE:
             continue
         cjk = len(_RE_CJK.findall(s))
         if cjk < MIN_CJK or cjk / len(s.replace(" ", "")) < MIN_CJK_RATIO:
