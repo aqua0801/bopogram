@@ -59,7 +59,24 @@ _TAIL_SECTIONS = {
     "參考文獻", "参考文献", "參考資料", "参考资料", "外部連結", "外部链接",
     "參見", "参见", "注釋", "注释", "註釋", "腳註", "脚注", "參考", "参考",
     "相關條目", "相关条目", "延伸閱讀", "延伸阅读", "來源", "来源", "資料來源",
+    "外部鏈接", "外部連接", "外部链接", "擴展閱讀", "扩展阅读", "參考來源", "参考来源",
+    "消息來源", "消息来源", "參考書目", "参考书目", "相關新聞", "相关新闻",
+    "資料來源", "资料来源", "注釋與參考文獻", "腳注", "註腳", "注脚", "參看", "参看",
 }
+_RE_WIKI_HEADING = re.compile(r"^(={2,6})\s*(.*?)\s*=+\s*$")
+
+
+def _drop_headings(text: str) -> str:
+    """Remove section headings; cut the article at reference-type sections."""
+    out = []
+    for line in text.split("\n"):
+        m = _RE_WIKI_HEADING.match(line.strip())
+        if m:
+            if len(m.group(1)) == 2 and m.group(2).strip("'[] ") in _TAIL_SECTIONS:
+                break
+            continue
+        out.append(line)
+    return "\n".join(out)
 
 _cc = None
 
@@ -97,6 +114,7 @@ def clean_wikitext(text: str) -> str:
             break
         text = new
     text = _RE_NS_LINK.sub("", text)
+    text = _drop_headings(text)
     try:
         text = mwparserfromhell.parse(text).strip_code(normalize=True, collapse=True)
     except Exception:
