@@ -1,0 +1,51 @@
+# === 資料與模型（一律不進 git，應放在 ~/bopogram-data） ===
+data/
+corpus/
+models/
+checkpoints/
+*.arpa
+*.klm
+*.binary
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# === 個人學習資料（只存本機） ===
+userdata/
+*.userdb
+
+# === Python ===
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# === Rust ===
+target/
+# 注意：Cargo.lock 要 commit，不要加進來
+
+# === Windows 建置產物 ===
+*.pdb
+*.ilk
+*.exp
+
+# === 系統與編輯器 ===
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+*.swp
+
+# === 環境變數與本機設定 ===
+.env
+.claude/settings.local.json
+
+# === 日誌與暫存 ===
+*.log
+tmp/
