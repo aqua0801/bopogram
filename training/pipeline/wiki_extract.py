@@ -5,7 +5,10 @@ Usage:
 
 Output: OUT_DIR/part-00000.jsonl.gz, ... one JSON object per article:
     {"id": ..., "source": ..., "title": ..., "text": ...}
-Text is converted to Taiwan Traditional Chinese (OpenCC s2twp).
+Text is converted to Traditional Chinese with Taiwan character variants (OpenCC s2tw).
+Phrase-level conversion (s2twp) is deliberately not used: it rewrites correct
+Taiwan text (e.g. 擴展 -> 擴充套件, 法律程序 -> 法律程式). China-usage terms are
+instead measured and down-weighted by clean.py.
 
 Streaming / resume:
   * The dump is decompressed and parsed incrementally; memory stays bounded
@@ -121,7 +124,7 @@ def _process_batch(batch: list[tuple[str, str, str]], source: str) -> list[str]:
     if _cc is None:
         import opencc
 
-        _cc = opencc.OpenCC("s2twp")
+        _cc = opencc.OpenCC("s2tw")
     out = []
     for page_id, title, wikitext in batch:
         text = clean_wikitext(wikitext)
