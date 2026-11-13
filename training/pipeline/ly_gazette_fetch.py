@@ -34,6 +34,7 @@ from pathlib import Path
 INDEX_URL = "https://data.ly.gov.tw/odw/openDatasetJson.action?id=41&selectTerm=all&page={page}"
 USER_AGENT = "Mozilla/5.0 (compatible; research-crawler)"
 OLE_MAGIC = b"\xd0\xcf\x11\xe0"
+ZIP_MAGIC = b"PK\x03\x04"  # some ".doc" files are really .docx
 
 
 def make_context() -> ssl.SSLContext:
@@ -153,7 +154,7 @@ def main() -> None:
             dest.parent.mkdir(parents=True, exist_ok=True)
             try:
                 body = fetch_retry(url, ctx, max_bytes=max_bytes)
-                if not body.startswith(OLE_MAGIC):
+                if not body.startswith((OLE_MAGIC, ZIP_MAGIC)):
                     raise ValueError(f"not a .doc file ({len(body)} bytes)")
                 tmp = dest.with_suffix(".tmp")
                 tmp.write_bytes(body)

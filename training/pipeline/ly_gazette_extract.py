@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import html
 import json
 import os
 import re
 import subprocess
 import sys
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -30,24 +32,50 @@ _RE_TABLE_LINE = re.compile(r"^\s*\|")
 _RE_PAGE_HEADER = re.compile(r"^立法院公報\s*第.*卷.*期|^\s*\d+\s*$")
 
 
-def doc_to_text(path: Path) -> str:
+_RE_DOCX_PARA = re.compile(r"<w:p[ >].*?</w:p>", re.S)
+_RE_DOCX_TEXT = re.compile(r"<w:t(?: [^>]*)?>([^<]*)</w:t>")
+_RE_DOCX_TABLE = re.compile(r"<w:tbl>.*?</w:tbl>", re.S)
+
+
+def docx_to_lines(path: Path) -> list[str]:
+    """Plain paragraphs of a .docx (tables dropped), using only the stdlib."""
     try:
-        res = subprocess.run(
-            ["antiword", "-m", "UTF-8.txt", "-w", "0", str(path)],
-            capture_output=True, timeout=300,
-        )
-    except subprocess.TimeoutExpired:
-        return ""
-    if res.returncode != 0:
-        return ""
+        with zipfile.ZipFile(path) as zf:
+            xml = zf.read("word/document.xml").decode("utf-8", errors="replace")
+    except (zipfile.BadZipFile, KeyError, OSError):
+        return []
+    xml = _RE_DOCX_TABLE.sub("", xml)
+    return [html.unescape("".join(_RE_DOCX_TEXT.findall(p))) for p in _RE_DOCX_PARA.findall(xml)]
+
+
+def doc_to_text(path: Path) -> str:
+    with open(path, "rb") as fh:
+        is_docx = fh.read(4) == b"PK\x03\x04"
+    if is_docx:
+        raw_lines = docx_to_lines(path)
+    else:
+        raw_lines = antiword_lines(path)
     lines = []
-    for line in res.stdout.decode("utf-8", errors="replace").split("\n"):
+    for line in raw_lines:
         if _RE_TABLE_LINE.match(line) or _RE_PAGE_HEADER.match(line):
             continue
         line = _RE_SPEAKER.sub("", line.strip(), count=1).strip()
         if line:
             lines.append(line)
     return "\n".join(lines)
+
+
+def antiword_lines(path: Path) -> list[str]:
+    try:
+        res = subprocess.run(
+            ["antiword", "-m", "UTF-8.txt", "-w", "0", str(path)],
+            capture_output=True, timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        return []
+    if res.returncode != 0:
+        return []
+    return res.stdout.decode("utf-8", errors="replace").split("\n")
 
 
 def main() -> None:
