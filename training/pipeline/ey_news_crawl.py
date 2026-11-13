@@ -37,7 +37,7 @@ SHARD = 500
 _RE_LINK = re.compile(r'href="(?:https://www\.ey\.gov\.tw)?(/Page/(?:9277F759E41CCD91|AF73D471993DF350)/[0-9a-f-]{36})"')
 _RE_PAGES = re.compile(r"共(\d+)頁")
 _RE_TITLE = re.compile(r'<span class="h2">\s*(.*?)\s*</span>', re.S)
-_RE_BODY = re.compile(r'<div class="words_content\s*"[^>]*>(.*?)<div class="col-4 right_content"', re.S)
+_RE_BODY = re.compile(r'<div class="words_content[^"]*"[^>]*>(.*?)<div class="col-4 right_content"', re.S)
 _RE_TAG = re.compile(r"<[^>]+>")
 _RE_SCRIPT = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.S | re.I)
 
