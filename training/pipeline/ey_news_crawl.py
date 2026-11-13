@@ -34,7 +34,7 @@ LIST_URL = BASE + "/Page/6485009ABEC1CB9C?page={page}&PS=100"
 USER_AGENT = "Mozilla/5.0 (compatible; research-crawler)"
 SHARD = 500
 
-_RE_LINK = re.compile(r'href="(?:https://www\.ey\.gov\.tw)?(/Page/(?:9277F759E41CCD91|AF73D471993DF350)/[0-9a-f-]{36})"')
+_RE_LINK = re.compile(r'href="(?:https://www\.ey\.gov\.tw)?(/Page/9277F759E41CCD91/[0-9a-f-]{36})"')
 _RE_PAGES = re.compile(r"共(\d+)頁")
 _RE_TITLE = re.compile(r'<span class="h2">\s*(.*?)\s*</span>', re.S)
 _RE_BODY = re.compile(r'<div class="words_content[^"]*"[^>]*>(.*?)<div class="col-4 right_content"', re.S)
