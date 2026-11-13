@@ -14,6 +14,9 @@ Steps (both resumable):
      is written to a .tmp name and renamed, so a kill never leaves a partial
      file behind. Failures are appended to OUT_DIR/failed.tsv and retried on
      the next run.
+     Files larger than --max-mb are not downloaded: they are dominated by
+     embedded images (a 129 MB file held 68K characters of text). Their URLs
+     are listed in OUT_DIR/skipped_large.tsv and not requested again.
 """
 
 from __future__ import annotations
@@ -40,16 +43,30 @@ def make_context() -> ssl.SSLContext:
     return ctx
 
 
-def fetch(url: str, ctx: ssl.SSLContext, timeout: int = 120) -> bytes:
+class TooLarge(Exception):
+    pass
+
+
+def fetch(url: str, ctx: ssl.SSLContext, timeout: int = 120, max_bytes: int = 0) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
-        return resp.read()
+        size = int(resp.headers.get("Content-Length") or 0)
+        if max_bytes and size > max_bytes:
+            raise TooLarge(str(size))
+        if not max_bytes:
+            return resp.read()
+        body = resp.read(max_bytes + 1)  # also guards responses without a length header
+        if len(body) > max_bytes:
+            raise TooLarge(f">{max_bytes}")
+        return body
 
 
-def fetch_retry(url: str, ctx: ssl.SSLContext, tries: int = 4) -> bytes:
+def fetch_retry(url: str, ctx: ssl.SSLContext, tries: int = 4, max_bytes: int = 0) -> bytes:
     for attempt in range(tries):
         try:
-            return fetch(url, ctx)
+            return fetch(url, ctx, max_bytes=max_bytes)
+        except TooLarge:
+            raise
         except urllib.error.HTTPError as e:
             if e.code in (403, 404, 410):
                 raise
@@ -107,6 +124,7 @@ def main() -> None:
     ap.add_argument("out_dir", type=Path)
     ap.add_argument("--delay", type=float, default=2.0, help="seconds between requests")
     ap.add_argument("--limit", type=int, default=0, help="download at most N files (testing)")
+    ap.add_argument("--max-mb", type=float, default=30.0, help="skip files larger than this")
     args = ap.parse_args()
 
     out_dir: Path = args.out_dir
@@ -115,7 +133,12 @@ def main() -> None:
 
     build_index(out_dir, ctx, args.delay)
     urls = unique_urls(out_dir)
-    todo = [u for u in urls if not local_path(out_dir, u).exists()]
+    skip_file = out_dir / "skipped_large.tsv"
+    skipped = set()
+    if skip_file.exists():
+        skipped = {line.split("\t")[0] for line in skip_file.read_text().splitlines()}
+    max_bytes = int(args.max_mb * 1e6)
+    todo = [u for u in urls if u not in skipped and not local_path(out_dir, u).exists()]
     print(f"{len(urls)} unique files, {len(urls) - len(todo)} already present, "
           f"{len(todo)} to download", flush=True)
     if args.limit:
@@ -129,7 +152,7 @@ def main() -> None:
             dest = local_path(out_dir, url)
             dest.parent.mkdir(parents=True, exist_ok=True)
             try:
-                body = fetch_retry(url, ctx)
+                body = fetch_retry(url, ctx, max_bytes=max_bytes)
                 if not body.startswith(OLE_MAGIC):
                     raise ValueError(f"not a .doc file ({len(body)} bytes)")
                 tmp = dest.with_suffix(".tmp")
@@ -137,6 +160,9 @@ def main() -> None:
                 os.replace(tmp, dest)
                 ok += 1
                 nbytes += len(body)
+            except TooLarge as e:
+                with open(skip_file, "a", encoding="utf-8") as sf:
+                    sf.write(f"{url}\t{e}\n")
             except Exception as e:
                 failed += 1
                 fail_log.write(f"{time.strftime('%F %T')}\t{url}\t{e!r}\n")
