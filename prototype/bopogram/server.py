@@ -3,7 +3,12 @@
 No sockets and no network: the front end starts this process and talks to it
 through pipes. One request per line, one response per line.
 
-Requests ({"op": ..., "id": optional, ...}):
+Several input contexts can share one engine process: a request may carry
+"sid" (any integer; default 0). Each sid has its own composition buffer and
+left context; `close` discards it. The dictionary, the models and the user
+model are loaded once and shared.
+
+Requests ({"op": ..., "sid": optional, "id": optional, ...}):
     key        {"key": "j"}          a layout key (bopomofo symbol or tone)
     backspace
     left / right                     move the candidate cursor
@@ -14,7 +19,8 @@ Requests ({"op": ..., "id": optional, ...}):
     context    {"text": "..."}       text before the cursor (while idle)
     learning   {"enabled": false}    turn learning off (password fields) or on
     state
-    quit
+    close                            forget this sid
+    quit                             stop the engine process
 
 Every response has "ok" and the composition state (preedit, pending, cursor,
 segments); `commit` adds "commit", `candidates` and `select` add "candidates".
@@ -59,7 +65,8 @@ def handle(session: Session, req: dict) -> dict:
 
 
 def serve(config: str | None = None, layout: str = "dachen") -> int:
-    session = Session(Engine(config), layout)
+    engine = Engine(config)
+    sessions: dict[int, Session] = {}
     out = sys.stdout
     out.write(json.dumps({"ok": True, "ready": True}) + "\n")
     out.flush()
@@ -71,11 +78,20 @@ def serve(config: str | None = None, layout: str = "dachen") -> int:
             req = json.loads(line)
             if req.get("op") == "quit":
                 break
-            res = handle(session, req)
+            sid = int(req.get("sid", 0))
+            if req.get("op") == "close":
+                sessions.pop(sid, None)
+                res = {"ok": True}
+            else:
+                session = sessions.get(sid)
+                if session is None:
+                    session = sessions[sid] = Session(engine, layout)
+                res = handle(session, req)
         except Exception as err:  # keep serving; report the problem to the front end
             req, res = {}, {"ok": False, "error": f"{type(err).__name__}: {err}"}
-        if "id" in req:
-            res["id"] = req["id"]
+        for field in ("id", "sid"):
+            if field in req:
+                res[field] = req[field]
         out.write(json.dumps(res, ensure_ascii=False) + "\n")
         out.flush()
     return 0

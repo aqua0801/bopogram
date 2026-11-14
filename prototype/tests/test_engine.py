@@ -51,8 +51,10 @@ def make_session(user=None):
     tmp.write(DICT)
     tmp.close()
     lexicon, lm = Lexicon(tmp.name), FakeLM()
-    decoder = Decoder(lexicon, lm, extra_score=user.bonus if user else None)
-    return Session(SimpleNamespace(lexicon=lexicon, lm=lm, decoder=decoder, user=user))
+    def new_decoder():
+        return Decoder(lexicon, lm, extra_score=user.bonus if user else None)
+
+    return Session(SimpleNamespace(lexicon=lexicon, lm=lm, new_decoder=new_decoder, user=user))
 
 
 def type_keys(session, keys):

@@ -40,11 +40,15 @@ class Engine:
         if use_user_model and cfg.get("user_model"):
             user_path = Path(cfg["user_model"]).expanduser()
             self.user = UserModel(user_path if user_path.is_absolute() else base / user_path)
-        self.decoder = Decoder(self.lexicon, self.lm, beam=cfg.get("beam", 16),
-                               max_candidates=cfg.get("max_candidates", 40),
-                               extra_score=self.user.bonus if self.user else None,
-                               word_penalty=cfg.get("word_penalty", 0.0),
-                               eos_weight=cfg.get("eos_weight", 0.0))
+        self._decoder_args = dict(beam=cfg.get("beam", 16), max_candidates=cfg.get("max_candidates", 40),
+                                  word_penalty=cfg.get("word_penalty", 0.0),
+                                  eos_weight=cfg.get("eos_weight", 0.0))
+        self.decoder = self.new_decoder()
+
+    def new_decoder(self) -> Decoder:
+        """A decoder with its own buffer, sharing this engine's dictionary and models."""
+        return Decoder(self.lexicon, self.lm, extra_score=self.user.bonus if self.user else None,
+                       **self._decoder_args)
 
     def start(self, context: str = "") -> None:
         """Begin a composition; `context` is the text before the cursor (never modified)."""

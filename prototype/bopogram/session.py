@@ -19,7 +19,8 @@ MAX_CONTEXT = 200
 class Session:
     def __init__(self, engine: Engine, layout: str = "dachen"):
         self.engine = engine
-        self.decoder = engine.decoder
+        # Each session has its own composition buffer; dictionary and models are shared.
+        self.decoder = engine.new_decoder()
         self.layout = LAYOUTS[layout]
         self.context = ""
         self.learn = True  # the front end turns this off for password fields
