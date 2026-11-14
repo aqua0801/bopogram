@@ -22,12 +22,13 @@ Format rules (agreed): one syllable per character; first tone unmarked;
 neutral tone written with a leading "˙"; a word with several readings
 appears on several lines. Source tags: concised, idiom, revised, web, manual,
 with ":var" appended for variant readings (sandhi, alternative, colloquial,
-literary).
+literary) and ":alt" for the citation-tone spelling of a neutral-tone word.
 """
 
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import re
 from collections import Counter, defaultdict
@@ -42,6 +43,7 @@ MAX_WORD_LEN = 8
 ERHUA_READING = "ㄦˊ"
 DOMINANCE_SHARE = 0.9     # a reading used this often in a position is taken as certain
 DOMINANCE_MIN_COUNT = 3
+EVERYDAY_FORMS = str.maketrans({"臺": "台"})
 
 
 def split_syllables(field: str) -> list[str]:
@@ -153,6 +155,31 @@ def main() -> None:
                 usage[(ch, i == len(word) - 1)][syl] += 1
     overrides: dict[str, str] = {}
 
+    # Neutral-tone syllables: many people type the character's own tone instead
+    # (東西 as ㄒㄧ, 便宜 as ㄧˊ, 這個 as ㄍㄜˋ). Accept both by adding an ":alt" reading.
+    def toneless(s: str) -> str:
+        return s.lstrip("˙").rstrip("ˊˇˋ")
+
+    alt_added = 0
+    for (word, syls), tag in list(entries.items()):
+        if len(word) < 2 or tag.endswith(":var") or not any(s.startswith("˙") for s in syls):
+            continue
+        options = []
+        for ch, syl in zip(word, syls):
+            alts = [syl]
+            if syl.startswith("˙"):
+                same_base = [r for r in char_readings.get(ch, {})
+                             if not r.startswith("˙") and toneless(r) == toneless(syl)]
+                alts = ([r for r in same_base if r in common.get(ch, [])] or same_base) or [syl]
+            options.append(alts)
+        combos = list(itertools.islice(itertools.product(*options), 6))
+        for new in combos:
+            key = (word, tuple(new))
+            if tuple(new) != syls and key not in entries:
+                entries[key] = tag.split(":")[0] + ":alt"
+                alt_added += 1
+    stats["neutral_tone_alternatives"] = alt_added
+
     def guess(ch: str, final: bool) -> list[str]:
         """Candidate readings of `ch` in an added word; one item means confident."""
         if ch in overrides:
@@ -193,6 +220,17 @@ def main() -> None:
                 else:
                     need.append((word, int(count), " ".join("/".join(o) or "?" for o in options)))
                     stats["web_need_reading"] += 1
+
+    # Everyday spellings: the MOE tables write 臺, most people write 台. Give every
+    # 臺-word a 台 twin with the same reading (training text is normalised the same way,
+    # see PREFERRED_FORMS in training/lm/prepare.py).
+    twins = 0
+    for (word, syls), tag in list(entries.items()):
+        twin = word.translate(EVERYDAY_FORMS)
+        if twin != word and (twin, syls) not in entries:
+            entries[(twin, syls)] = tag
+            twins += 1
+    stats["everyday_spelling_twins"] = twins
 
     ordered = sorted(entries.items(), key=lambda kv: (kv[0][0], kv[0][1]))
     with open(args.out_dir / "dict.tsv", "w", encoding="utf-8") as fh:

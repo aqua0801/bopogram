@@ -1,0 +1,19 @@
+# Corrections to generated test input, found by reviewing the output of g2p.py.
+# id (or * for every sentence) <TAB> substring=syllables
+*	都會=ㄉㄡ ㄏㄨㄟˋ
+*	都是=ㄉㄡ ㄕˋ
+*	便宜=ㄆㄧㄢˊ ㄧˊ
+*	睡覺=ㄕㄨㄟˋ ㄐㄧㄠˋ
+*	長大=ㄓㄤˇ ㄉㄚˋ
+*	大部分=ㄉㄚˋ ㄅㄨˋ ㄈㄣˋ
+*	趕到=ㄍㄢˇ ㄉㄠˋ
+*	沒水=ㄇㄟˊ ㄕㄨㄟˇ
+*	請給=ㄑㄧㄥˇ ㄍㄟˇ
+*	核彈=ㄏㄜˊ ㄉㄢˋ
+H085	長得=ㄓㄤˇ ˙ㄉㄜ
+R028	睡一覺=ㄕㄨㄟˋ ㄧ ㄐㄧㄠˋ
+R044	一行=ㄧ ㄏㄤˊ
+R049	還了=ㄏㄨㄢˊ ˙ㄌㄜ
+R051	種到=ㄓㄨㄥˋ ㄉㄠˋ
+R055	重做=ㄔㄨㄥˊ ㄗㄨㄛˋ
+P067	數數=ㄕㄨˇ ㄕㄨˇ

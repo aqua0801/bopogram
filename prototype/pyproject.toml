@@ -3,7 +3,12 @@ name = "bopogram"
 version = "0.0.0"
 description = "Bopogram prototype engine: context-aware bopomofo input (Python)"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "kenlm>=0.3.0",
+]
+
+[project.scripts]
+bopogram = "bopogram.cli:main"
 
 [build-system]
 requires = ["hatchling"]

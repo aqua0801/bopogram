@@ -11,6 +11,7 @@
 | mwparserfromhell | https://github.com/earwig/mwparserfromhell | MIT | 訓練階段：解析維基標記（`training/`） |
 | pyarrow | https://arrow.apache.org/ | Apache-2.0 | 訓練階段：讀取 parquet 資料檔（`training/`） |
 | openpyxl | https://openpyxl.readthedocs.io/ | MIT | 字典建置：讀取教育部辭典的 xlsx 檔（`training/`） |
+| KenLM | https://github.com/kpu/kenlm | LGPL-2.1 | n-gram 語言模型：訓練工具（`lmplz`、`build_binary`，自行編譯，不進 repo）與原型引擎的查詢函式庫（Python 套件 `kenlm`） |
 | antiword | http://www.winfield.demon.nl/ | GPL-2.0-or-later | 訓練階段：以外部命令列工具將 `.doc` 轉純文字，不連結、不散布 |
 | unar（The Unarchiver） | https://theunarchiver.com/command-line-tools | LGPL-2.1-or-later | 訓練階段：以外部命令列工具解壓 RAR，不連結、不散布 |
 
