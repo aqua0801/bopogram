@@ -1,0 +1,10 @@
+[project]
+name = "bopogram"
+version = "0.0.0"
+description = "Bopogram prototype engine: context-aware bopomofo input (Python)"
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

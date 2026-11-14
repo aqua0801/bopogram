@@ -1,0 +1,510 @@
+id	category	context	text	note
+H001	homophone		我再看看好了	再／在
+H002	homophone		我在家等你	再／在
+H003	homophone		你再說一次我沒聽清楚	再／在
+H004	homophone		他現在在公司開會	再／在
+H005	homophone		明天再打電話給你	再／在
+H006	homophone		東西放在桌上就好	再／在
+H007	homophone		等我吃完飯再過去	再／在
+H008	homophone		你在忙嗎	再／在〔語料重複〕
+H009	homophone		這件事我們之後再討論	再／在
+H010	homophone		她在台北工作三年了	再／在
+H011	homophone		再不出門就要遲到了	再／在
+H012	homophone		我在想要不要再買一個	再／在
+H013	homophone		他跑得比我快	的／得／地
+H014	homophone		這是我的手機	的／得／地
+H015	homophone		她唱歌唱得很好聽	的／得／地
+H016	homophone		他慢慢地走過去	的／得／地
+H017	homophone		你說的沒錯	的／得／地〔語料重複〕
+H018	homophone		我覺得這樣不太好	的／得／地〔語料重複〕
+H019	homophone		他高興得跳了起來	的／得／地
+H020	homophone		這本書寫得很精彩	的／得／地
+H021	homophone		她很認真地準備考試	的／得／地
+H022	homophone		昨天買的衣服太大了	的／得／地
+H023	homophone		你做得到嗎	的／得／地〔語料重複〕
+H024	homophone		他說得很有道理	的／得／地
+H025	homophone		我媽媽說她今天不回來吃飯	他／她／它／牠
+H026	homophone		我爸爸說他晚點才到	他／她／它／牠
+H027	homophone		這隻狗很乖牠不會咬人	他／她／它／牠
+H028	homophone		用完之後請把它放回原位	他／她／它／牠
+H029	homophone		妹妹哭了因為她的玩具壞了	他／她／它／牠
+H030	homophone		弟弟說他不想去上學	他／她／它／牠
+H031	homophone		你在做什麼	做／作〔語料重複〕
+H032	homophone		他的工作很忙	做／作
+H033	homophone		這是誰的作品	做／作
+H034	homophone		我想做一個蛋糕	做／作
+H035	homophone		作業寫完了嗎	做／作
+H036	homophone		做人要誠實	做／作
+H037	homophone		我已經吃飽了	以／已
+H038	homophone		你可以幫我一下嗎	以／已
+H039	homophone		以後再說吧	以／已
+H040	homophone		他已經離開了	以／已〔語料重複〕
+H041	homophone		我以為你不來了	以／已
+H042	homophone		所以我才問你	以／已〔語料重複〕
+H043	homophone		你要去哪裡	那／哪〔語料重複〕
+H044	homophone		那個人是誰	那／哪〔語料重複〕
+H045	homophone		哪一個比較好	那／哪〔語料重複〕
+H046	homophone		那我先走了	那／哪
+H047	homophone		你是哪裡人	那／哪〔語料重複〕
+H048	homophone		那天我剛好不在	那／哪
+H049	homophone		這件事很重要	是／事／市／視／試／式／世／室／適〔語料重複〕
+H050	homophone		他是我同學	是／事／市／視／試／式／世／室／適〔語料重複〕
+H051	homophone		我想試試看	是／事／市／視／試／式／世／室／適
+H052	homophone		台北市政府	是／事／市／視／試／式／世／室／適〔語料重複〕
+H053	homophone		不要一直看電視	是／事／市／視／試／式／世／室／適
+H054	homophone		這種方式比較有效	是／事／市／視／試／式／世／室／適
+H055	homophone		全世界都在關注	是／事／市／視／試／式／世／室／適〔語料重複〕
+H056	homophone		會議室在三樓	是／事／市／視／試／式／世／室／適
+H057	homophone		這個顏色很適合你	是／事／市／視／試／式／世／室／適
+H058	homophone		發生什麼事了	是／事／市／視／試／式／世／室／適〔語料重複〕
+H059	homophone		我是說真的	是／事／市／視／試／式／世／室／適〔語料重複〕
+H060	homophone		考試考得怎麼樣	是／事／市／視／試／式／世／室／適
+H061	homophone		出門記得帶雨傘	帶／代／待／戴／袋
+H062	homophone		請代我向他問好	帶／代／待／戴／袋
+H063	homophone		我在這裡等待	帶／代／待／戴／袋
+H064	homophone		他戴著一頂帽子	帶／代／待／戴／袋
+H065	homophone		這一代的年輕人	帶／代／待／戴／袋
+H066	homophone		幫我拿一個袋子	帶／代／待／戴／袋
+H067	homophone		我等一下會回家	會／回／匯／惠
+H068	homophone		他不會開車	會／回／匯／惠
+H069	homophone		開會的時間改了	會／回／匯／惠
+H070	homophone		你什麼時候回來	會／回／匯／惠
+H071	homophone		請把錢匯到這個帳戶	會／回／匯／惠
+H072	homophone		謝謝惠顧歡迎再來	會／回／匯／惠
+H073	homophone		一共三百元	元／原／員／園／圓／源
+H074	homophone		原來是這樣	元／原／員／園／圓／源〔語料重複〕
+H075	homophone		他是公司的員工	元／原／員／園／圓／源
+H076	homophone		我們去公園散步	元／原／員／園／圓／源
+H077	homophone		今天的月亮好圓	元／原／員／園／圓／源
+H078	homophone		能源問題很嚴重	元／原／員／園／圓／源
+H079	homophone		我到了	到／道／倒／盜
+H080	homophone		你知道嗎	到／道／倒／盜〔語料重複〕
+H081	homophone		這條道路很窄	到／道／倒／盜
+H082	homophone		他不小心跌倒了	到／道／倒／盜
+H083	homophone		我收到你的訊息了	到／道／倒／盜
+H084	homophone		沒想到會這樣	到／道／倒／盜
+H085	homophone		他長得很像他爸爸	向／像／象／項／相
+H086	homophone		前面路口請向右轉	向／像／象／項／相
+H087	homophone		我對他的印象很好	向／像／象／項／相
+H088	homophone		這是一項重要的任務	向／像／象／項／相
+H089	homophone		幫我們照張相	向／像／象／項／相
+H090	homophone		記得按時吃藥	記／計／紀／寄／季／繼／技
+H091	homophone		計程車已經到了	記／計／紀／寄／季／繼／技
+H092	homophone		我要去郵局寄包裹	記／計／紀／寄／季／繼／技
+H093	homophone		夏季的電費比較貴	記／計／紀／寄／季／繼／技
+H094	homophone		請繼續努力	記／計／紀／寄／季／繼／技〔語料重複〕
+H095	homophone		這需要很高的技術	記／計／紀／寄／季／繼／技
+H096	homophone		請坐不用客氣	坐／座／做／作
+H097	homophone		這個座位有人嗎	坐／座／做／作
+H098	homophone		每個人都有受教育的權利	權利／權力
+H099	homophone		他手上握有很大的權力	權利／權力
+H100	homophone		明天必須交報告	必須／必需
+H101	homophone		水是生活的必需品	必須／必需
+H102	homophone		他的反應很快	反應／反映
+H103	homophone		這個結果反映了民意	反應／反映
+H104	homophone		這個數學公式很難記	公式／公事／攻勢
+H105	homophone		他到外地去辦公事	公式／公事／攻勢
+H106	homophone		對手發動猛烈的攻勢	公式／公事／攻勢
+H107	homophone		這座城市很漂亮	城市／程式
+H108	homophone		他每天都在寫程式	城市／程式
+H109	homophone		不要只重視形式	形式／刑事／行事
+H110	homophone		這是一件刑事案件	形式／刑事／行事
+H111	homophone		他行事一向很低調	形式／刑事／行事
+H112	homophone		下週有期中考	期中／其中
+H113	homophone		其中一個是我的	期中／其中
+H114	homophone		還好你及時趕到	及時／即時
+H115	homophone		請收看即時新聞	及時／即時
+H116	homophone		這件事很有意義	意義／異議
+H117	homophone		大家都沒有異議	意義／異議
+H118	homophone		他一直想要報復	報復／抱負
+H119	homophone		他是個有抱負的年輕人	報復／抱負
+H120	homophone		這是一段難忘的經歷	經歷／精力
+H121	homophone		他每天都精力充沛	經歷／精力
+H122	homophone		這裡的食物很好吃	食物／實務
+H123	homophone		他有豐富的實務經驗	食物／實務
+H124	homophone		他是我的同事	同事／同時
+H125	homophone		兩件事同時發生	同事／同時
+H126	homophone		我的記憶力不太好	記憶／技藝
+H127	homophone		這項傳統技藝快要失傳了	記憶／技藝
+P001	polyphone		他長高了不少	長=ㄓㄤˇ
+P002	polyphone		這條路很長	長=ㄔㄤˊ
+P003	polyphone		校長今天不在學校	長=ㄓㄤˇ
+P004	polyphone		她把頭髮留長了	長=ㄔㄤˊ
+P005	polyphone		他是家中的長子	長=ㄓㄤˇ〔語料重複〕
+P006	polyphone		長期來看比較划算	長=ㄔㄤˊ
+P007	polyphone		銀行三點半就關門了	行=ㄏㄤˊ
+P008	polyphone		這樣做不行	行=ㄒㄧㄥˊ
+P009	polyphone		他在這一行做了二十年	行=ㄏㄤˊ
+P010	polyphone		行人請走斑馬線	行=ㄒㄧㄥˊ
+P011	polyphone		請大家排成一行	行=ㄏㄤˊ
+P012	polyphone		旅行社安排的行程很滿	行=ㄒㄧㄥˊ
+P013	polyphone		這個箱子很重	重=ㄓㄨㄥˋ
+P014	polyphone		請重新輸入密碼	重=ㄔㄨㄥˊ
+P015	polyphone		他很重視這件事	重=ㄓㄨㄥˋ
+P016	polyphone		重複的資料要刪掉	重=ㄔㄨㄥˊ
+P017	polyphone		我的體重又增加了	重=ㄓㄨㄥˋ
+P018	polyphone		我們重來一次	重=ㄔㄨㄥˊ
+P019	polyphone		我喜歡聽音樂	樂=ㄩㄝˋ
+P020	polyphone		祝你生日快樂	樂=ㄌㄜˋ
+P021	polyphone		他是樂團的鼓手	樂=ㄩㄝˋ
+P022	polyphone		知足常樂	樂=ㄌㄜˋ〔語料重複〕
+P023	polyphone		時間不早了我得走了	得=ㄉㄟˇ
+P024	polyphone		他得到第一名	得=ㄉㄜˊ
+P025	polyphone		這件事得小心處理	得=ㄉㄟˇ
+P026	polyphone		這次比賽他贏得冠軍	得=ㄉㄜˊ
+P027	polyphone		我了解你的意思	了=ㄌㄧㄠˇ〔語料重複〕
+P028	polyphone		他受不了這種天氣	了=ㄌㄧㄠˇ
+P029	polyphone		事情終於結束了	了=˙ㄌㄜ
+P030	polyphone		他看著窗外發呆	著=˙ㄓㄜ
+P031	polyphone		我昨天晚上睡不著	著=ㄓㄠˊ
+P032	polyphone		這本著作很有名	著=ㄓㄨˋ
+P033	polyphone		你先別著急	著=ㄓㄠ
+P034	polyphone		他的穿著很整齊	著=ㄓㄨㄛˊ
+P035	polyphone		已經差不多了	差=ㄔㄚˋ〔語料重複〕
+P036	polyphone		他到國外出差去了	差=ㄔㄞ
+P037	polyphone		兩者的差別很大	差=ㄔㄚ〔語料重複〕
+P038	polyphone		這次的成績很差	差=ㄔㄚˋ
+P039	polyphone		調查結果已經出來了	調=ㄉㄧㄠˋ
+P040	polyphone		請把音量調小一點	調=ㄊㄧㄠˊ
+P041	polyphone		他被調到高雄分公司	調=ㄉㄧㄠˋ
+P042	polyphone		這道菜需要再調味	調=ㄊㄧㄠˊ
+P043	polyphone		這樣比較方便	便=ㄅㄧㄢˋ
+P044	polyphone		這家店的東西很便宜	便=ㄆㄧㄢˊ
+P045	polyphone		請隨便坐	便=ㄅㄧㄢˋ
+P046	polyphone		我們都去過那裡	都=ㄉㄡ
+P047	polyphone		日本的首都是東京	都=ㄉㄨ
+P048	polyphone		都市生活很忙碌	都=ㄉㄨ
+P049	polyphone		大家都知道這件事	都=ㄉㄡ
+P050	polyphone		我還沒吃飯	還=ㄏㄞˊ
+P051	polyphone		記得把書還給圖書館	還=ㄏㄨㄢˊ
+P052	polyphone		他還在睡覺	還=ㄏㄞˊ
+P053	polyphone		欠別人的錢一定要還	還=ㄏㄨㄢˊ
+P054	polyphone		這種水果很甜	種=ㄓㄨㄥˇ
+P055	polyphone		他在院子裡種花	種=ㄓㄨㄥˋ
+P056	polyphone		農夫種田很辛苦	種=ㄓㄨㄥˋ
+P057	polyphone		各種顏色都有	種=ㄓㄨㄥˇ
+P058	polyphone		今天氣溫下降了	降=ㄐㄧㄤˋ
+P059	polyphone		敵人最後投降了	降=ㄒㄧㄤˊ
+P060	polyphone		請給我五分鐘	分=ㄈㄣ
+P061	polyphone		做好自己的本分	分=ㄈㄣˋ
+P062	polyphone		請把垃圾分開丟	分=ㄈㄣ
+P063	polyphone		今天來的人很少	少=ㄕㄠˇ
+P064	polyphone		他的少年時代很辛苦	少=ㄕㄠˋ
+P065	polyphone		這個要多少錢	少=ㄕㄠˇ〔語料重複〕
+P066	polyphone		我的數學不太好	數=ㄕㄨˋ
+P067	polyphone		你數數看總共有幾個	數=ㄕㄨˇ
+P068	polyphone		週末到處都是人	處=ㄔㄨˋ
+P069	polyphone		這件事要小心處理	處=ㄔㄨˇ
+P070	polyphone		他們相處得很好	處=ㄔㄨˇ
+P071	polyphone		他的愛好是釣魚	好=ㄏㄠˋ
+P072	polyphone		好久不見你好嗎	好=ㄏㄠˇ
+P073	polyphone		因為下雨所以沒去	為=ㄨㄟˋ
+P074	polyphone		他被選為班長	為=ㄨㄟˊ
+P075	polyphone		你為什麼不說	為=ㄨㄟˋ〔語料重複〕
+P076	polyphone		今天的天空很藍	空=ㄎㄨㄥ
+P077	polyphone		你明天有空嗎	空=ㄎㄨㄥˋ
+P078	polyphone		放假的時候要去哪裡	假=ㄐㄧㄚˋ
+P079	polyphone		這個消息是假的	假=ㄐㄧㄚˇ
+P080	polyphone		我明天要請假一天	假=ㄐㄧㄚˋ
+P081	polyphone		我們要互相幫忙	相=ㄒㄧㄤ〔語料重複〕
+P082	polyphone		他的長相很普通	相=ㄒㄧㄤˋ
+P083	polyphone		有事再傳訊息給我	傳=ㄔㄨㄢˊ
+P084	polyphone		他正在寫自傳	傳=ㄓㄨㄢˋ
+P085	polyphone		這一箭正好射中目標	中=ㄓㄨㄥˋ
+P086	polyphone		中午要吃什麼	中=ㄓㄨㄥ
+P087	polyphone		我昨天中獎了	中=ㄓㄨㄥˋ
+P088	polyphone		我想回家睡覺	覺=ㄐㄧㄠˋ
+P089	polyphone		我感覺不太舒服	覺=ㄐㄩㄝˊ
+P090	polyphone		他教我數學	教=ㄐㄧㄠ
+P091	polyphone		教室裡很安靜	教=ㄐㄧㄠˋ
+T001	tw_cn		這不單純是頻率的問題	陷阱：是頻／視頻
+T002	tw_cn		重點不是頻道而是內容	陷阱：是頻／視頻
+T003	tw_cn		他不相信媳婦說的話	陷阱：信媳／信息
+T004	tw_cn		請把水瓶裝滿	陷阱：水瓶／水平
+T005	tw_cn		桌上的水瓶是誰的	陷阱：水瓶／水平
+T006	tw_cn		這個方向目前看起來沒問題	陷阱：向目／項目
+T007	tw_cn		他每天都看影片學英文	影片
+T008	tw_cn		這支影片的畫質很好	影片、畫質
+T009	tw_cn		這台電腦的記憶體不夠	記憶體
+T010	tw_cn		硬碟快要滿了	硬碟
+T011	tw_cn		請把檔案存到隨身碟	隨身碟
+T012	tw_cn		滑鼠沒電了	滑鼠
+T013	tw_cn		螢幕太暗了看不清楚	螢幕
+T014	tw_cn		這個軟體要付費才能用	軟體
+T015	tw_cn		硬體設備需要更新	硬體
+T016	tw_cn		幫我把這份文件列印出來	列印
+T017	tw_cn		印表機又卡紙了	印表機
+T018	tw_cn		這裡的網路很慢	網路
+T019	tw_cn		請提供更多資訊	資訊〔語料重複〕
+T020	tw_cn		我傳簡訊給你了	簡訊
+T021	tw_cn		這個產品的品質很好	品質
+T022	tw_cn		這個專案下個月要完成	專案
+T023	tw_cn		他是一位軟體工程師	軟體工程師
+T024	tw_cn		程式碼寫得很亂	程式碼
+T025	tw_cn		伺服器當機了	伺服器
+T026	tw_cn		資料庫需要定期備份	資料庫
+T027	tw_cn		數位相機已經很少人用了	數位
+T028	tw_cn		智慧型手機越來越貴	智慧型手機
+T029	tw_cn		人工智慧的發展很快	人工智慧
+T030	tw_cn		這是預設的設定值	預設
+T031	tw_cn		請先登入你的帳號	登入、帳號
+T032	tw_cn		忘記密碼請按這裡	密碼
+T033	tw_cn		我搭捷運上班	捷運
+T034	tw_cn		他每天騎機車通勤	機車
+T035	tw_cn		中午吃便當就好	便當
+T036	tw_cn		我們搭計程車過去	計程車
+T037	tw_cn		公車還要等十分鐘	公車
+T038	tw_cn		我的悠遊卡沒錢了	悠遊卡
+T039	tw_cn		看醫生記得帶健保卡	健保卡
+T040	tw_cn		這張發票中獎了	發票
+T041	tw_cn		去便利商店繳費	便利商店
+T042	tw_cn		冷氣開太強了	冷氣
+T043	tw_cn		他在部落格分享旅遊心得	部落格
+T044	tw_cn		網友的留言很有趣	網友
+T045	tw_cn		幫我按讚加分享	按讚
+T046	tw_cn		這則貼文被很多人轉發	貼文
+T047	tw_cn		請掃描這個條碼	條碼
+T048	tw_cn		用行動支付比較方便	行動支付
+T049	tw_cn		我的行動電源沒電了	行動電源
+T050	tw_cn		外送員已經到樓下了	外送員
+T051	tw_cn		這家餐廳要先訂位	訂位
+T052	tw_cn		馬鈴薯燉肉很好吃	馬鈴薯
+T053	tw_cn		我想喝優酪乳	優酪乳
+T054	tw_cn		泡麵不要吃太多	泡麵
+T055	tw_cn		塑膠袋要另外收費	塑膠袋
+T056	tw_cn		原子筆沒水了	原子筆
+T057	tw_cn		這部電影是在紐西蘭拍的	紐西蘭
+T058	tw_cn		義大利麵要煮幾分鐘	義大利
+T059	tw_cn		寬頻網路的速度很快	寬頻
+T060	tw_cn		請用藍牙耳機接聽	藍牙
+T061	tw_cn		雷射印表機比較省墨水	雷射
+L001	long		因為颱風的關係明天的課全部停課請大家注意安全	
+L002	long		我昨天在網路上訂的書今天早上就已經送到家裡了	
+L003	long		如果你明天有空的話我們可以一起去看那部新上映的電影	
+L004	long		這家餐廳的牛肉麵很有名每到中午都要排很久的隊	
+L005	long		他說他下個月要搬到台中工作所以這陣子都在找房子	
+L006	long		請問這附近有沒有比較便宜又可以停車的旅館	
+L007	long		我已經把上次開會討論的內容整理好寄到你的信箱了	
+L008	long		醫生建議我每天至少運動三十分鐘而且要少吃油炸的食物	
+L009	long		這個週末我們全家打算開車去花蓮玩兩天一夜	
+L010	long		老師說下禮拜要交的報告不能少於三千字	
+L011	long		我覺得這件事應該先跟主管討論之後再做決定	
+L012	long		他從小就對音樂很有興趣所以大學選了相關的科系	
+L013	long		最近天氣變化很大出門記得多帶一件外套	
+L014	long		這份合約的內容還有幾個地方需要再確認一下	
+L015	long		我們公司今年的業績比去年成長了百分之二十	
+L016	long		搭高鐵從台北到高雄只需要一個半小時左右	
+L017	long		他雖然很忙但是每個禮拜還是會抽空回家看父母	
+L018	long		這次的活動需要大家一起幫忙才能順利完成	
+L019	long		請你把這份資料影印三份然後交給櫃台的小姐	
+L020	long		我本來想買那支手機可是後來覺得價錢太貴就算了	
+L021	long		政府宣布從下個月開始調整基本工資	
+L022	long		她一邊工作一邊照顧小孩真的非常辛苦	
+L023	long		這條路在施工所以我們只好繞遠路過來	
+L024	long		如果對商品有任何問題都可以直接跟客服聯絡	
+L025	long		我弟弟今年剛考上研究所下個月就要開學了	
+L026	long		昨天晚上的地震把我嚇了一大跳整個晚上都睡不好	
+L027	long		請在明天中午以前把修改好的檔案傳給我	
+L028	long		這間房子離捷運站很近但是房租比較高	
+L029	long		他決定辭掉現在的工作自己出來創業	
+L030	long		每次經過那家麵包店都會聞到很香的味道	
+L031	long		這個問題比我們原本想像的還要複雜很多	
+L032	long		記得出門前把瓦斯跟電燈都關掉	
+L033	long		我朋友推薦的那家咖啡廳氣氛很好很適合聊天	
+L034	long		下雨天騎車要特別小心路面很容易打滑	
+L035	long		他把所有的積蓄都拿去投資結果賠了不少錢	
+L036	long		學校規定學生不可以在上課的時候使用手機	
+L037	long		這次的考試範圍包括第一課到第五課	
+L038	long		不好意思我臨時有事可能會晚半個小時到	
+L039	long		我們已經盡了最大的努力剩下的就看運氣了	
+L040	long		你要不要先休息一下等等再繼續做	
+L041	long		這部電影的劇情很感人我看到最後都哭了	
+L042	long		他的英文說得很流利因為他在國外住過好幾年	
+L043	long		百貨公司週年慶的時候人總是特別多	
+L044	long		我想請問一下這班火車有沒有停靠新竹站	
+L045	long		新來的同事很認真學習的速度也很快	
+L046	long		請大家先把手機調成靜音會議馬上就要開始了	
+L047	long		我家附近新開了一間超市東西又多又便宜	
+L048	long		他昨天打球的時候不小心扭傷了腳踝	
+L049	long		這次旅行的費用我們幾個人平均分攤	
+L050	long		你如果身體不舒服就早點回家休息吧	
+R001	longdist		我姊姊昨天打電話回來說下個月公司要派她去日本出差	她（線索：姊姊）
+R002	longdist		那位女醫師在記者會上表示這項研究是她和團隊三年來的成果	她（線索：女醫師）
+R003	longdist		我阿公雖然已經八十幾歲了但是每天早上他還是堅持去公園運動	他（線索：阿公）
+R004	longdist		隔壁的王先生退休以後幾乎每天都帶著他的孫子去公園	他（線索：王先生）
+R005	longdist		新娘走進會場的時候所有賓客都轉頭看著她	她（線索：新娘）
+R006	longdist		我阿姨上個月剛生了小孩所以最近大家都去醫院看她	她（線索：阿姨）
+R007	longdist		那隻流浪貓被帶回家以後才過一個禮拜牠就變得很黏人	牠（線索：貓）
+R008	longdist		鄰居養的那條狗只要有陌生人靠近門口牠就會一直叫	牠（線索：狗）
+R009	longdist		這台洗衣機用了十幾年雖然很舊但是我捨不得把它丟掉	它（線索：洗衣機）
+R010	longdist		那棵老樹已經有三百年的歷史了村民都很小心地保護它	它（線索：樹）
+R011	longdist		這位工程師每天花十幾個小時寫出來的程式終於順利上線了	程式（線索：工程師、寫）
+R012	longdist		這位市長花了八年時間治理的城市終於擺脫了污染的問題	城市（線索：市長、治理）
+R013	longdist		數學老師在黑板上寫了半天大家還是看不懂那個公式	公式（線索：數學、黑板）
+R014	longdist		教練說下半場一開始就要對他們的防線發動全面的攻勢	攻勢（線索：教練、下半場）
+R015	longdist		憲法保障每一位國民不分性別和年齡都享有平等的權利	權利（線索：憲法保障、享有）
+R016	longdist		這位總統在任內不斷修法想要擴大自己手中的權力	權力（線索：總統、擴大）
+R017	longdist		警方表示這起發生在上週五深夜的案子已經朝刑事案件偵辦	刑事（線索：警方、偵辦）
+R018	longdist		這場典禮雖然辦得很盛大但是很多人覺得只是一種形式	形式（線索：典禮、只是）
+R019	longdist		老師提醒大家下週三開始連續三天要舉行期中考試	期中（線索：考試）
+R020	longdist		桌上放了五個杯子不過只有其中兩個是乾淨的	其中（線索：五個、只有）
+R021	longdist		救護車在接到電話之後五分鐘內就及時把病人送到醫院	及時（線索：救護車、送到）
+R022	longdist		這個手機程式可以讓你隨時看到公車的即時位置	即時（線索：隨時、位置）
+R023	longdist		被同學嘲笑了這麼多年他心裡一直想要找機會報復	報復（線索：嘲笑）
+R024	longdist		從小在鄉下長大的他一直懷著要改變家鄉的遠大抱負	抱負（線索：遠大）
+R025	longdist		這種藥吃了以後大部分的人在半個小時之內就會有反應	反應（線索：藥）
+R026	longdist		這次民調的數字其實相當程度反映了民眾對物價的不滿	反映（線索：民調、不滿）
+R027	longdist		他從大學畢業之後換過好幾份工作累積了很豐富的經歷	經歷（線索：工作、累積）
+R028	longdist		年輕人熬夜之後睡一覺就好但是上了年紀就沒有那個精力	精力（線索：熬夜、年紀）
+R029	longdist		出國旅行的時候護照和機票是絕對不能忘記帶的必需品	必需（線索：品）
+R030	longdist		根據規定所有進入工地的人員不論職位高低都必須戴安全帽	必須（線索：規定、都）
+R031	longdist		會議開了三個小時討論到最後在場的人都沒有提出異議	異議（線索：會議、提出）
+R032	longdist		能夠幫助這些孩子完成學業對我來說是非常有意義的事	意義（線索：幫助、有）
+R033	longdist		媽媽交代我放學以後要先把功課做完才可以看電視	做（線索：功課）
+R034	longdist		這位畫家晚年在鄉下完成了他一生中最重要的幾件作品	作品（線索：畫家）
+R035	longdist		他把車子停在路邊然後走進便利商店買了一瓶水	在（線索：停）
+R036	longdist		這個問題我們今天先討論到這裡剩下的部分下次開會再繼續	再（線索：下次）
+R037	longdist		他把這首歌練了好幾個月現在已經唱得跟原唱一樣好了	得（線索：唱）
+R038	longdist		小朋友們排好隊一個接著一個安靜地走進教室	地（線索：安靜、走進）
+R039	longdist		冰箱裡那盒上個禮拜買的牛奶已經過期了不能再喝了	再（線索：不能）
+R040	longdist		我記得很清楚那天下著大雨他一個人站在車站門口等我	在（線索：站）
+R041	longdist		這家公司今年的營收雖然成長了但是獲利卻比去年還要少	少（線索：獲利、比）
+R042	longdist		這位歌手從少年時期就開始在各地的餐廳駐唱	少年（線索：歌手、時期）
+R043	longdist		銀行的行員告訴我這種定存的利率比一般的還要高	行（線索：銀行）
+R044	longdist		走在最前面的那一行學生是今天負責升旗的同學	行（線索：最前面、學生）
+R045	longdist		這個行李箱裝滿了書所以提起來比想像中還要重	重（線索：裝滿、提）
+R046	longdist		系統發生錯誤的時候請先關機等一分鐘再重新開機	重新（線索：關機、再）
+R047	longdist		樂團的指揮舉起手之後全場的音樂就突然停了下來	樂（線索：樂團、指揮）
+R048	longdist		孩子們在公園裡跑來跑去每個人的臉上都充滿了快樂	樂（線索：臉上、充滿）
+R049	longdist		她把借來的小說看完以後隔天就拿去圖書館還了	還（線索：借來、圖書館）
+R050	longdist		已經晚上十二點了辦公室裡的燈居然還亮著	還（線索：居然、亮著）
+R051	longdist		農夫趁著下雨之前趕快把剩下的秧苗都種到田裡	種（線索：農夫、秧苗）
+R052	longdist		市場裡賣的水果有很多我從來沒看過的種類	種類（線索：水果、很多）
+R053	longdist		氣象局說這個週末鋒面通過之後各地的氣溫都會明顯下降	降（線索：氣溫）
+R054	longdist		被包圍了三天三夜之後城裡的守軍終於決定開門投降	降（線索：包圍、守軍）
+R055	longdist		主管說這份報告的格式不對要我今天下班以前重做一份	重（線索：不對、再做）
+R056	longdist		他說話的音調很特別所以一開口大家就知道是他	調（線索：音、說話）
+R057	longdist		檢察官正在針對這家公司過去五年的帳目進行調查	調（線索：檢察官、帳目）
+R058	longdist		老闆說只要在這個月底以前付清就可以算你便宜一點	便宜（線索：付清、算）
+R059	longdist		搬到車站旁邊以後不管要去哪裡交通都變得很方便	方便（線索：交通）
+R060	longdist		這位教授在大學裡教了三十年的書今年終於要退休了	教（線索：教授、書）
+D001	daily		你到了嗎	〔語料重複〕
+D002	daily		等我一下	〔語料重複〕
+D003	daily		我快到了	
+D004	daily		晚餐想吃什麼	
+D005	daily		真的假的	〔語料重複〕
+D006	daily		好喔沒問題	
+D007	daily		我先去洗澡	
+D008	daily		你在幹嘛	〔語料重複〕
+D009	daily		這也太扯了吧	〔語料重複〕
+D010	daily		傻眼欸	
+D011	daily		笑死我了	
+D012	daily		明天要不要一起吃飯	
+D013	daily		幫我買一杯珍奶半糖少冰	
+D014	daily		我今天要加班會晚點回家	
+D015	daily		到家跟我說一聲	
+D016	daily		我等等再打給你	
+D017	daily		不好意思我遲到了	
+D018	daily		收到謝謝	
+D019	daily		辛苦了	
+D020	daily		晚安早點睡	
+D021	daily		這也太好吃了吧	
+D022	daily		我覺得還好欸	
+D023	daily		隨便都可以	〔語料重複〕
+D024	daily		你決定就好	〔語料重複〕
+D025	daily		下次再約	
+D026	daily		路上小心	
+D027	daily		生日快樂	〔語料重複〕
+D028	daily		加油你可以的	
+D029	daily		我剛剛才看到訊息	
+D030	daily		你吃飽了沒	
+D031	daily		要不要順便幫你帶	
+D032	daily		我在樓下了你下來吧	
+D033	daily		等一下再說啦	〔語料重複〕
+D034	daily		沒關係慢慢來	
+D035	daily		好累喔我想睡覺	
+D036	daily		你什麼時候有空	
+D037	daily		這個週末有要幹嘛嗎	
+D038	daily		我也不知道欸	〔語料重複〕
+D039	daily		太誇張了吧	〔語料重複〕
+D040	daily		我懂你的意思	〔語料重複〕
+D041	daily		好啦我知道了	
+D042	daily		那就這樣囉	
+D043	daily		謝謝你幫我這麼多	
+D044	daily		對不起我忘記了	
+D045	daily		可以借我一下嗎	
+D046	daily		你那邊有下雨嗎	
+D047	daily		今天好熱喔	
+D048	daily		我肚子好餓	〔語料重複〕
+D049	daily		要不要叫外送	
+D050	daily		你看一下群組	
+D051	daily		我傳給你了你看一下	
+D052	daily		這個禮拜都好忙	
+D053	daily		改天請你吃飯	
+D054	daily		你覺得哪一個比較好看	
+D055	daily		我再想想看	
+D056	daily		先這樣掰掰	
+D057	daily		天啊怎麼會這樣	
+D058	daily		你也太厲害了吧	
+D059	daily		我現在沒空等等回你	
+D060	daily		哈哈哈太好笑了	
+D061	daily		有一張圖片很有情境	MozTW:g0v_slack_rand0m
+D062	daily		出發前往北海道	MozTW:setences
+D063	daily		無法全面更換	MozTW:g0v_slack_rand0m
+D064	daily		政府和大家正在一起打拚	MozTW:setences
+D065	daily		阿公毫不識字	MozTW:setences
+D066	daily		冷靜地在下面滑手機	MozTW:g0v_slack_rand0m
+D067	daily		連他的名字都不知道	MozTW:setences
+D068	daily		和朋友邊聊天	MozTW:setences
+D069	daily		可以貼在手機殼後面	MozTW:setences
+D070	daily		因為真實所以好笑	MozTW:g0v_slack_rand0m
+D071	daily		隱藏商店	MozTW:setences
+D072	daily		重複的傷害彼此	MozTW:setences
+D073	daily		每週禮拜日	MozTW:g0v_slack_rand0m
+D074	daily		很簡潔的感覺	MozTW:g0v_slack_rand0m
+D075	daily		凝聚出屬於自己的在地願景	MozTW:g0v_slack_rand0m
+D076	daily		都是有轎車的家庭背景	MozTW:g0v_slack_rand0m
+D077	daily		認為有漏洞的	MozTW:g0v_slack_rand0m
+D078	daily		在法國大革命期間	MozTW:g0v_slack_rand0m
+D079	daily		把準備金賠光了	MozTW:setences
+D080	daily		衛福部的全名是衛生福利部	MozTW:g0v_slack_rand0m
+D081	daily		你是不是壞人	MozTW:setences
+D082	daily		這塊木板都爛了	MozTW:setences
+D083	daily		所以左邊到底可不可以站	MozTW:g0v_slack_rand0m
+D084	daily		程式調整半天	MozTW:g0v_slack_rand0m
+D085	daily		我背後的這幅畫	MozTW:setences
+D086	daily		我沒認識到自己需要他	MozTW:g0v_slack_rand0m
+D087	daily		核彈發射密碼的繁複程序	MozTW:g0v_slack_rand0m
+D088	daily		美商台灣分公司	MozTW:setences
+D089	daily		是一個線上客服的概念	MozTW:g0v_slack_rand0m
+D090	daily		今天國小畢業	MozTW:chatlogs
+D091	daily		越咳會越嚴重	MozTW:g0v_slack_rand0m
+D092	daily		在繁忙的工作之中	MozTW:setences
+D093	daily		一般性載具跟共通性載具	MozTW:g0v_slack_rand0m
+D094	daily		待會有沒有台語報告	MozTW:g0v_slack_rand0m
+D095	daily		骨感的現實無法讓經濟好轉起步	MozTW:g0v_slack_rand0m
+D096	daily		莫斯科農業部門	MozTW:g0v_slack_rand0m
+D097	daily		他從未對我失約	MozTW:setences
+D098	daily		狠狠撞上紅磚牆	MozTW:setences
+D099	daily		騙老師這題我會了	MozTW:setences
+D100	daily		每次結帳前	MozTW:g0v_slack_rand0m
+D101	daily		聖劍傳說也出了	MozTW:g0v_slack_rand0m
+D102	daily		還是會需要口語化一點的	MozTW:g0v_slack_rand0m
+D103	daily		香港的應該沒差吧	MozTW:g0v_slack_rand0m
+D104	daily		沒什麼大不了的	MozTW:setences〔語料重複〕
+D105	daily		操作更直覺化	MozTW:g0v_slack_rand0m
+D106	daily		一起來大啖語音應用	MozTW:chatlogs
+D107	daily		每逢佳節貝多芬	MozTW:web_slang
+D108	daily		次佳選擇是	MozTW:g0v_slack_rand0m
+D109	daily		幫忙了三天	MozTW:setences
+D110	daily		對你來說	MozTW:setences
+D111	daily		小時候都不覺得這件事不合理	MozTW:g0v_slack_rand0m
+D112	daily		水去掉氧之後就會變成氫水	MozTW:g0v_slack_rand0m
+D113	daily		好多年沒有客人了	MozTW:setences
+D114	daily		發票這期又是沒有半張中獎	MozTW:g0v_slack_rand0m
+D115	daily		下雨地上有水	MozTW:setences
+D116	daily		我們是獨立的個體	MozTW:g0v_slack_rand0m
+D117	daily		那個我有看到地鐵廣告	MozTW:chatlogs
+D118	daily		在沒有到終局判決之前	MozTW:setences
+D119	daily		多吃少運動的人	MozTW:g0v_slack_rand0m
+D120	daily		參與社群的經驗	MozTW:g0v_slack_rand0m
