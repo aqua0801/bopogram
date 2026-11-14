@@ -38,7 +38,8 @@ class Engine:
                             [m["weight"] for m in cfg["models"]])
         self.user = None
         if use_user_model and cfg.get("user_model"):
-            self.user = UserModel((base / cfg["user_model"]).expanduser())
+            user_path = Path(cfg["user_model"]).expanduser()
+            self.user = UserModel(user_path if user_path.is_absolute() else base / user_path)
         self.decoder = Decoder(self.lexicon, self.lm, beam=cfg.get("beam", 16),
                                max_candidates=cfg.get("max_candidates", 40),
                                extra_score=self.user.bonus if self.user else None,

@@ -3,6 +3,7 @@
     bopogram convert --keys "ji3y94ru8 "
     bopogram convert --bopomofo "ㄨㄛˇ ㄗㄞˋ ㄐㄧㄚ" --context "上文" --nbest 5
     bopogram eval eval/testset/testset.tsv --readings eval/readings/testset_bopomofo.tsv
+    bopogram serve          # JSON lines on stdin/stdout, see bopogram/server.py
 """
 
 from __future__ import annotations
@@ -26,6 +27,9 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--context", default="", help="text before the cursor (read-only)")
     c.add_argument("--nbest", type=int, default=1)
 
+    s = sub.add_parser("serve", help="JSON-lines protocol on stdin/stdout for a front end")
+    s.add_argument("--layout", default="dachen", choices=sorted(LAYOUTS))
+
     e = sub.add_parser("eval", help="score a test set")
     e.add_argument("testset")
     e.add_argument("--readings", required=True, help="TSV: id, bopomofo syllables")
@@ -48,6 +52,11 @@ def main(argv: list[str] | None = None) -> int:
         for text, score in engine.convert(syllables, context=args.context, nbest=args.nbest):
             print(f"{text}\t{score:.3f}" if args.nbest > 1 else text)
         return 0
+
+    if args.cmd == "serve":
+        from .server import serve
+
+        return serve(args.config, args.layout)
 
     from .evaluate import run_eval
 

@@ -38,11 +38,14 @@ class Decoder:
         self.word_penalty = word_penalty  # added per word; negative values favour longer words
         self.eos_weight = eos_weight      # weight of ln P(end of sentence) when ranking results
         self._cand_cache: dict[tuple[str, ...], list[str]] = {}
+        # Spans the user has fixed by picking a candidate: (start, end) -> word.
+        self.pinned: dict[tuple[int, int], str] = {}
         self.reset()
 
     # -- composition buffer ---------------------------------------------
     def reset(self, start_state: State | None = None) -> None:
         self.syllables: list[str] = []
+        self.pinned = {}
         first = Hyp(0.0, start_state if start_state is not None else self.lm.begin(), None, 0, None)
         self.nodes: list[list[Hyp]] = [[first]]
 
@@ -55,6 +58,26 @@ class Decoder:
             self._cand_cache[key] = cands
         return cands
 
+    def _allowed(self, i: int, j: int, word: str) -> bool:
+        """An edge may not cut through a pinned span, and must equal it if it covers it."""
+        for (a, b), fixed in self.pinned.items():
+            if j <= a or i >= b:
+                continue
+            if (i, j) != (a, b) or word != fixed:
+                return False
+        return True
+
+    def repin(self, pinned: dict[tuple[int, int], str], start_state: State | None = None) -> None:
+        """Replace the pinned spans and decode the current buffer again."""
+        syllables = list(self.syllables)
+        if start_state is None:
+            start_state = self.nodes[0][0].state
+        self.pinned = dict(pinned)
+        self.syllables = []
+        self.nodes = [[Hyp(0.0, start_state, None, 0, None)]]
+        for s in syllables:
+            self.push(s)
+
     def push(self, syllable: str) -> None:
         """Append one syllable and build the lattice node after it."""
         self.syllables.append(syllable)
@@ -65,7 +88,14 @@ class Decoder:
             hyps = self.nodes[i]
             if not hyps:
                 continue
-            for word in self._candidates(tuple(self.syllables[i:j])):
+            words = self._candidates(tuple(self.syllables[i:j]))
+            if self.pinned:
+                fixed = self.pinned.get((i, j))
+                if fixed is not None:
+                    words = [fixed]
+                else:
+                    words = [w for w in words if self._allowed(i, j, w)]
+            for word in words:
                 for h in hyps:
                     logp, state = score_fn(h.state, word)
                     total = h.score + logp + self.word_penalty
@@ -84,10 +114,12 @@ class Decoder:
         self.nodes.append(best)
 
     def pop(self) -> None:
-        """Remove the last syllable (backspace)."""
+        """Remove the last syllable (backspace); pins reaching into it are dropped."""
         if self.syllables:
             self.syllables.pop()
             self.nodes.pop()
+            n = len(self.syllables)
+            self.pinned = {span: w for span, w in self.pinned.items() if span[1] <= n}
 
     # -- results ----------------------------------------------------------
     def nbest(self, n: int = 1) -> list[tuple[list[str], float]]:
