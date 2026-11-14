@@ -5,7 +5,7 @@ Usage:
         [--corpus CORPUS_DIR]
 
 Writes:
-    eval/testset/testset_draft.tsv   id, category, context, text, note
+    eval/testset/testset.tsv   id, category, context, text, note
     eval/devset/moztw_dev.tsv        same columns; used for tuning, never for reporting
 
 Sources:
@@ -125,7 +125,7 @@ def main() -> None:
     header = "id\tcategory\tcontext\ttext\tnote\n"
     (EVAL / "testset").mkdir(exist_ok=True)
     (EVAL / "devset").mkdir(exist_ok=True)
-    with open(EVAL / "testset" / "testset_draft.tsv", "w", encoding="utf-8") as fh:
+    with open(EVAL / "testset" / "testset.tsv", "w", encoding="utf-8") as fh:
         fh.write(header + "".join("\t".join(r) + "\n" for r in test))
     with open(EVAL / "devset" / "moztw_dev.tsv", "w", encoding="utf-8") as fh:
         fh.write(header + "".join("\t".join(r) + "\n" for r in dev))
