@@ -11,6 +11,7 @@ from .decoder import Decoder
 from .layouts import LAYOUTS
 from .lexicon import Lexicon
 from .lm import MixtureLM
+from .typing_log import TypingLog
 from .user import UserModel
 
 DEFAULT_CONFIG = Path.home() / "bopogram-data" / "models" / "config.json"
@@ -26,10 +27,12 @@ class Engine:
     {"dict": "../dict/dict.tsv",
      "models": [{"path": "ly.binary", "weight": 0.4}, ...],
      "beam": 16, "max_candidates": 40, "word_penalty": 0.0, "eos_weight": 0.0,
-     "style": "casual", "user_model": null}
+     "style": "casual", "user_model": null, "typing_log": null}
 
     "style" is "casual" (a lone neutral-tone ㄉㄜ is always 的) or "formal"
     (的 / 地 / 得 are chosen by the model); the default is "casual".
+    "typing_log" names a local file that records committed compositions for
+    later review (see typing_log.py); it is off when absent or null.
     """
 
     def __init__(self, config: str | Path | None = None, use_user_model: bool = True):
@@ -43,6 +46,10 @@ class Engine:
         if use_user_model and cfg.get("user_model"):
             user_path = Path(cfg["user_model"]).expanduser()
             self.user = UserModel(user_path if user_path.is_absolute() else base / user_path)
+        self.typing_log = None
+        if use_user_model and cfg.get("typing_log"):
+            log_path = Path(cfg["typing_log"]).expanduser()
+            self.typing_log = TypingLog(log_path if log_path.is_absolute() else base / log_path)
         self._decoder_args = dict(beam=cfg.get("beam", 16), max_candidates=cfg.get("max_candidates", 40),
                                   word_penalty=cfg.get("word_penalty", 0.0),
                                   eos_weight=cfg.get("eos_weight", 0.0),

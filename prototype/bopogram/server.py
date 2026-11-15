@@ -22,7 +22,8 @@ Requests ({"op": ..., "sid": optional, "id": optional, ...}):
     commit                           finish the composition
     escape                           discard the syllable in progress, else the buffer
     context    {"text": "..."}       text before the cursor (while idle)
-    learning   {"enabled": false}    turn learning off (password fields) or on
+    learning   {"enabled": false}    turn learning AND the typing log off (password
+                                     fields) or on
     style      {"style": "formal"}   "casual": lone neutral-tone ㄉㄜ is always 的;
                                      "formal": 的 / 地 / 得 chosen by the model
     state

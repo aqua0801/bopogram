@@ -239,6 +239,24 @@ class Session:
                 pos += len(w)
         user.save()
 
+    def _record(self, count: int, auto: bool) -> None:
+        """Write the first `count` items to the typing log (if enabled and learning is on)."""
+        log = getattr(self.engine, "typing_log", None)
+        if log is None or not self.learn or not count:
+            return
+        dec = self.decoder
+        text = "".join(self._segments())
+        first = text
+        if dec.pinned:  # what the engine would have chosen without the user's picks
+            plain = self.engine.new_decoder()
+            plain.style = dec.style
+            plain.reset(dec.nodes[0][0].state)
+            for item in dec.syllables:
+                plain.push(item)
+            first = plain.best_text()
+        picked = [(a, b - a, w) for (a, b), w in sorted(dec.pinned.items()) if b <= count]
+        log.write(dec.syllables[:count], first[:count], text[:count], picked, self.context, dec.style, auto)
+
     def _limit(self) -> None:
         """Commit the first words when the buffer is too long. Committed text is final."""
         if self._size <= MAX_BUFFER:
@@ -252,6 +270,7 @@ class Session:
         if not taken:
             return
         self._learn(taken, 0)
+        self._record(count, auto=True)
         text = "".join(taken)
         self._flushed += text
         self.context = (self.context + text)[-MAX_CONTEXT:]
@@ -264,6 +283,7 @@ class Session:
         text = "".join(words)
         if text:
             self._learn(words, 0)
+            self._record(self._size, auto=False)
         self.context = (self.context + text)[-MAX_CONTEXT:]
         self._clear()
         return text

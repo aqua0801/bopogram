@@ -25,6 +25,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("out_dir", type=Path)
     ap.add_argument("--config")
+    ap.add_argument("--typing-log", action="store_true",
+                    help="record committed compositions in userdata/typing_log.jsonl for later "
+                         "review with tools/review_log.py (off by default)")
     args = ap.parse_args()
 
     src = config_path(args.config)
@@ -40,6 +43,7 @@ def main() -> None:
         m["path"] = f"models/{model.name}"
     cfg["dict"] = "dict.tsv"
     cfg["user_model"] = "userdata/user.json"  # created on first use, stays on this machine
+    cfg["typing_log"] = "userdata/typing_log.jsonl" if args.typing_log else None
     (out / "config.json").write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
     (out / "DO_NOT_REDISTRIBUTE.txt").write_text(
         "dict.tsv is derived from Ministry of Education dictionaries (CC BY-ND 3.0 TW).\n"

@@ -172,6 +172,24 @@ Windows 端要寫的是 `crates/` 底下的前端。先讀完 `CLAUDE.md`，尤�
 
 個人化資料會寫在執行包的 `userdata\user.json`，只存在本機。
 
+## 打字紀錄（選用，預設關閉）
+
+執行包 `config.json` 加上 `"typing_log": "userdata/typing_log.jsonl"` 後，引擎在每次送出時
+記錄一行：輸入的注音、引擎原本的選字、實際送出的文字、手動選過的詞、前 40 個字的上文。
+**紀錄完全由引擎負責，前端不需要寫任何紀錄程式。** 前端唯一的責任是密碼欄位送
+`{"op":"learning","enabled":false}`：這個狀態下引擎既不學習也不記錄。
+
+防護措施（引擎端）：英文字母與數字一律以「＊」取代後才寫入；檔案上限 20MB；只寫本機檔案。
+
+審核與匯出（在 Windows 上執行，只需要 Python 內建模組）：
+
+```
+python tools\review_log.py D:\bopogram-data\bopogram-runtime\userdata
+```
+
+逐筆核准／拒絕，只有核准的紀錄會被匯出（`typing_export.jsonl`，不含時間；
+選「核准但不含上文」的紀錄不會匯出上文）。匯出檔由使用者自行複製到 WSL。
+
 ## 測試順序
 
 1. 引擎在 Windows 命令列能跑（上面第 4 步）。
