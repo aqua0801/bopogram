@@ -216,10 +216,12 @@ impl TextService_Impl {
         .flatten() else {
             return;
         };
-        let password =
-            password_window() || edit::password_scope(context, client).unwrap_or(last);
+        // Only the input scope can be momentarily unreadable, so only its
+        // answer is remembered.
+        let scope = edit::password_scope(context, client).unwrap_or(last);
+        let password = password_window() || edit::keyboard_disabled(context) || scope;
         with(&self.state, |s| {
-            s.password = password;
+            s.password = scope;
             if let Some(controller) = s.controller.as_mut() {
                 controller.set_enabled(!password);
             }

@@ -12,8 +12,9 @@ use windows::Win32::Foundation::{E_FAIL, RECT};
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::TextServices::{
-    ITfContext, ITfEditSession, ITfEditSession_Impl, ITfInputScope, ITfInsertAtSelection,
-    ITfRange, InputScope, GUID_PROP_ATTRIBUTE, GUID_PROP_INPUTSCOPE,
+    ITfCompartmentMgr, ITfContext, ITfEditSession, ITfEditSession_Impl, ITfInputScope,
+    ITfInsertAtSelection, ITfRange, InputScope, GUID_COMPARTMENT_EMPTYCONTEXT,
+    GUID_COMPARTMENT_KEYBOARD_DISABLED, GUID_PROP_ATTRIBUTE, GUID_PROP_INPUTSCOPE,
     INSERT_TEXT_AT_SELECTION_FLAGS, IS_PASSWORD, TF_ANCHOR_END, TF_ANCHOR_START,
     TF_CONTEXT_EDIT_CONTEXT_FLAGS, TF_DEFAULT_SELECTION, TF_ES_READ, TF_ES_SYNC,
     TF_IAS_QUERYONLY, TF_SELECTION,
@@ -143,6 +144,23 @@ pub fn text_before_caret(context: &ITfContext, client: u32) -> Option<String> {
     found.take()
 }
 
+/// Has the application switched keyboard input methods off for this context?
+/// Applications do this for fields that must not be composed into; browsers
+/// do it for password fields. Needs no edit session.
+pub fn keyboard_disabled(context: &ITfContext) -> bool {
+    let Ok(compartments) = context.cast::<ITfCompartmentMgr>() else {
+        return false;
+    };
+    [GUID_COMPARTMENT_KEYBOARD_DISABLED, GUID_COMPARTMENT_EMPTYCONTEXT].iter().any(|guid| unsafe {
+        compartments
+            .GetCompartment(guid)
+            .and_then(|compartment| compartment.GetValue())
+            .ok()
+            .and_then(|value| i32::try_from(&value).ok())
+            .is_some_and(|value| value != 0)
+    })
+}
+
 /// Does the application declare the field at the caret as a password field?
 /// `None` if that cannot be determined.
 pub fn password_scope(context: &ITfContext, client: u32) -> Option<bool> {
@@ -150,9 +168,22 @@ pub fn password_scope(context: &ITfContext, client: u32) -> Option<bool> {
     let out = Rc::clone(&found);
     let document = context.clone();
     run(context, client, TF_ES_SYNC | TF_ES_READ, move |cookie| unsafe {
-        let range = selection(&document, cookie)?;
         let property = document.GetAppProperty(&GUID_PROP_INPUTSCOPE)?;
-        let value = property.GetValue(cookie, &range)?;
+        // Some applications only answer for a range that has text in it, so
+        // if the caret gets no answer, ask about the whole document.
+        let at_caret = selection(&document, cookie)
+            .and_then(|range| property.GetValue(cookie, &range))
+            .ok()
+            .filter(|value| !value.is_empty());
+        let value = match at_caret {
+            Some(value) => value,
+            None => {
+                let range = document.GetStart(cookie)?;
+                let end = document.GetEnd(cookie)?;
+                range.ShiftEndToRange(cookie, &end, TF_ANCHOR_END)?;
+                property.GetValue(cookie, &range)?
+            }
+        };
         // No input scope declared at all is a definite "not a password field".
         let Ok(scope) = IUnknown::try_from(&value).and_then(|u| u.cast::<ITfInputScope>()) else {
             out.set(Some(false));
