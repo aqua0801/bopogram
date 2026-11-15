@@ -18,6 +18,8 @@ Requests ({"op": ..., "sid": optional, "id": optional, ...}):
     escape                           discard the composition
     context    {"text": "..."}       text before the cursor (while idle)
     learning   {"enabled": false}    turn learning off (password fields) or on
+    style      {"style": "formal"}   "casual": lone neutral-tone ㄉㄜ is always 的;
+                                     "formal": 的 / 地 / 得 chosen by the model
     state
     close                            forget this sid
     quit                             stop the engine process
@@ -58,6 +60,8 @@ def handle(session: Session, req: dict) -> dict:
         session.set_context(str(req.get("text", "")))
     elif op == "learning":
         session.learn = bool(req.get("enabled", True))
+    elif op == "style":
+        res["ok"] = session.set_style(str(req.get("style", "")))
     elif op != "state":
         return {"ok": False, "error": f"unknown op {op!r}"}
     res.update(session.state())

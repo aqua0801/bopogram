@@ -63,6 +63,8 @@ Windows 端要寫的是 `crates/` 底下的前端。先讀完 `CLAUDE.md`，尤�
   讀不到（應用程式不支援）就不送，引擎會自動用它自己最近送出的文字。
 - **密碼欄位**：輸入範圍（`IS_PASSWORD`）或 `ES_PASSWORD` 的欄位，DLL 完全不處理按鍵；
   保險起見另送一次 `{"op":"learning","enabled":false}`。離開該欄位後再送 `enabled: true`。
+- **口語／正式模式**：提供一個切換方式（建議 Ctrl+\` 或語言列按鈕），切換時對目前的輸入位置送 `style`，
+  並在之後每個新連線建立時先送一次目前的模式。預設值寫在執行包 `config.json` 的 `"style"`。
 - 候選視窗：試用版用最簡單的 Win32 彈出視窗即可（每頁 9 個，PageUp／PageDown 換頁）。
 - DLL 內不得載入模型或做任何重運算；DLL 會被載入到所有程式。
 - 管線讀寫要設逾時（建議 200ms）。逾時或斷線時放棄這次按鍵並讓它直接通過，不可卡住應用程式。
@@ -85,6 +87,7 @@ Windows 端要寫的是 `crates/` 底下的前端。先讀完 `CLAUDE.md`，尤�
 | `escape` | | 丟棄組字區 |
 | `context` | `text` | 游標前的文字，只在組字區為空時有效 |
 | `learning` | `enabled` | 開關個人化學習 |
+| `style` | `style`：`casual` 或 `formal` | 口語模式（預設）：輕聲「ㄉㄜ」一律先選「的」；正式模式：由模型判斷的／地／得。只影響送出請求的那個 `sid` |
 | `state` | | 只查詢狀態 |
 | `close` | | 釋放這個 `sid` |
 | `quit` | | 結束引擎（只由 host 使用） |
@@ -99,6 +102,7 @@ Windows 端要寫的是 `crates/` 底下的前端。先讀完 `CLAUDE.md`，尤�
 | `cursor` | 候選游標位置（第幾個字之後） |
 | `syllables` | 已完成的音節數 |
 | `segments` | 目前的斷詞結果 |
+| `style` | 目前的模式（`casual`／`formal`） |
 | `candidates` | `[{"word": "在家", "start": 1, "length": 2}, ...]`，長詞在前 |
 | `commit` | 送出的文字 |
 | `error` | `ok` 為 false 時的原因 |

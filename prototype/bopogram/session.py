@@ -83,6 +83,14 @@ class Session:
     def move(self, delta: int) -> None:
         self.cursor = max(0, min(len(self.decoder.syllables), self.cursor + delta))
 
+    def set_style(self, style: str) -> bool:
+        """"casual" or "formal" (see Decoder.style); the buffer is decoded again."""
+        try:
+            self.decoder.set_style(style)
+        except ValueError:
+            return False
+        return True
+
     def escape(self) -> None:
         self._clear()
 
@@ -156,4 +164,5 @@ class Session:
 
     def state(self) -> dict:
         return {"preedit": self.preedit(), "pending": self.pending, "cursor": self.cursor,
-                "syllables": len(self.decoder.syllables), "segments": self._segments()}
+                "syllables": len(self.decoder.syllables), "segments": self._segments(),
+                "style": self.decoder.style}

@@ -17,6 +17,12 @@ from dataclasses import dataclass
 from .lexicon import MAX_WORD_LEN, Lexicon
 from .lm import UNKNOWN_CHAR, MixtureLM, State
 
+# The three structural particles share one pronunciation. Everyday writing uses
+# 的 for all of them; formal writing distinguishes 的 / 地 / 得.
+PARTICLE_SYLLABLE = ("˙ㄉㄜ",)
+PARTICLE_CASUAL = ["的"]
+STYLES = ("casual", "formal")
+
 
 @dataclass(slots=True)
 class Hyp:
@@ -29,7 +35,8 @@ class Hyp:
 
 class Decoder:
     def __init__(self, lexicon: Lexicon, lm: MixtureLM, beam: int = 16, max_candidates: int = 40,
-                 extra_score=None, word_penalty: float = 0.0, eos_weight: float = 0.0):
+                 extra_score=None, word_penalty: float = 0.0, eos_weight: float = 0.0,
+                 style: str = "formal"):
         self.lexicon = lexicon
         self.lm = lm
         self.beam = beam
@@ -37,6 +44,9 @@ class Decoder:
         self.extra_score = extra_score  # optional callable(prev_word, word) -> added log score
         self.word_penalty = word_penalty  # added per word; negative values favour longer words
         self.eos_weight = eos_weight      # weight of ln P(end of sentence) when ranking results
+        # "casual": a lone neutral-tone ㄉㄜ is always 的 unless the user picks otherwise.
+        # "formal": the language model chooses between 的 / 地 / 得.
+        self.style = style
         self._cand_cache: dict[tuple[str, ...], list[str]] = {}
         # Spans the user has fixed by picking a candidate: (start, end) -> word.
         self.pinned: dict[tuple[int, int], str] = {}
@@ -67,6 +77,14 @@ class Decoder:
                 return False
         return True
 
+    def set_style(self, style: str) -> None:
+        """Switch between "casual" and "formal" and decode the current buffer again."""
+        if style not in STYLES:
+            raise ValueError(f"unknown style {style!r}")
+        if style != self.style:
+            self.style = style
+            self.repin(self.pinned)
+
     def repin(self, pinned: dict[tuple[int, int], str], start_state: State | None = None) -> None:
         """Replace the pinned spans and decode the current buffer again."""
         syllables = list(self.syllables)
@@ -88,7 +106,9 @@ class Decoder:
             hyps = self.nodes[i]
             if not hyps:
                 continue
-            words = self._candidates(tuple(self.syllables[i:j]))
+            key = tuple(self.syllables[i:j])
+            words = PARTICLE_CASUAL if self.style == "casual" and key == PARTICLE_SYLLABLE \
+                else self._candidates(key)
             if self.pinned:
                 fixed = self.pinned.get((i, j))
                 if fixed is not None:

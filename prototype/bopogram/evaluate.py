@@ -74,6 +74,7 @@ def run_eval(args) -> int:
     rows = load_testset(args.testset)
     readings = load_readings(args.readings)
     engine = Engine(args.config, use_user_model=False)
+    engine.set_style(args.style)
 
     char_freq: dict[str, float] = {}
     if args.system == "char-unigram":
@@ -85,7 +86,7 @@ def run_eval(args) -> int:
                 char_freq[ch] = float(n)
     if args.system == "word-unigram":
         decoder = Decoder(engine.lexicon, _UnigramLM(engine.lm), beam=1,
-                          max_candidates=engine.decoder.max_candidates)
+                          max_candidates=engine.decoder.max_candidates, style=args.style)
     else:
         decoder = engine.decoder
 
@@ -126,6 +127,10 @@ def run_eval(args) -> int:
             skipped += 1
             continue
         hyp = convert(syls, row.get("context") or "", timings)
+        if args.style == "casual":
+            # Casual style writes 的 for every structural particle; that is not an error.
+            gold = "".join("的" if s == "˙ㄉㄜ" and g in "地得" and h == "的" else g
+                           for g, h, s in zip(gold, hyp, syls))
         correct_chars = sum(1 for a, b in zip(hyp, gold) if a == b) if len(hyp) == len(gold) else 0
         groups = ["all", row["category"]]
         if OVERLAP_MARK not in (row.get("note") or ""):

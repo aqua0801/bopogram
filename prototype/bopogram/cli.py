@@ -26,6 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--layout", default="dachen", choices=sorted(LAYOUTS))
     c.add_argument("--context", default="", help="text before the cursor (read-only)")
     c.add_argument("--nbest", type=int, default=1)
+    c.add_argument("--style", choices=["casual", "formal"], help="override the configured style")
 
     s = sub.add_parser("serve", help="JSON-lines protocol on stdin/stdout for a front end")
     s.add_argument("--layout", default="dachen", choices=sorted(LAYOUTS))
@@ -35,6 +36,8 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--readings", required=True, help="TSV: id, bopomofo syllables")
     e.add_argument("--system", default="bopogram", choices=["bopogram", "word-unigram", "char-unigram"])
     e.add_argument("--char-freq", help="character frequency TSV (char-unigram baseline)")
+    e.add_argument("--style", default="formal", choices=["casual", "formal"],
+                   help="the test set uses standard 的/地/得, so it is scored in formal style by default")
     e.add_argument("--errors", help="write wrong sentences to this file")
     e.add_argument("--json", help="write the metrics to this file")
     args = ap.parse_args(argv)
@@ -49,6 +52,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: {err}", file=sys.stderr)
             return 2
         engine = Engine(args.config, use_user_model=False)
+        if args.style:
+            engine.set_style(args.style)
         for text, score in engine.convert(syllables, context=args.context, nbest=args.nbest):
             print(f"{text}\t{score:.3f}" if args.nbest > 1 else text)
         return 0

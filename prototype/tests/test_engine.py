@@ -23,9 +23,10 @@ DICT = """我\tㄨㄛˇ\ttest
 看\tㄎㄢˋ\ttest
 看看\tㄎㄢˋ ㄎㄢˋ\ttest
 的\t˙ㄉㄜ\ttest
+地\t˙ㄉㄜ\ttest
 """
 UNIGRAM = {"我": 0.2, "在": 0.15, "再": 0.1, "家": 0.1, "加": 0.05, "看": 0.1, "看看": 0.05, "的": 0.2}
-BIGRAM = {("我", "在"): 0.4, ("在", "家"): 0.5, ("我", "再"): 0.2, ("再", "看看"): 0.6, ("在", "看看"): 0.05}
+BIGRAM = {("看看", "地"): 0.9, ("我", "在"): 0.4, ("在", "家"): 0.5, ("我", "再"): 0.2, ("再", "看看"): 0.6, ("在", "看看"): 0.05}
 
 
 class FakeLM:
@@ -151,6 +152,22 @@ class ProtocolTest(unittest.TestCase):
         self.assertFalse(handle(s, {"op": "nonsense"})["ok"])
         handle(s, {"op": "learning", "enabled": False})
         self.assertFalse(s.learn)
+
+    def test_style_switches_particle_choice(self):
+        # The toy model prefers 地 after 看看; casual style still writes 的.
+        s = make_session()
+        s.context = "看看"
+        s.escape()
+        self.assertTrue(handle(s, {"op": "style", "style": "formal"})["ok"])
+        type_keys(s, "2k7")
+        self.assertEqual(s.preedit(), "地")
+        res = handle(s, {"op": "style", "style": "casual"})
+        self.assertEqual((res["preedit"], res["style"]), ("的", "casual"))
+        # A candidate picked by hand wins over the style.
+        words = [c["word"] for c in s.candidates()]
+        s.select(words.index("地"))
+        self.assertEqual(s.preedit(), "地")
+        self.assertFalse(handle(s, {"op": "style", "style": "nonsense"})["ok"])
 
 
 if __name__ == "__main__":
