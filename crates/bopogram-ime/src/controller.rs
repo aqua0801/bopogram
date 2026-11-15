@@ -1,5 +1,9 @@
 //! Which key does what.
 //!
+//! The key rules follow the behaviour Microsoft documents for its Bopomofo
+//! IME (see the table in `prototype/docs/frontend-handoff.md`), so that its
+//! users need not relearn anything.
+//!
 //! The controller keeps only what it needs to decide, without asking the
 //! engine, whether a key belongs to the input method (TSF asks that before
 //! it delivers the key). Everything about choosing characters stays in the
@@ -11,6 +15,9 @@ use crate::protocol::{Engine, Op, Response};
 
 /// Candidates per page; the digit keys 1-9 pick from the page.
 pub const PAGE_SIZE: usize = 9;
+
+pub const CASUAL: &str = "casual";
+pub const FORMAL: &str = "formal";
 
 // Virtual-key codes (US keyboard, which is what Taiwanese keyboards use).
 pub mod vk {
@@ -24,19 +31,26 @@ pub mod vk {
     pub const SPACE: u32 = 0x20;
     pub const PRIOR: u32 = 0x21;
     pub const NEXT: u32 = 0x22;
+    pub const END: u32 = 0x23;
+    pub const HOME: u32 = 0x24;
     pub const LEFT: u32 = 0x25;
     pub const UP: u32 = 0x26;
     pub const RIGHT: u32 = 0x27;
     pub const DOWN: u32 = 0x28;
+    pub const DELETE: u32 = 0x2E;
     pub const LWIN: u32 = 0x5B;
     pub const RWIN: u32 = 0x5C;
+    pub const NUMPAD0: u32 = 0x60;
+    pub const NUMPAD9: u32 = 0x69;
     pub const LSHIFT: u32 = 0xA0;
     pub const RMENU: u32 = 0xA5;
     pub const OEM_1: u32 = 0xBA; // ;
+    pub const OEM_PLUS: u32 = 0xBB; // =
     pub const OEM_COMMA: u32 = 0xBC;
     pub const OEM_MINUS: u32 = 0xBD;
     pub const OEM_PERIOD: u32 = 0xBE;
     pub const OEM_2: u32 = 0xBF; // /
+    pub const OEM_3: u32 = 0xC0; // `
     pub const OEM_4: u32 = 0xDB; // [
     pub const OEM_5: u32 = 0xDC; // \
     pub const OEM_6: u32 = 0xDD; // ]
@@ -57,8 +71,11 @@ pub struct Key {
 pub struct Outcome {
     /// False: the application handles the key as if no input method existed.
     pub eaten: bool,
-    /// Text to put into the document. The composition ends with it.
+    /// Text to put into the document before the preedit is shown again.
+    /// The composition may continue after it (see `Controller::preedit`).
     pub commit: Option<String>,
+    /// The key switched between the casual and the formal style.
+    pub style_changed: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -66,13 +83,16 @@ enum Action {
     Pass,
     Swallow,
     Send(Op),
+    /// The ` key: the next symbol key gives its full-width form.
+    StartPrefix,
     OpenCandidates,
-    SelectOnPage(usize),
+    /// Index into the whole candidate list.
+    SelectIndex(usize),
+    MoveSelection(isize),
     NextPage,
     PrevPage,
     CloseWindow,
-    Commit,
-    Punctuation(char),
+    ToggleStyle,
 }
 
 fn is_shift(code: u32) -> bool {
@@ -84,41 +104,42 @@ fn is_modifier(code: u32) -> bool {
         || (vk::LSHIFT..=vk::RMENU).contains(&code)
 }
 
+/// The ASCII character a key types on a US keyboard, Caps Lock aside.
+fn ascii(code: u32, shift: bool) -> Option<char> {
+    let pair = |plain: char, shifted: char| Some(if shift { shifted } else { plain });
+    match code {
+        0x30..=0x39 if shift => ")!@#$%^&*(".chars().nth((code - 0x30) as usize),
+        0x30..=0x39 => char::from_u32(code),
+        0x41..=0x5A => char::from_u32(if shift { code } else { code + 0x20 }),
+        vk::SPACE => Some(' '),
+        vk::OEM_1 => pair(';', ':'),
+        vk::OEM_PLUS => pair('=', '+'),
+        vk::OEM_COMMA => pair(',', '<'),
+        vk::OEM_MINUS => pair('-', '_'),
+        vk::OEM_PERIOD => pair('.', '>'),
+        vk::OEM_2 => pair('/', '?'),
+        vk::OEM_3 => pair('`', '~'),
+        vk::OEM_4 => pair('[', '{'),
+        vk::OEM_5 => pair('\\', '|'),
+        vk::OEM_6 => pair(']', '}'),
+        vk::OEM_7 => pair('\'', '"'),
+        _ => None,
+    }
+}
+
 /// The character the Dachen layout knows this key by.
 fn layout_char(code: u32) -> Option<char> {
     match code {
-        0x30..=0x39 => char::from_u32(code),
-        0x41..=0x5A => char::from_u32(code + 0x20),
-        vk::SPACE => Some(' '),
-        vk::OEM_1 => Some(';'),
-        vk::OEM_COMMA => Some(','),
-        vk::OEM_PERIOD => Some('.'),
-        vk::OEM_2 => Some('/'),
-        vk::OEM_MINUS => Some('-'),
+        0x30..=0x39 | 0x41..=0x5A | vk::SPACE => ascii(code, false),
+        vk::OEM_1 | vk::OEM_COMMA | vk::OEM_PERIOD | vk::OEM_2 | vk::OEM_MINUS => {
+            ascii(code, false)
+        }
         _ => None,
     }
 }
 
 fn is_tone(key: char) -> bool {
     matches!(key, ' ' | '3' | '4' | '6' | '7')
-}
-
-/// Full-width punctuation, typed with Shift. The plain keys are bopomofo.
-fn punctuation(code: u32) -> Option<char> {
-    Some(match code {
-        vk::OEM_COMMA => '，',
-        vk::OEM_PERIOD => '。',
-        vk::OEM_2 => '？',
-        vk::OEM_1 => '：',
-        vk::OEM_5 => '；',
-        vk::OEM_7 => '、',
-        vk::OEM_4 => '「',
-        vk::OEM_6 => '」',
-        0x31 => '！',
-        0x39 => '（',
-        0x30 => '）',
-        _ => return None,
-    })
 }
 
 pub struct Controller<E: Engine> {
@@ -129,18 +150,29 @@ pub struct Controller<E: Engine> {
     enabled: bool,
     /// Shift went down and nothing else has been pressed since.
     shift_alone: bool,
+    /// ` was pressed: the next symbol key gives its full-width form.
+    prefix: bool,
     /// A request failed, so the engine may still hold a composition that
     /// the front end has given up on. Discard it before the next request.
     stale: bool,
     /// The engine has not been told the current `enabled` state yet.
     learning_unsent: bool,
+    /// The style the user chose, if known. The engine is told whenever it
+    /// reports another one (a new connection starts with its default).
+    wanted_style: Option<String>,
+    /// The style the engine last reported.
+    style: Option<String>,
     preedit: String,
     pending: String,
     /// The chosen text without the unfinished syllable.
     text: String,
-    cursor: usize,
+    /// Insertion point, in characters from the start of the preedit.
+    caret: usize,
+    /// Text the engine handed over for the document, not yet passed on.
+    committed: String,
     candidates: Vec<String>,
-    page: usize,
+    /// Highlighted candidate: an index into the whole list.
+    selected: usize,
     window_open: bool,
 }
 
@@ -151,14 +183,18 @@ impl<E: Engine> Controller<E> {
             chinese: true,
             enabled: true,
             shift_alone: false,
+            prefix: false,
             stale: false,
             learning_unsent: false,
+            wanted_style: None,
+            style: None,
             preedit: String::new(),
             pending: String::new(),
             text: String::new(),
-            cursor: 0,
+            caret: 0,
+            committed: String::new(),
             candidates: Vec::new(),
-            page: 0,
+            selected: 0,
             window_open: false,
         }
     }
@@ -173,19 +209,9 @@ impl<E: Engine> Controller<E> {
         &self.preedit
     }
 
-    /// Candidate cursor, in characters from the start of the preedit.
-    pub fn cursor(&self) -> usize {
-        self.cursor
-    }
-
-    /// Where the caret belongs, in UTF-16 units from the start of the
-    /// preedit: at the candidate cursor, or at the very end (after the
-    /// unfinished syllable) when the cursor is past the last character.
+    /// Where the caret belongs, in UTF-16 units from the start of the preedit.
     pub fn caret_units(&self) -> usize {
-        if self.cursor >= self.text.chars().count() {
-            return self.preedit.encode_utf16().count();
-        }
-        self.preedit.chars().take(self.cursor).map(char::len_utf16).sum()
+        self.preedit.chars().take(self.caret).map(char::len_utf16).sum()
     }
 
     pub fn chinese(&self) -> bool {
@@ -196,69 +222,154 @@ impl<E: Engine> Controller<E> {
         !self.preedit.is_empty()
     }
 
-    /// The candidates to show, with the page number and the page count.
-    pub fn candidate_page(&self) -> Option<(&[String], usize, usize)> {
+    /// "casual" or "formal".
+    pub fn style(&self) -> &str {
+        self.wanted_style.as_deref().or(self.style.as_deref()).unwrap_or(CASUAL)
+    }
+
+    /// The style the user chose earlier (in any application). The engine is
+    /// told with the next request.
+    pub fn want_style(&mut self, style: &str) {
+        if style == CASUAL || style == FORMAL {
+            self.wanted_style = Some(style.to_owned());
+        }
+    }
+
+    /// The candidates to show: the page's items, the highlighted item on
+    /// the page, the page number and the page count.
+    pub fn candidate_page(&self) -> Option<(&[String], usize, usize, usize)> {
         if !self.window_open {
             return None;
         }
-        let start = self.page * PAGE_SIZE;
+        let page = self.selected / PAGE_SIZE;
+        let start = page * PAGE_SIZE;
         let end = (start + PAGE_SIZE).min(self.candidates.len());
-        Some((&self.candidates[start..end], self.page, self.pages()))
+        Some((&self.candidates[start..end], self.selected - start, page, self.pages()))
     }
 
     fn pages(&self) -> usize {
-        self.candidates.len().div_ceil(PAGE_SIZE)
+        self.candidates.len().div_ceil(PAGE_SIZE).max(1)
     }
 
     // -- deciding ----------------------------------------------------------
 
     fn classify(&self, key: Key) -> Action {
-        if !self.enabled || !self.chinese || is_modifier(key.vk) || key.ctrl || key.alt {
+        if !self.enabled || !self.chinese || is_modifier(key.vk) || key.alt {
             return Action::Pass;
+        }
+        if key.ctrl {
+            if key.shift {
+                return Action::Pass;
+            }
+            return match key.vk {
+                vk::OEM_3 => Action::ToggleStyle,
+                // Ctrl with these keys types punctuation; every other
+                // shortcut belongs to the application.
+                vk::OEM_COMMA | vk::OEM_PERIOD | vk::OEM_7 | vk::OEM_4 | vk::OEM_6 => {
+                    ascii(key.vk, false).map_or(Action::Pass, |c| Action::Send(Op::Symbol(c)))
+                }
+                _ => Action::Pass,
+            };
         }
         let composing = self.composing();
+        let busy = composing || self.prefix;
         // Caps Lock means the user wants Latin letters.
-        if key.caps && !composing {
+        if key.caps && !busy {
             return Action::Pass;
         }
-        let idle = if composing { Action::Swallow } else { Action::Pass };
+        let idle = if busy { Action::Swallow } else { Action::Pass };
+        let typed = ascii(key.vk, key.shift);
+
+        if self.prefix {
+            if let Some(c) = typed.filter(char::is_ascii_punctuation) {
+                return Action::Send(Op::Symbol(c));
+            }
+            // Anything else cancels the prefix and is handled as usual.
+        }
 
         if self.window_open && !key.shift {
+            let page_start = self.selected / PAGE_SIZE * PAGE_SIZE;
             match key.vk {
                 0x31..=0x39 => {
-                    let n = (key.vk - 0x31) as usize;
-                    let on_page = self.candidate_page().map_or(0, |(items, _, _)| items.len());
-                    return if n < on_page { Action::SelectOnPage(n) } else { Action::Swallow };
+                    let index = page_start + (key.vk - 0x31) as usize;
+                    return if index < self.candidates.len() {
+                        Action::SelectIndex(index)
+                    } else {
+                        Action::Swallow
+                    };
                 }
-                vk::NEXT | vk::DOWN | vk::SPACE => return Action::NextPage,
-                vk::PRIOR | vk::UP => return Action::PrevPage,
-                vk::ESCAPE | vk::RETURN | vk::BACK => return Action::CloseWindow,
+                vk::DOWN => return Action::MoveSelection(1),
+                vk::UP => return Action::MoveSelection(-1),
+                vk::NEXT | vk::SPACE => return Action::NextPage,
+                vk::PRIOR => return Action::PrevPage,
+                vk::RETURN => return Action::SelectIndex(self.selected),
+                vk::ESCAPE => return Action::CloseWindow,
                 _ => {}
             }
         }
 
-        if key.shift {
-            return punctuation(key.vk).map_or(idle, Action::Punctuation);
+        // Latin letters (Shift or Caps Lock) go into the composition as they
+        // are; with nothing composed they are the application's.
+        if key.shift || key.caps {
+            if let Some(c) = typed.filter(char::is_ascii_alphabetic) {
+                let c = if key.shift ^ key.caps {
+                    c.to_ascii_uppercase()
+                } else {
+                    c.to_ascii_lowercase()
+                };
+                return if composing && self.pending.is_empty() {
+                    Action::Send(Op::Text(c.to_string()))
+                } else {
+                    idle
+                };
+            }
         }
+        if key.shift {
+            return match typed.filter(char::is_ascii_punctuation) {
+                Some(c) => Action::Send(Op::Symbol(c)),
+                None => idle, // Shift+Space (full/half width) is not implemented
+            };
+        }
+
         if let Some(c) = layout_char(key.vk) {
             let has_pending = !self.pending.is_empty();
             return match c {
-                ' ' if has_pending => Action::Send(Op::Key(' ')),
-                ' ' if composing => Action::OpenCandidates,
+                // First tone, or a space inside the composition.
+                ' ' if composing => Action::Send(Op::Key(' ')),
+                ' ' => idle,
                 // A tone with no syllable to attach to.
                 c if is_tone(c) && !has_pending => idle,
                 c => Action::Send(Op::Key(c)),
             };
         }
-        if !composing {
-            return Action::Pass;
-        }
         match key.vk {
+            vk::OEM_3 => return Action::StartPrefix,
+            // The symbol keys that are not part of the layout.
+            vk::OEM_PLUS | vk::OEM_4 | vk::OEM_5 | vk::OEM_6 | vk::OEM_7 => {
+                if let Some(c) = typed {
+                    return Action::Send(Op::Symbol(c));
+                }
+            }
+            _ => {}
+        }
+        if !composing {
+            return idle;
+        }
+        let settled = self.pending.is_empty();
+        match key.vk {
+            vk::NUMPAD0..=vk::NUMPAD9 if settled => {
+                let digit = char::from_u32(key.vk - vk::NUMPAD0 + 0x30).unwrap_or('0');
+                Action::Send(Op::Text(digit.to_string()))
+            }
             vk::BACK => Action::Send(Op::Backspace),
+            vk::DELETE => Action::Send(Op::Delete),
             vk::LEFT => Action::Send(Op::Left),
             vk::RIGHT => Action::Send(Op::Right),
-            vk::DOWN if self.pending.is_empty() => Action::OpenCandidates,
-            vk::RETURN => Action::Commit,
+            vk::HOME => Action::Send(Op::Home),
+            vk::END => Action::Send(Op::End),
+            vk::DOWN if settled => Action::OpenCandidates,
+            vk::UP if settled => Action::Send(Op::Cycle(1)),
+            vk::RETURN => Action::Send(Op::Commit),
             vk::ESCAPE => Action::Send(Op::Escape),
             // Anything else would reach the application in the middle of a composition.
             _ => Action::Swallow,
@@ -273,14 +384,31 @@ impl<E: Engine> Controller<E> {
     /// True if this key is about to start a new composition, which is the
     /// moment to report the text before the cursor with `set_context`.
     pub fn starts_composition(&self, key: Key) -> bool {
-        !self.composing() && matches!(self.classify(key), Action::Send(Op::Key(_)))
+        !self.composing()
+            && matches!(self.classify(key), Action::Send(Op::Key(_) | Op::Symbol(_)))
     }
 
     // -- talking to the engine ---------------------------------------------
 
+    /// Copy the state the engine sent, and keep the text it wants committed.
+    fn absorb(&mut self, response: &Response) {
+        self.preedit.clone_from(&response.preedit);
+        self.pending.clone_from(&response.pending);
+        self.text = response.segments.concat();
+        self.caret = response.caret;
+        if response.style.is_some() {
+            self.style.clone_from(&response.style);
+        }
+        if let Some(text) = &response.commit {
+            self.committed.push_str(text);
+        }
+    }
+
     /// One request, with the bookkeeping that keeps both sides in step.
     fn exchange(&mut self, op: &Op) -> Option<Response> {
         if self.stale {
+            // The first Escape only drops an unfinished syllable.
+            self.engine.request(&Op::Escape)?;
             self.engine.request(&Op::Escape)?;
             self.stale = false;
         }
@@ -288,11 +416,14 @@ impl<E: Engine> Controller<E> {
             self.engine.request(&Op::Learning(self.enabled))?;
             self.learning_unsent = false;
         }
+        if let Some(wanted) = self.wanted_style.clone().filter(|w| self.style.as_ref() != Some(w)) {
+            let response = self.engine.request(&Op::Style(wanted.clone()))?;
+            self.absorb(&response);
+            // An engine that does not report its style is not asked again.
+            self.style.get_or_insert(wanted);
+        }
         let response = self.engine.request(op)?;
-        self.preedit = response.preedit.clone();
-        self.pending = response.pending.clone();
-        self.text = response.segments.concat();
-        self.cursor = response.cursor;
+        self.absorb(&response);
         Some(response)
     }
 
@@ -300,30 +431,36 @@ impl<E: Engine> Controller<E> {
         self.preedit.clear();
         self.pending.clear();
         self.text.clear();
-        self.cursor = 0;
+        self.caret = 0;
         self.window_open = false;
+        self.prefix = false;
     }
 
     /// The engine did not answer. Give up on the composition, keeping the
     /// text that was already on screen so the user does not lose it.
-    fn lost(&mut self) -> Option<String> {
+    fn lost(&mut self) {
         self.stale = true;
         let text = std::mem::take(&mut self.text);
+        self.committed.push_str(&text);
         self.clear();
-        Some(text).filter(|t| !t.is_empty())
+    }
+
+    fn take_committed(&mut self) -> Option<String> {
+        Some(std::mem::take(&mut self.committed)).filter(|text| !text.is_empty())
     }
 
     /// End the composition now and return its text, if there is one.
-    /// Used when focus moves away, when the mode changes, and before punctuation.
+    /// Used when focus moves away and when the mode changes.
     pub fn finish(&mut self) -> Option<String> {
+        self.prefix = false;
         if !self.composing() {
             return None;
         }
         self.window_open = false;
-        match self.exchange(&Op::Commit) {
-            Some(response) => response.commit.filter(|t| !t.is_empty()),
-            None => self.lost(),
+        if self.exchange(&Op::Commit).is_none() {
+            self.lost();
         }
+        self.take_committed()
     }
 
     /// Report the text before the cursor. Ignored while composing.
@@ -341,8 +478,8 @@ impl<E: Engine> Controller<E> {
         }
         if self.composing() {
             self.stale = true;
-            self.clear();
         }
+        self.clear();
         self.enabled = enabled;
         self.learning_unsent = true;
         // Sent now if the engine is reachable, otherwise with the next request.
@@ -360,49 +497,71 @@ impl<E: Engine> Controller<E> {
     pub fn key_down(&mut self, key: Key) -> Outcome {
         self.note_key_down(key);
         let action = self.classify(key);
-        if !matches!(action, Action::Pass | Action::Swallow | Action::NextPage | Action::PrevPage) {
+        let was_busy = self.composing() || self.prefix;
+        if action != Action::Pass {
+            self.prefix = false;
+        }
+        if !matches!(
+            action,
+            Action::Pass
+                | Action::Swallow
+                | Action::MoveSelection(_)
+                | Action::NextPage
+                | Action::PrevPage
+        ) {
             self.window_open = false;
         }
-        let was_composing = self.composing();
-        let mut outcome = Outcome { eaten: action != Action::Pass, commit: None };
+        let mut outcome = Outcome { eaten: action != Action::Pass, ..Outcome::default() };
+        let count = self.candidates.len().max(1);
+        let page = self.selected / PAGE_SIZE;
         let sent = match action {
             Action::Pass | Action::Swallow | Action::CloseWindow => Some(()),
+            Action::StartPrefix => {
+                self.prefix = true;
+                Some(())
+            }
+            Action::MoveSelection(step) => {
+                self.selected = (self.selected + count).wrapping_add_signed(step) % count;
+                Some(())
+            }
             Action::NextPage => {
-                self.page = (self.page + 1) % self.pages().max(1);
+                self.selected = (page + 1) % self.pages() * PAGE_SIZE;
                 Some(())
             }
             Action::PrevPage => {
-                self.page = (self.page + self.pages().max(1) - 1) % self.pages().max(1);
+                self.selected = (page + self.pages() - 1) % self.pages() * PAGE_SIZE;
                 Some(())
             }
             Action::Send(op) => self.exchange(&op).map(drop),
             Action::OpenCandidates => self.exchange(&Op::Candidates).map(|response| {
                 if !response.candidates.is_empty() {
                     self.candidates = response.candidates;
-                    self.page = 0;
+                    self.selected = 0;
                     self.window_open = true;
                 }
             }),
-            Action::SelectOnPage(n) => {
-                self.exchange(&Op::Select(self.page * PAGE_SIZE + n)).map(drop)
-            }
-            Action::Commit => self.exchange(&Op::Commit).map(|response| {
-                outcome.commit = response.commit.filter(|t| !t.is_empty());
-            }),
-            Action::Punctuation(mark) => {
-                let mut text = self.finish().unwrap_or_default();
-                text.push(mark);
-                outcome.commit = Some(text);
-                Some(())
+            Action::SelectIndex(index) => self.exchange(&Op::Select(index)).map(drop),
+            Action::ToggleStyle => {
+                let before = self.wanted_style.clone();
+                let next = if self.style() == FORMAL { CASUAL } else { FORMAL };
+                self.wanted_style = Some(next.to_owned());
+                let done = self.exchange(&Op::State).map(drop);
+                if done.is_some() {
+                    outcome.style_changed = true;
+                } else {
+                    self.wanted_style = before;
+                }
+                done
             }
         };
         if sent.is_none() {
             // Engine unreachable. With nothing composed the key simply goes
             // to the application; otherwise it is dropped, because it was
             // meant for a composition that no longer exists.
-            outcome.eaten = was_composing;
-            outcome.commit = self.lost();
+            outcome.eaten = was_busy;
+            self.lost();
         }
+        outcome.commit = self.take_committed();
         outcome
     }
 
@@ -421,12 +580,16 @@ impl<E: Engine> Controller<E> {
 mod tests {
     use super::*;
 
-    /// Stands in for the engine: every finished syllable becomes 字.
+    /// Stands in for the engine: every finished syllable becomes 字, and
+    /// symbols and text are kept as they are sent. The cursor stays at the end.
     #[derive(Default)]
     struct Fake {
         down: bool,
         text: String,
         pending: String,
+        style: String,
+        /// Committed automatically with the next response, as a full buffer would be.
+        flush: Option<String>,
         log: Vec<Op>,
     }
 
@@ -438,11 +601,14 @@ mod tests {
             self.log.push(op.clone());
             let mut response = Response { ok: true, ..Response::default() };
             match op {
+                Op::Key(' ') if self.pending.is_empty() => self.text.push(' '),
                 Op::Key(c) if is_tone(*c) => {
                     self.pending.clear();
                     self.text.push('字');
                 }
                 Op::Key(c) => self.pending.push(*c),
+                Op::Symbol(c) => self.text.push(*c),
+                Op::Text(text) => self.text.push_str(text),
                 Op::Backspace => {
                     if self.pending.pop().is_none() {
                         self.text.pop();
@@ -453,15 +619,24 @@ mod tests {
                 }
                 Op::Commit => response.commit = Some(std::mem::take(&mut self.text)),
                 Op::Escape => {
-                    self.text.clear();
+                    if self.pending.is_empty() {
+                        self.text.clear();
+                    }
                     self.pending.clear();
                 }
+                Op::Style(style) => self.style.clone_from(style),
                 _ => {}
+            }
+            if let Some(flushed) = self.flush.take() {
+                response.commit = Some(flushed + response.commit.as_deref().unwrap_or(""));
             }
             response.preedit = format!("{}{}", self.text, self.pending);
             response.pending = self.pending.clone();
             response.segments = self.text.chars().map(String::from).collect();
             response.cursor = self.text.chars().count();
+            response.caret = response.preedit.chars().count();
+            response.style =
+                Some(if self.style.is_empty() { CASUAL.to_owned() } else { self.style.clone() });
             Some(response)
         }
     }
@@ -470,6 +645,8 @@ mod tests {
         let vk = match c {
             ' ' => vk::SPACE,
             ',' => vk::OEM_COMMA,
+            '`' => vk::OEM_3,
+            '[' => vk::OEM_4,
             c => c.to_ascii_uppercase() as u32,
         };
         Key { vk, ..Key::default() }
@@ -487,19 +664,34 @@ mod tests {
         c
     }
 
+    fn eaten(commit: Option<&str>) -> Outcome {
+        Outcome { eaten: true, commit: commit.map(str::to_owned), style_changed: false }
+    }
+
     #[test]
     fn compose_and_commit() {
         let mut c = typed("ji3");
         assert_eq!(c.preedit(), "字");
-        let outcome = c.key_down(code(vk::RETURN));
-        assert_eq!(outcome, Outcome { eaten: true, commit: Some("字".into()) });
+        assert_eq!(c.key_down(code(vk::RETURN)), eaten(Some("字")));
         assert!(!c.composing());
     }
 
     #[test]
     fn idle_keys_go_to_the_application() {
         let c = Controller::new(Fake::default());
-        for vk in [vk::RETURN, vk::SPACE, vk::BACK, vk::LEFT, vk::DOWN, vk::ESCAPE, 0x33] {
+        for vk in [
+            vk::RETURN,
+            vk::SPACE,
+            vk::BACK,
+            vk::DELETE,
+            vk::LEFT,
+            vk::HOME,
+            vk::UP,
+            vk::DOWN,
+            vk::ESCAPE,
+            vk::NUMPAD0,
+            0x33,
+        ] {
             assert!(!c.test_key(code(vk)), "vk {vk:#x}");
         }
         assert!(c.test_key(key('j')));
@@ -508,30 +700,72 @@ mod tests {
 
     #[test]
     fn keys_during_composition_stay_in_it() {
-        let c = typed("ji3");
+        let mut c = typed("ji3");
         assert!(c.test_key(code(0x09))); // Tab is swallowed
         assert!(c.test_key(code(0x33))); // a tone with no pending syllable
         assert!(!c.starts_composition(key('j')));
         // Shortcuts still reach the application.
         assert!(!c.test_key(Key { ctrl: true, ..key('c') }));
+
+        for (vk, op) in [
+            (vk::DELETE, Op::Delete),
+            (vk::LEFT, Op::Left),
+            (vk::RIGHT, Op::Right),
+            (vk::HOME, Op::Home),
+            (vk::END, Op::End),
+            (vk::UP, Op::Cycle(1)),
+            (vk::NUMPAD0 + 5, Op::Text("5".into())),
+        ] {
+            assert!(c.key_down(code(vk)).eaten);
+            assert_eq!(c.engine_mut().log.last(), Some(&op), "vk {vk:#x}");
+        }
     }
 
     #[test]
-    fn space_is_first_tone_then_candidates() {
+    fn space_is_first_tone_or_a_space() {
         let mut c = typed("ji ");
         assert_eq!(c.preedit(), "字");
-        assert!(c.candidate_page().is_none());
         c.key_down(key(' '));
-        let (items, page, pages) = c.candidate_page().unwrap();
-        assert_eq!((items.len(), page, pages), (9, 0, 2));
+        assert_eq!(c.preedit(), "字 ");
+        assert!(c.candidate_page().is_none());
+    }
 
-        c.key_down(key(' ')); // next page
+    #[test]
+    fn candidate_window() {
+        let mut c = typed("ji3");
+        c.key_down(code(vk::DOWN));
+        let (items, selected, page, pages) = c.candidate_page().unwrap();
+        assert_eq!((items.len(), selected, page, pages), (9, 0, 0, 2));
+
+        c.key_down(code(vk::DOWN));
+        c.key_down(code(vk::DOWN));
+        c.key_down(code(vk::UP));
+        assert_eq!(c.candidate_page().unwrap().1, 1);
+        c.key_down(code(vk::UP));
+        c.key_down(code(vk::UP)); // wraps to the last candidate
+        assert_eq!(c.candidate_page().unwrap().0, ["c9", "c10", "c11"]);
+        assert_eq!(c.candidate_page().unwrap().1, 2);
+
+        c.key_down(key(' ')); // next page wraps to the first
+        assert_eq!(c.candidate_page().unwrap().2, 0);
+        c.key_down(code(vk::PRIOR));
         assert_eq!(c.candidate_page().unwrap().0, ["c9", "c10", "c11"]);
         assert!(c.key_down(key('5')).eaten); // no fifth item on this page
         assert!(c.candidate_page().is_some());
         c.key_down(key('2'));
         assert!(c.candidate_page().is_none());
         assert_eq!(c.engine_mut().log.last(), Some(&Op::Select(10)));
+
+        // Enter picks the highlighted candidate; Escape only closes the window.
+        c.key_down(code(vk::DOWN));
+        c.key_down(code(vk::DOWN));
+        c.key_down(code(vk::RETURN));
+        assert_eq!(c.engine_mut().log.last(), Some(&Op::Select(1)));
+        assert!(c.composing());
+        c.key_down(code(vk::DOWN));
+        c.key_down(code(vk::ESCAPE));
+        assert!(c.candidate_page().is_none());
+        assert_eq!(c.preedit(), "字");
     }
 
     #[test]
@@ -539,7 +773,7 @@ mod tests {
         let mut c = typed("ji3");
         c.key_down(code(vk::SHIFT));
         let outcome = c.key_up(code(vk::SHIFT));
-        assert_eq!(outcome, Outcome { eaten: false, commit: Some("字".into()) });
+        assert_eq!(outcome, Outcome { commit: Some("字".into()), ..Outcome::default() });
         assert!(!c.chinese());
         assert!(!c.test_key(key('j')));
         c.key_down(code(vk::SHIFT));
@@ -548,36 +782,119 @@ mod tests {
     }
 
     #[test]
-    fn shift_punctuation_commits_first() {
+    fn punctuation_goes_into_the_composition() {
         let mut c = typed("ji3");
         c.key_down(code(vk::SHIFT));
-        let outcome = c.key_down(Key { shift: true, ..key(',') });
-        assert_eq!(outcome, Outcome { eaten: true, commit: Some("字，".into()) });
+        assert_eq!(c.key_down(Key { shift: true, ..key(',') }), eaten(None));
+        assert_eq!(c.engine_mut().log.last(), Some(&Op::Symbol('<')));
         c.key_up(code(vk::SHIFT));
         assert!(c.chinese(), "shift used with another key must not toggle");
-        // Shift with a letter is left to the application when idle.
+        assert_eq!(c.key_down(Key { shift: true, ..key('1') }), eaten(None));
+        assert_eq!(c.key_down(Key { ctrl: true, ..key(',') }), eaten(None));
+        assert_eq!(c.key_down(key('[')), eaten(None));
+        assert_eq!(c.preedit(), "字<!,[");
+
+        // Punctuation also starts a composition.
+        let mut c = Controller::new(Fake::default());
+        assert!(c.starts_composition(Key { shift: true, ..key(',') }));
+        assert!(c.key_down(Key { ctrl: true, ..key(',') }).eaten);
+        assert_eq!(c.preedit(), ",");
+    }
+
+    #[test]
+    fn latin_letters() {
+        // With nothing composed they are the application's.
+        let c = Controller::new(Fake::default());
         assert!(!c.test_key(Key { shift: true, ..key('a') }));
+        assert!(!c.test_key(Key { caps: true, ..key('a') }));
+
+        let mut c = typed("ji3");
+        c.key_down(Key { shift: true, ..key('a') });
+        c.key_down(Key { caps: true, ..key('b') });
+        c.key_down(Key { caps: true, shift: true, ..key('c') });
+        assert_eq!(c.preedit(), "字ABc");
+    }
+
+    #[test]
+    fn backtick_prefix() {
+        let mut c = Controller::new(Fake::default());
+        assert!(c.key_down(key('`')).eaten);
+        assert!(!c.composing());
+        assert!(c.key_down(key(',')).eaten);
+        assert_eq!(c.engine_mut().log, [Op::Symbol(',')]);
+
+        // Any other key cancels the prefix and is handled as usual.
+        c.key_down(code(vk::RETURN));
+        c.key_down(key('`'));
+        c.key_down(key('j'));
+        assert_eq!(c.engine_mut().log.last(), Some(&Op::Key('j')));
+        c.key_down(code(vk::ESCAPE));
+        c.key_down(key('`'));
+        assert!(c.key_down(code(vk::RETURN)).eaten, "cancelling the prefix eats the key");
+        assert!(!c.test_key(code(vk::RETURN)));
+    }
+
+    #[test]
+    fn text_committed_by_the_engine_is_passed_on() {
+        let mut c = typed("ji3");
+        c.engine_mut().flush = Some("前面".into());
+        assert_eq!(c.key_down(key('j')), eaten(Some("前面")));
+        assert!(c.composing());
+        c.engine_mut().flush = Some("前面".into());
+        assert_eq!(c.key_down(code(vk::RETURN)), eaten(Some("前面字")));
+    }
+
+    #[test]
+    fn style() {
+        let mut c = Controller::new(Fake::default());
+        assert_eq!(c.style(), CASUAL);
+        let toggle = Key { ctrl: true, ..key('`') };
+        assert!(c.test_key(toggle));
+        let outcome = c.key_down(toggle);
+        assert_eq!(outcome, Outcome { eaten: true, commit: None, style_changed: true });
+        assert_eq!(c.style(), FORMAL);
+        assert_eq!(c.engine_mut().log, [Op::Style(FORMAL.into()), Op::State]);
+
+        // A new connection starts with the engine's default: tell it again.
+        c.engine_mut().style.clear();
+        c.engine_mut().log.clear();
+        c.key_down(key('j'));
+        c.key_down(key('i'));
+        assert_eq!(
+            c.engine_mut().log,
+            [Op::Key('j'), Op::Style(FORMAL.into()), Op::Key('i')]
+        );
+
+        // Chosen in another application.
+        c.want_style(CASUAL);
+        c.key_down(key('3'));
+        assert_eq!(c.engine_mut().style, CASUAL);
+
+        // Engine down: the key is the application's, nothing changes.
+        c.key_down(code(vk::ESCAPE));
+        c.engine_mut().down = true;
+        assert_eq!(c.key_down(toggle), Outcome::default());
+        assert_eq!(c.style(), CASUAL);
     }
 
     #[test]
     fn engine_down_while_idle_passes_the_key() {
         let mut c = Controller::new(Fake { down: true, ..Fake::default() });
-        assert_eq!(c.key_down(key('j')), Outcome { eaten: false, commit: None });
+        assert_eq!(c.key_down(key('j')), Outcome::default());
     }
 
     #[test]
     fn engine_down_while_composing_keeps_the_text() {
         let mut c = typed("ji3j");
         c.engine_mut().down = true;
-        let outcome = c.key_down(key('i'));
-        assert_eq!(outcome, Outcome { eaten: true, commit: Some("字".into()) });
+        assert_eq!(c.key_down(key('i')), eaten(Some("字")));
         assert!(!c.composing());
 
         // Back up: the abandoned composition is discarded before anything else.
         c.engine_mut().down = false;
         c.engine_mut().log.clear();
         c.key_down(key('j'));
-        assert_eq!(c.engine_mut().log, [Op::Escape, Op::Key('j')]);
+        assert_eq!(c.engine_mut().log, [Op::Escape, Op::Escape, Op::Key('j')]);
         assert_eq!(c.preedit(), "j");
     }
 
@@ -587,8 +904,12 @@ mod tests {
         c.set_enabled(false);
         assert!(!c.composing());
         assert!(!c.test_key(key('j')));
+        assert!(!c.test_key(Key { ctrl: true, ..key(',') }));
         let log = &c.engine_mut().log;
-        assert_eq!(log[log.len() - 3..], [Op::Escape, Op::Learning(false), Op::State]);
+        assert_eq!(
+            log[log.len() - 4..],
+            [Op::Escape, Op::Escape, Op::Learning(false), Op::State]
+        );
         c.key_down(code(vk::SHIFT));
         c.key_up(code(vk::SHIFT));
         assert!(c.chinese(), "no mode switch inside a password field");

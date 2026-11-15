@@ -46,14 +46,25 @@ fn type_a_sentence_through_the_host() {
     }
     assert_eq!(controller.preedit(), "我在家");
 
-    // Space with no pending syllable opens the candidates for 在家.
-    controller.key_down(key(' '));
-    let (items, _, _) = controller.candidate_page().expect("candidate window");
+    // Down opens the candidates for the word before the cursor, 在家.
+    controller.key_down(Key { vk: vk::DOWN, ..Key::default() });
+    let (items, _, _, _) = controller.candidate_page().expect("candidate window");
     assert_eq!(items[0], "在家");
     controller.key_down(Key { vk: vk::ESCAPE, ..Key::default() });
     assert!(controller.candidate_page().is_none());
 
+    // Punctuation joins the composition; Left then a syllable inserts before it.
+    controller.key_down(Key { vk: vk::OEM_COMMA, shift: true, ..Key::default() });
+    assert_eq!(controller.preedit(), "我在家，");
+    assert_eq!(controller.caret_units(), 4);
+    controller.key_down(Key { vk: vk::LEFT, ..Key::default() });
+    assert_eq!(controller.caret_units(), 3);
+    controller.key_down(Key { vk: vk::END, ..Key::default() });
+
     let outcome = controller.key_down(Key { vk: vk::RETURN, ..Key::default() });
-    assert_eq!(outcome, Outcome { eaten: true, commit: Some("我在家".into()) });
+    assert_eq!(
+        outcome,
+        Outcome { eaten: true, commit: Some("我在家，".into()), style_changed: false }
+    );
     println!("slowest key: {slowest:?}");
 }

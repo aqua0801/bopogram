@@ -28,6 +28,7 @@ mod edit;
 mod popup;
 mod register;
 mod service;
+mod settings;
 
 pub use dll::{CLSID_TEXT_SERVICE, GUID_DISPLAY_ATTRIBUTE};
 

@@ -31,12 +31,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetCursorPos, GetGUIThreadInfo, GetWindowLongW, GUITHREADINFO, GWL_STYLE,
 };
 
-use crate::controller::{Controller, Key};
+use crate::controller::{Controller, Key, FORMAL};
 use crate::display::{AttributeEnumerator, CompositionAttribute};
 use crate::dll::{host_path, GUID_DISPLAY_ATTRIBUTE};
 use crate::pipe::PipeEngine;
 use crate::popup::Popup;
-use crate::{edit, guard, wide};
+use crate::{edit, guard, settings, wide};
 
 /// Edit control style: the control shows dots instead of the text.
 const ES_PASSWORD: i32 = 0x0020;
@@ -257,7 +257,7 @@ impl TextService_Impl {
     fn refresh_popup(&self) {
         with(&self.state, |s| {
             let Some(controller) = s.controller.as_ref() else { return };
-            let Some((items, page, pages)) = controller.candidate_page() else {
+            let Some((items, selected, page, pages)) = controller.candidate_page() else {
                 if let Some(popup) = &s.popup {
                     popup.hide();
                 }
@@ -270,7 +270,7 @@ impl TextService_Impl {
                 s.popup = Popup::new();
             }
             if let Some(popup) = &s.popup {
-                popup.show(&lines, footer, s.anchor.unwrap_or_else(fallback_anchor));
+                popup.show(&lines, Some(selected), footer, s.anchor.unwrap_or_else(fallback_anchor));
             }
         });
     }
@@ -290,11 +290,30 @@ impl TextService_Impl {
                 with_controller(&self.state, |c| c.set_context(&text));
             }
         }
-        let Some(outcome) = with_controller(&self.state, |c| c.key_down(key)) else {
+        let Some((outcome, formal)) =
+            with_controller(&self.state, |c| (c.key_down(key), c.style() == FORMAL))
+        else {
             return false;
         };
         self.update(context, outcome.commit);
+        if outcome.style_changed {
+            // Remembered for the other applications and for the next session.
+            settings::save_style(if formal { FORMAL } else { crate::controller::CASUAL });
+            self.tip(if formal { "正式" } else { "口語" });
+        }
         outcome.eaten
+    }
+
+    /// A short notice near the caret.
+    fn tip(&self, text: &str) {
+        with(&self.state, |s| {
+            if s.popup.is_none() {
+                s.popup = Popup::new();
+            }
+            if let Some(popup) = &s.popup {
+                popup.show_tip(text, s.anchor.unwrap_or_else(fallback_anchor));
+            }
+        });
     }
 
     /// Shift on its own switches between Chinese and English.
@@ -311,14 +330,7 @@ impl TextService_Impl {
             return;
         }
         self.update(context, outcome.commit);
-        with(&self.state, |s| {
-            if s.popup.is_none() {
-                s.popup = Popup::new();
-            }
-            if let Some(popup) = &s.popup {
-                popup.show_tip(if chinese { "中" } else { "英" }, fallback_anchor());
-            }
-        });
+        self.tip(if chinese { "中" } else { "英" });
     }
 }
 
@@ -364,7 +376,11 @@ impl ITfTextInputProcessorEx_Impl for TextService_Impl {
             // is ready by the time the first key arrives.
             let controller = PipeEngine::new(host_path()).map(|mut engine| {
                 engine.connect();
-                Controller::new(engine)
+                let mut controller = Controller::new(engine);
+                if let Some(style) = settings::load_style() {
+                    controller.want_style(&style);
+                }
+                controller
             });
             with(&self.state, |s| {
                 *s = State {
@@ -382,7 +398,12 @@ impl ITfTextInputProcessorEx_Impl for TextService_Impl {
 
 impl ITfKeyEventSink_Impl for TextService_Impl {
     fn OnSetFocus(&self, foreground: BOOL) -> Result<()> {
-        if !foreground.as_bool() {
+        if foreground.as_bool() {
+            // The style may have been changed in another application.
+            if let Some(style) = settings::load_style() {
+                with_controller(&self.state, |c| c.want_style(&style));
+            }
+        } else {
             with(&self.state, |s| {
                 if let Some(popup) = &s.popup {
                     popup.hide();

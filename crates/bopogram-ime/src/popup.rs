@@ -8,10 +8,11 @@ use std::sync::Once;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateFontW, CreatePen, DeleteObject, EndPaint, GetDC, GetMonitorInfoW,
+    BeginPaint, CreateFontW, CreatePen, DeleteObject, EndPaint, FillRect, GetDC, GetMonitorInfoW,
     GetStockObject, GetSysColor, GetSysColorBrush, GetTextExtentPoint32W, InvalidateRect,
     MonitorFromPoint, Rectangle, ReleaseDC, SelectObject, SetBkMode, SetTextColor, TextOutW,
-    CLEARTYPE_QUALITY, COLOR_GRAYTEXT, COLOR_WINDOW, COLOR_WINDOWTEXT, DEFAULT_CHARSET, HDC,
+    CLEARTYPE_QUALITY, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOW,
+    COLOR_WINDOWTEXT, DEFAULT_CHARSET, HDC,
     HFONT, MONITORINFO, MONITOR_DEFAULTTONEAREST, NULL_BRUSH, PAINTSTRUCT, PS_SOLID,
     TRANSPARENT,
 };
@@ -42,6 +43,8 @@ static REGISTER: Once = Once::new();
 struct Content {
     lines: Vec<Vec<u16>>,
     footer: bool,
+    /// The highlighted line, if any.
+    selected: Option<usize>,
 }
 
 pub struct Popup {
@@ -84,12 +87,19 @@ impl Popup {
 
     /// Show `lines` just below `anchor` (screen coordinates), or above it
     /// when there is no room below.
-    pub fn show(&self, lines: &[String], footer: Option<String>, anchor: RECT) {
+    pub fn show(
+        &self,
+        lines: &[String],
+        selected: Option<usize>,
+        footer: Option<String>,
+        anchor: RECT,
+    ) {
         unsafe {
             KillTimer(Some(self.window), TIP_TIMER).ok();
             let Some(content) = content(self.window) else { return };
             content.lines = lines.iter().map(|line| wide(line)).collect();
             content.footer = footer.is_some();
+            content.selected = selected;
             content.lines.extend(footer.map(|line| wide(&line)));
 
             let dpi = GetDpiForWindow(self.window).max(96) as i32;
@@ -141,7 +151,7 @@ impl Popup {
 
     /// Show a short notice (the Chinese/English mode) that hides itself.
     pub fn show_tip(&self, text: &str, anchor: RECT) {
-        self.show(&[text.to_owned()], None, anchor);
+        self.show(&[text.to_owned()], None, None, anchor);
         unsafe { SetTimer(Some(self.window), TIP_TIMER, TIP_MS, None) };
     }
 
@@ -209,7 +219,16 @@ unsafe fn paint(window: HWND, dc: HDC) {
         let line_height = (client.bottom - 2 * padding) / count;
         for (i, line) in content.lines.iter().enumerate() {
             let dimmed = content.footer && i + 1 == content.lines.len();
-            let colour = if dimmed { COLOR_GRAYTEXT } else { COLOR_WINDOWTEXT };
+            let top = padding + line_height * i as i32;
+            let colour = if content.selected == Some(i) {
+                let bar = RECT { left: 1, top, right: client.right - 1, bottom: top + line_height };
+                FillRect(dc, &bar, GetSysColorBrush(COLOR_HIGHLIGHT));
+                COLOR_HIGHLIGHTTEXT
+            } else if dimmed {
+                COLOR_GRAYTEXT
+            } else {
+                COLOR_WINDOWTEXT
+            };
             SetTextColor(dc, COLORREF(GetSysColor(colour)));
             let _ = TextOutW(dc, padding, padding + line_height * i as i32, line);
         }
