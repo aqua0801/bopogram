@@ -7,7 +7,12 @@ at most `beam` hypotheses.
 
 Decoding is incremental: adding a syllable only builds the new last node
 from the previous ones, so the cost per keystroke does not grow with the
-length of the composition buffer.
+length of the composition buffer. Editing in the middle of the buffer
+rebuilds only the nodes after the edit.
+
+The buffer may also hold literal characters (punctuation, spaces, letters
+typed in between). A literal is stored as "=" + character (see `literal`);
+it occupies one position, is never converted, and no word spans across it.
 """
 
 from __future__ import annotations
@@ -22,6 +27,16 @@ from .lm import UNKNOWN_CHAR, MixtureLM, State
 PARTICLE_SYLLABLE = ("˙ㄉㄜ",)
 PARTICLE_CASUAL = ["的"]
 STYLES = ("casual", "formal")
+LITERAL = "="
+
+
+def literal(char: str) -> str:
+    """Buffer item for a character that is passed through unchanged."""
+    return LITERAL + char
+
+
+def is_literal(item: str) -> bool:
+    return item.startswith(LITERAL)
 
 
 @dataclass(slots=True)
@@ -65,6 +80,8 @@ class Decoder:
 
     def _candidates(self, key: tuple[str, ...]) -> list[str]:
         cands = self._cand_cache.get(key)
+        if cands is None and any(is_literal(item) for item in key):
+            return [key[0][len(LITERAL):]] if len(key) == 1 else []
         if cands is None:
             cands = self.lexicon.candidates(key)
             if len(cands) > self.max_candidates:
@@ -143,8 +160,13 @@ class Decoder:
                     words = [w for w in words if self._allowed(i, j, w)]
             for word in words:
                 bonus = self._position_score(i, word) if self.position_scores is not None else 0.0
+                # A literal is scored as the token class the model was trained with
+                # (punctuation, Latin, digits); a space does not touch the model.
+                token = word
+                if j - i == 1 and is_literal(key[0]):
+                    token = None if word.isspace() else self.lm.map_token(word, self.lexicon.__contains__)
                 for h in hyps:
-                    logp, state = score_fn(h.state, word)
+                    logp, state = score_fn(h.state, token) if token is not None else (0.0, h.state)
                     total = h.score + logp + self.word_penalty + bonus
                     if extra is not None:
                         total += extra(h.word, word)
@@ -163,10 +185,58 @@ class Decoder:
     def pop(self) -> None:
         """Remove the last syllable (backspace); pins reaching into it are dropped."""
         if self.syllables:
-            self.syllables.pop()
-            self.nodes.pop()
-            n = len(self.syllables)
-            self.pinned = {span: w for span, w in self.pinned.items() if span[1] <= n}
+            self.delete(len(self.syllables) - 1)
+
+    def _rebuild(self, keep: int, items: list[str]) -> None:
+        """Keep the first `keep` items' nodes and push the rest of `items` again."""
+        self.syllables = items[:keep]
+        del self.nodes[keep + 1:]
+        for item in items[keep:]:
+            self.push(item)
+
+    def insert(self, pos: int, item: str) -> None:
+        """Insert a syllable or literal before position `pos`.
+        Pins after it move along; a pin it would split is dropped."""
+        if pos >= len(self.syllables) and not self.pinned:
+            self.push(item)
+            return
+        keep, pinned = pos, {}
+        for (a, b), w in self.pinned.items():
+            if b <= pos:
+                pinned[(a, b)] = w
+            elif a >= pos:
+                pinned[(a + 1, b + 1)] = w
+            else:
+                keep = min(keep, a)
+        items = self.syllables[:pos] + [item] + self.syllables[pos:]
+        self.pinned = pinned
+        self._rebuild(keep, items)
+
+    def delete(self, pos: int) -> None:
+        """Remove the item at position `pos`; pins covering it are dropped."""
+        if not 0 <= pos < len(self.syllables):
+            return
+        keep, pinned = pos, {}
+        for (a, b), w in self.pinned.items():
+            if b <= pos:
+                pinned[(a, b)] = w
+            elif a > pos:
+                pinned[(a - 1, b - 1)] = w
+            else:
+                keep = min(keep, a)
+        items = self.syllables[:pos] + self.syllables[pos + 1:]
+        self.pinned = pinned
+        self._rebuild(keep, items)
+
+    def drop_front(self, count: int, start_state: State) -> None:
+        """Remove the first `count` items (they were committed) and decode the rest
+        again after `start_state`."""
+        items = self.syllables[count:]
+        self.pinned = {(a - count, b - count): w for (a, b), w in self.pinned.items() if a >= count}
+        self.syllables = []
+        self.nodes = [[Hyp(0.0, start_state, None, 0, None)]]
+        for item in items:
+            self.push(item)
 
     # -- results ----------------------------------------------------------
     def nbest(self, n: int = 1) -> list[tuple[list[str], float]]:
