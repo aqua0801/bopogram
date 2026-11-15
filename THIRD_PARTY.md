@@ -14,6 +14,8 @@
 | KenLM | https://github.com/kpu/kenlm | LGPL-2.1 | n-gram 語言模型：訓練工具（`lmplz`、`build_binary`，自行編譯，不進 repo）與原型引擎的查詢函式庫（Python 套件 `kenlm`） |
 | antiword | http://www.winfield.demon.nl/ | GPL-2.0-or-later | 訓練階段：以外部命令列工具將 `.doc` 轉純文字，不連結、不散布 |
 | unar（The Unarchiver） | https://theunarchiver.com/command-line-tools | LGPL-2.1-or-later | 訓練階段：以外部命令列工具解壓 RAR，不連結、不散布 |
+| windows（windows-rs） | https://github.com/microsoft/windows-rs | MIT OR Apache-2.0 | Windows 前端（`crates/`）：呼叫 Win32 API（具名管線、安全描述元、mutex；之後的 TSF） |
+| serde_json | https://github.com/serde-rs/json | MIT OR Apache-2.0 | Windows 前端（`crates/`）：解析與產生協定的 JSON 行 |
 
 ## 語料
 
