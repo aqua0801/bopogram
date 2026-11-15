@@ -38,6 +38,12 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--char-freq", help="character frequency TSV (char-unigram baseline)")
     e.add_argument("--style", default="formal", choices=["casual", "formal"],
                    help="the test set uses standard 的/地/得, so it is scored in formal style by default")
+    e.add_argument("--neural-scores", help="JSONL from training/neural/score_testset.py")
+    e.add_argument("--neural-mode", default="fuse", choices=["fuse", "rerank", "alone"],
+                   help="fuse: add the scores inside the lattice; rerank: re-order the n-gram "
+                        "engine's 10 best results; alone: the neural model's own choice")
+    e.add_argument("--neural-weight", type=float, default=1.0)
+    e.add_argument("--neural-floor", type=float, default=-12.0)
     e.add_argument("--errors", help="write wrong sentences to this file")
     e.add_argument("--json", help="write the metrics to this file")
     args = ap.parse_args(argv)

@@ -47,6 +47,10 @@ class Decoder:
         # "casual": a lone neutral-tone ㄉㄜ is always 的 unless the user picks otherwise.
         # "formal": the language model chooses between 的 / 地 / 得.
         self.style = style
+        # Optional per-position character scores from the neural model (see set_position_scores).
+        self.position_scores: list[dict[str, float]] | None = None
+        self.position_weight = 0.0
+        self.position_floor = -12.0
         self._cand_cache: dict[tuple[str, ...], list[str]] = {}
         # Spans the user has fixed by picking a candidate: (start, end) -> word.
         self.pinned: dict[tuple[int, int], str] = {}
@@ -76,6 +80,28 @@ class Decoder:
             if (i, j) != (a, b) or word != fixed:
                 return False
         return True
+
+    def set_position_scores(self, scores: list[dict[str, float]] | None, weight: float = 1.0,
+                            floor: float = -12.0) -> None:
+        """Per-position character log-probabilities to add to the lattice.
+
+        scores[k] maps a character to its log-probability at syllable k. The sum over
+        a word's characters, times `weight`, is added to every edge. A character the
+        model did not score, or scored below `floor`, counts as `floor`: the model can
+        make a dictionary word less likely but can never remove it.
+        Takes effect for syllables pushed afterwards.
+        """
+        self.position_scores = scores
+        self.position_weight = weight
+        self.position_floor = floor
+
+    def _position_score(self, i: int, word: str) -> float:
+        scores, floor = self.position_scores, self.position_floor
+        total = 0.0
+        for k, ch in enumerate(word, i):
+            if k < len(scores):
+                total += max(scores[k].get(ch, floor), floor)
+        return total * self.position_weight
 
     def set_style(self, style: str) -> None:
         """Switch between "casual" and "formal" and decode the current buffer again."""
@@ -116,9 +142,10 @@ class Decoder:
                 else:
                     words = [w for w in words if self._allowed(i, j, w)]
             for word in words:
+                bonus = self._position_score(i, word) if self.position_scores is not None else 0.0
                 for h in hyps:
                     logp, state = score_fn(h.state, word)
-                    total = h.score + logp + self.word_penalty
+                    total = h.score + logp + self.word_penalty + bonus
                     if extra is not None:
                         total += extra(h.word, word)
                     old = merged.get(state)

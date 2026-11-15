@@ -7,6 +7,10 @@ Systems:
 
 Latency is measured the way an input method is used: after every syllable
 the lattice is extended and the best result is read back.
+
+With --neural-scores the per-position scores of the neural model (computed
+beforehand by training/neural/score_testset.py) are combined with the n-gram
+engine; latency is not measured in that case, because the model is not run here.
 """
 
 from __future__ import annotations
@@ -90,7 +94,31 @@ def run_eval(args) -> int:
     else:
         decoder = engine.decoder
 
-    def convert(syllables: list[str], context: str, timings: list[float]) -> str:
+    neural: dict[str, dict] = {}
+    if args.neural_scores:
+        with open(args.neural_scores, encoding="utf-8") as fh:
+            for line in fh:
+                rec = json.loads(line)
+                neural[rec["id"]] = rec
+
+    def neural_sum(scores: list[dict[str, float]], text: str) -> float:
+        return sum(max(s.get(ch, args.neural_floor), args.neural_floor) for s, ch in zip(scores, text))
+
+    def convert(syllables: list[str], context: str, timings: list[float], row_id: str = "") -> str:
+        rec = neural.get(row_id)
+        if rec is not None and args.system == "bopogram":
+            if args.neural_mode == "alone":
+                return rec["best"]
+            decoder.reset(context_state(context, engine.lexicon, engine.lm))
+            if args.neural_mode == "fuse":
+                decoder.set_position_scores(rec["scores"], args.neural_weight, args.neural_floor)
+            for syl in syllables:
+                decoder.push(syl)
+            decoder.set_position_scores(None)
+            if args.neural_mode == "fuse":
+                return decoder.best_text()
+            ranked = [("".join(words), score) for words, score in decoder.nbest(10)]
+            return max(ranked, key=lambda r: r[1] + args.neural_weight * neural_sum(rec["scores"], r[0]))[0]
         if args.system == "char-unigram":
             out = []
             for syl in syllables:
@@ -126,7 +154,7 @@ def run_eval(args) -> int:
         if not syls or len(syls) != len(gold):
             skipped += 1
             continue
-        hyp = convert(syls, row.get("context") or "", timings)
+        hyp = convert(syls, row.get("context") or "", timings, row["id"])
         if args.style == "casual":
             # Casual style writes 的 for every structural particle; that is not an error.
             gold = "".join("的" if s == "˙ㄉㄜ" and g in "地得" and h == "的" else g
