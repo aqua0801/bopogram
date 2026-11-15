@@ -7,7 +7,12 @@ at most `beam` hypotheses.
 
 Decoding is incremental: adding a syllable only builds the new last node
 from the previous ones, so the cost per keystroke does not grow with the
-length of the composition buffer.
+length of the composition buffer. Editing in the middle of the buffer
+rebuilds only the nodes after the edit.
+
+The buffer may also hold literal characters (punctuation, spaces, letters
+typed in between). A literal is stored as "=" + character (see `literal`);
+it occupies one position, is never converted, and no word spans across it.
 """
 
 from __future__ import annotations
@@ -16,6 +21,22 @@ from dataclasses import dataclass
 
 from .lexicon import MAX_WORD_LEN, Lexicon
 from .lm import UNKNOWN_CHAR, MixtureLM, State
+
+# The three structural particles share one pronunciation. Everyday writing uses
+# 的 for all of them; formal writing distinguishes 的 / 地 / 得.
+PARTICLE_SYLLABLE = ("˙ㄉㄜ",)
+PARTICLE_CASUAL = ["的"]
+STYLES = ("casual", "formal")
+LITERAL = "="
+
+
+def literal(char: str) -> str:
+    """Buffer item for a character that is passed through unchanged."""
+    return LITERAL + char
+
+
+def is_literal(item: str) -> bool:
+    return item.startswith(LITERAL)
 
 
 @dataclass(slots=True)
@@ -29,7 +50,8 @@ class Hyp:
 
 class Decoder:
     def __init__(self, lexicon: Lexicon, lm: MixtureLM, beam: int = 16, max_candidates: int = 40,
-                 extra_score=None, word_penalty: float = 0.0, eos_weight: float = 0.0):
+                 extra_score=None, word_penalty: float = 0.0, eos_weight: float = 0.0,
+                 style: str = "formal"):
         self.lexicon = lexicon
         self.lm = lm
         self.beam = beam
@@ -37,6 +59,13 @@ class Decoder:
         self.extra_score = extra_score  # optional callable(prev_word, word) -> added log score
         self.word_penalty = word_penalty  # added per word; negative values favour longer words
         self.eos_weight = eos_weight      # weight of ln P(end of sentence) when ranking results
+        # "casual": a lone neutral-tone ㄉㄜ is always 的 unless the user picks otherwise.
+        # "formal": the language model chooses between 的 / 地 / 得.
+        self.style = style
+        # Optional per-position character scores from the neural model (see set_position_scores).
+        self.position_scores: list[dict[str, float]] | None = None
+        self.position_weight = 0.0
+        self.position_floor = -12.0
         self._cand_cache: dict[tuple[str, ...], list[str]] = {}
         # Spans the user has fixed by picking a candidate: (start, end) -> word.
         self.pinned: dict[tuple[int, int], str] = {}
@@ -51,6 +80,8 @@ class Decoder:
 
     def _candidates(self, key: tuple[str, ...]) -> list[str]:
         cands = self._cand_cache.get(key)
+        if cands is None and any(is_literal(item) for item in key):
+            return [key[0][len(LITERAL):]] if len(key) == 1 else []
         if cands is None:
             cands = self.lexicon.candidates(key)
             if len(cands) > self.max_candidates:
@@ -66,6 +97,36 @@ class Decoder:
             if (i, j) != (a, b) or word != fixed:
                 return False
         return True
+
+    def set_position_scores(self, scores: list[dict[str, float]] | None, weight: float = 1.0,
+                            floor: float = -12.0) -> None:
+        """Per-position character log-probabilities to add to the lattice.
+
+        scores[k] maps a character to its log-probability at syllable k. The sum over
+        a word's characters, times `weight`, is added to every edge. A character the
+        model did not score, or scored below `floor`, counts as `floor`: the model can
+        make a dictionary word less likely but can never remove it.
+        Takes effect for syllables pushed afterwards.
+        """
+        self.position_scores = scores
+        self.position_weight = weight
+        self.position_floor = floor
+
+    def _position_score(self, i: int, word: str) -> float:
+        scores, floor = self.position_scores, self.position_floor
+        total = 0.0
+        for k, ch in enumerate(word, i):
+            if k < len(scores):
+                total += max(scores[k].get(ch, floor), floor)
+        return total * self.position_weight
+
+    def set_style(self, style: str) -> None:
+        """Switch between "casual" and "formal" and decode the current buffer again."""
+        if style not in STYLES:
+            raise ValueError(f"unknown style {style!r}")
+        if style != self.style:
+            self.style = style
+            self.repin(self.pinned)
 
     def repin(self, pinned: dict[tuple[int, int], str], start_state: State | None = None) -> None:
         """Replace the pinned spans and decode the current buffer again."""
@@ -88,7 +149,9 @@ class Decoder:
             hyps = self.nodes[i]
             if not hyps:
                 continue
-            words = self._candidates(tuple(self.syllables[i:j]))
+            key = tuple(self.syllables[i:j])
+            words = PARTICLE_CASUAL if self.style == "casual" and key == PARTICLE_SYLLABLE \
+                else self._candidates(key)
             if self.pinned:
                 fixed = self.pinned.get((i, j))
                 if fixed is not None:
@@ -96,9 +159,15 @@ class Decoder:
                 else:
                     words = [w for w in words if self._allowed(i, j, w)]
             for word in words:
+                bonus = self._position_score(i, word) if self.position_scores is not None else 0.0
+                # A literal is scored as the token class the model was trained with
+                # (punctuation, Latin, digits); a space does not touch the model.
+                token = word
+                if j - i == 1 and is_literal(key[0]):
+                    token = None if word.isspace() else self.lm.map_token(word, self.lexicon.__contains__)
                 for h in hyps:
-                    logp, state = score_fn(h.state, word)
-                    total = h.score + logp + self.word_penalty
+                    logp, state = score_fn(h.state, token) if token is not None else (0.0, h.state)
+                    total = h.score + logp + self.word_penalty + bonus
                     if extra is not None:
                         total += extra(h.word, word)
                     old = merged.get(state)
@@ -116,10 +185,58 @@ class Decoder:
     def pop(self) -> None:
         """Remove the last syllable (backspace); pins reaching into it are dropped."""
         if self.syllables:
-            self.syllables.pop()
-            self.nodes.pop()
-            n = len(self.syllables)
-            self.pinned = {span: w for span, w in self.pinned.items() if span[1] <= n}
+            self.delete(len(self.syllables) - 1)
+
+    def _rebuild(self, keep: int, items: list[str]) -> None:
+        """Keep the first `keep` items' nodes and push the rest of `items` again."""
+        self.syllables = items[:keep]
+        del self.nodes[keep + 1:]
+        for item in items[keep:]:
+            self.push(item)
+
+    def insert(self, pos: int, item: str) -> None:
+        """Insert a syllable or literal before position `pos`.
+        Pins after it move along; a pin it would split is dropped."""
+        if pos >= len(self.syllables) and not self.pinned:
+            self.push(item)
+            return
+        keep, pinned = pos, {}
+        for (a, b), w in self.pinned.items():
+            if b <= pos:
+                pinned[(a, b)] = w
+            elif a >= pos:
+                pinned[(a + 1, b + 1)] = w
+            else:
+                keep = min(keep, a)
+        items = self.syllables[:pos] + [item] + self.syllables[pos:]
+        self.pinned = pinned
+        self._rebuild(keep, items)
+
+    def delete(self, pos: int) -> None:
+        """Remove the item at position `pos`; pins covering it are dropped."""
+        if not 0 <= pos < len(self.syllables):
+            return
+        keep, pinned = pos, {}
+        for (a, b), w in self.pinned.items():
+            if b <= pos:
+                pinned[(a, b)] = w
+            elif a > pos:
+                pinned[(a - 1, b - 1)] = w
+            else:
+                keep = min(keep, a)
+        items = self.syllables[:pos] + self.syllables[pos + 1:]
+        self.pinned = pinned
+        self._rebuild(keep, items)
+
+    def drop_front(self, count: int, start_state: State) -> None:
+        """Remove the first `count` items (they were committed) and decode the rest
+        again after `start_state`."""
+        items = self.syllables[count:]
+        self.pinned = {(a - count, b - count): w for (a, b), w in self.pinned.items() if a >= count}
+        self.syllables = []
+        self.nodes = [[Hyp(0.0, start_state, None, 0, None)]]
+        for item in items:
+            self.push(item)
 
     # -- results ----------------------------------------------------------
     def nbest(self, n: int = 1) -> list[tuple[list[str], float]]:

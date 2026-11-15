@@ -9,21 +9,32 @@ left context; `close` discards it. The dictionary, the models and the user
 model are loaded once and shared.
 
 Requests ({"op": ..., "sid": optional, "id": optional, ...}):
-    key        {"key": "j"}          a layout key (bopomofo symbol or tone)
-    backspace
-    left / right                     move the candidate cursor
+    key        {"key": "j"}          a layout key (bopomofo symbol or tone); Space is
+                                     the first tone, or a space when no syllable is
+                                     in progress and the buffer is not empty
+    symbol     {"key": "<"}          an ASCII symbol key; its full-width form is inserted
+    text       {"text": "A"}         characters inserted as they are
+    backspace / delete               remove the item before / after the cursor
+    left / right / home / end        move the cursor inside the buffer
     candidates                       list candidates for the word at the cursor
     select     {"index": 0}          pick a candidate
+    cycle      {"delta": 1}          change the word at the cursor to its next candidate
     commit                           finish the composition
-    escape                           discard the composition
+    escape                           discard the syllable in progress, else the buffer
     context    {"text": "..."}       text before the cursor (while idle)
     learning   {"enabled": false}    turn learning off (password fields) or on
+    style      {"style": "formal"}   "casual": lone neutral-tone ㄉㄜ is always 的;
+                                     "formal": 的 / 地 / 得 chosen by the model
     state
     close                            forget this sid
     quit                             stop the engine process
 
 Every response has "ok" and the composition state (preedit, pending, cursor,
-segments); `commit` adds "commit", `candidates` and `select` add "candidates".
+caret, segments, style); `candidates` and `select` add "candidates".
+ANY response may carry "commit": text the front end must insert into the
+document before showing the new preedit. `commit` always has it; other
+requests have it when the buffer grew too long and its first words were
+committed automatically.
 """
 
 from __future__ import annotations
@@ -40,26 +51,41 @@ def handle(session: Session, req: dict) -> dict:
     res: dict = {"ok": True}
     if op == "key":
         res["ok"] = session.key(str(req.get("key", "")))
+    elif op == "symbol":
+        res["ok"] = session.symbol(str(req.get("key", "")))
+    elif op == "text":
+        res["ok"] = session.text(str(req.get("text", "")))
     elif op == "backspace":
         session.backspace()
+    elif op == "delete":
+        session.delete()
     elif op == "left":
         session.move(-1)
     elif op == "right":
         session.move(1)
+    elif op in ("home", "end"):
+        session.move_to(op == "end")
     elif op == "candidates":
         res["candidates"] = session.candidates()
     elif op == "select":
         res["ok"] = session.select(int(req.get("index", -1)))
+    elif op == "cycle":
+        res["ok"] = session.cycle(int(req.get("delta", 1)))
     elif op == "commit":
-        res["commit"] = session.commit()
+        res["commit"] = session.take_flushed() + session.commit()
     elif op == "escape":
         session.escape()
     elif op == "context":
         session.set_context(str(req.get("text", "")))
     elif op == "learning":
         session.learn = bool(req.get("enabled", True))
+    elif op == "style":
+        res["ok"] = session.set_style(str(req.get("style", "")))
     elif op != "state":
         return {"ok": False, "error": f"unknown op {op!r}"}
+    flushed = session.take_flushed()
+    if flushed:
+        res["commit"] = flushed
     res.update(session.state())
     return res
 

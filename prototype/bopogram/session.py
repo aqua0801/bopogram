@@ -3,17 +3,35 @@
 This is the layer a front end talks to. It owns the composition buffer, the
 cursor, the candidate list, and the left context. Text that has been
 committed is only ever appended to the context; it is never rewritten.
+
+Editing rules (they follow the behaviour Microsoft documents for its
+Bopomofo IME, so that users of that IME need not relearn anything):
+
+  * Bopomofo keys build a syllable at the cursor; a tone key (Space for the
+    first tone) completes it and inserts it at the cursor.
+  * Space with no syllable in progress inserts a space into the buffer.
+  * Left / Right / Home / End move the cursor inside the buffer. Backspace
+    removes the item before the cursor, Delete the one after it. While a
+    syllable is in progress, Backspace removes its last symbol.
+  * Symbols and other text can be inserted at the cursor; they stay as typed.
+  * Down opens the candidates of the word at the cursor; Up changes that word
+    to its next candidate without opening the list.
+  * Escape discards the syllable in progress, or else the whole buffer.
+  * When the buffer grows past MAX_BUFFER, its first words are committed.
 """
 
 from __future__ import annotations
 
 from .context import context_state
+from .decoder import is_literal, literal
 from .engine import Engine
 from .layouts import LAYOUTS
 from .layouts.base import FINALS, INITIALS, MEDIALS, TONE_FIRST
 from .lexicon import MAX_WORD_LEN
+from .symbols import full_width
 
 MAX_CONTEXT = 200
+MAX_BUFFER = 30  # items kept in the composition buffer before the front is committed
 
 
 class Session:
@@ -24,19 +42,25 @@ class Session:
         self.layout = LAYOUTS[layout]
         self.context = ""
         self.learn = True  # the front end turns this off for password fields
+        # Which character the candidate list refers to: the one "before" or "after" the cursor.
+        self.candidate_side = "before"
+        self._flushed = ""  # text committed automatically since the last state() call
         self._clear()
 
     def _clear(self) -> None:
         self.initial = self.medial = self.final = ""
-        self.cursor = 0  # syllable index the candidate list refers to
-        self.manual: set[tuple[int, int]] = set()
+        self.cursor = 0  # number of buffer items before the cursor
         self.decoder.reset(context_state(self.context, self.engine.lexicon, self.engine.lm))
+
+    @property
+    def _size(self) -> int:
+        return len(self.decoder.syllables)
 
     # -- input ------------------------------------------------------------
     def set_context(self, text: str) -> None:
         """Text before the cursor, as reported by the application. Only valid while idle."""
         self.context = text[-MAX_CONTEXT:]
-        if not self.decoder.syllables and not self.pending:
+        if not self._size and not self.pending:
             self._clear()
 
     @property
@@ -44,8 +68,14 @@ class Session:
         """Bopomofo symbols of the syllable being typed."""
         return self.initial + self.medial + self.final
 
+    def _insert(self, item: str) -> None:
+        self.decoder.insert(self.cursor, item)
+        self.cursor += 1
+        self._limit()
+
     def key(self, key: str) -> bool:
-        """Feed one layout key. Returns False if the key is not part of the layout."""
+        """Feed one layout key. Returns False if the key is not handled
+        (not part of the layout, or Space with nothing being composed)."""
         sym = self.layout.keys.get(key.lower())
         if sym is None:
             return False
@@ -58,14 +88,27 @@ class Session:
         else:
             body = self.pending
             if not body:
+                if sym == TONE_FIRST and self._size:
+                    self._insert(literal(" "))  # Space is a space when no syllable is in progress
+                    return True
                 return False
             syllable = body if sym == TONE_FIRST else ("˙" + body if sym == "˙" else body + sym)
             self.initial = self.medial = self.final = ""
-            at_end = self.cursor == len(self.decoder.syllables)
-            self.decoder.push(syllable)
-            if at_end:
-                self.cursor = len(self.decoder.syllables)
+            self._insert(syllable)
         return True
+
+    def text(self, text: str) -> bool:
+        """Insert characters that are not converted (letters, digits, symbols)."""
+        if self.pending or not text:
+            return False
+        for ch in text:
+            self._insert(literal(ch))
+        return True
+
+    def symbol(self, key: str) -> bool:
+        """Insert the full-width form of an ASCII symbol key."""
+        wide = full_width(key)
+        return wide is not None and self.text(wide)
 
     def backspace(self) -> None:
         if self.final:
@@ -74,17 +117,37 @@ class Session:
             self.medial = ""
         elif self.initial:
             self.initial = ""
-        elif self.decoder.syllables:
-            self.decoder.pop()
-            n = len(self.decoder.syllables)
-            self.manual = {s for s in self.manual if s[1] <= n}
-            self.cursor = min(self.cursor, n)
+        elif self.cursor > 0:
+            self.decoder.delete(self.cursor - 1)
+            self.cursor -= 1
+
+    def delete(self) -> None:
+        """Remove the item after the cursor (the Delete key)."""
+        if not self.pending and self.cursor < self._size:
+            self.decoder.delete(self.cursor)
 
     def move(self, delta: int) -> None:
-        self.cursor = max(0, min(len(self.decoder.syllables), self.cursor + delta))
+        if not self.pending:
+            self.cursor = max(0, min(self._size, self.cursor + delta))
+
+    def move_to(self, end: bool) -> None:
+        """Home (end=False) or End (end=True)."""
+        if not self.pending:
+            self.cursor = self._size if end else 0
 
     def escape(self) -> None:
-        self._clear()
+        if self.pending:
+            self.initial = self.medial = self.final = ""
+        else:
+            self._clear()
+
+    def set_style(self, style: str) -> bool:
+        """"casual" or "formal" (see Decoder.style); the buffer is decoded again."""
+        try:
+            self.decoder.set_style(style)
+        except ValueError:
+            return False
+        return True
 
     # -- candidates -------------------------------------------------------
     def _segments(self) -> list[str]:
@@ -92,9 +155,13 @@ class Session:
         return res[0][0] if res else []
 
     def _span_at_cursor(self) -> tuple[int, int] | None:
-        """Start of the word under the cursor (the word before it when at the end)."""
+        """The word the candidate list refers to: the one holding the character
+        before the cursor (after it when `candidate_side` is "after" or at the start)."""
+        if not self._size:
+            return None
+        target = self.cursor if self.candidate_side == "after" else self.cursor - 1
+        target = max(0, min(self._size - 1, target))
         pos = 0
-        target = min(self.cursor, len(self.decoder.syllables) - 1)
         for word in self._segments():
             if pos <= target < pos + len(word):
                 return pos, pos + len(word)
@@ -102,12 +169,14 @@ class Session:
         return None
 
     def candidates(self) -> list[dict]:
-        """Words that can start at the word under the cursor, longest first."""
+        """Words that can start where the word at the cursor starts, longest first."""
         span = self._span_at_cursor()
         if span is None:
             return []
         start = span[0]
         syls = self.decoder.syllables
+        if is_literal(syls[start]):
+            return []
         out, seen = [], set()
         for length in range(min(MAX_WORD_LEN, len(syls) - start), 0, -1):
             words = self.engine.lexicon.candidates(tuple(syls[start:start + length]))
@@ -126,34 +195,85 @@ class Session:
         span = (c["start"], c["start"] + c["length"])
         pinned = {s: w for s, w in self.decoder.pinned.items() if s[1] <= span[0] or s[0] >= span[1]}
         pinned[span] = c["word"]
-        self.manual = {s for s in self.manual if s in pinned} | {span}
         self.decoder.repin(pinned)
-        self.cursor = min(len(self.decoder.syllables), span[1])
+        self.cursor = max(self.cursor, min(self._size, span[1]))
         return True
+
+    def cycle(self, delta: int = 1) -> bool:
+        """Change the word at the cursor to its next (or previous) candidate of the
+        same length, without opening the candidate list."""
+        span = self._span_at_cursor()
+        if span is None:
+            return False
+        current = "".join(self._segments())[span[0]:span[1]]
+        cands = self.candidates()
+        same = [i for i, c in enumerate(cands) if c["length"] == span[1] - span[0]]
+        if len(same) < 2:
+            return False
+        at = next((k for k, i in enumerate(same) if cands[i]["word"] == current), -1)
+        return self.select(same[(at + delta) % len(same)])
 
     # -- output -----------------------------------------------------------
     def preedit(self) -> str:
-        return "".join(self._segments()) + self.pending
+        text = "".join(self._segments())
+        return text[:self.cursor] + self.pending + text[self.cursor:]
+
+    def _learn(self, words: list[str], first_pos: int) -> None:
+        """Record committed words; runs are cut at literals, picked words count as corrections."""
+        user = self.engine.user
+        if not self.learn or user is None:
+            return
+        items, pos, run, picked = self.decoder.syllables, first_pos, [], []
+        for w in words + [None]:
+            if w is None or is_literal(items[pos]):
+                if run:
+                    user.learn(run, corrected=False)
+                    for word in picked:
+                        user.learn([word], corrected=True)
+                run, picked = [], []
+            else:
+                run.append(w)
+                if (pos, pos + len(w)) in self.decoder.pinned:
+                    picked.append(w)
+            if w is not None:
+                pos += len(w)
+        user.save()
+
+    def _limit(self) -> None:
+        """Commit the first words when the buffer is too long. Committed text is final."""
+        if self._size <= MAX_BUFFER:
+            return
+        words, count, taken = self._segments(), 0, []
+        for w in words:
+            if self._size - count <= MAX_BUFFER or count + len(w) > self.cursor:
+                break
+            taken.append(w)
+            count += len(w)
+        if not taken:
+            return
+        self._learn(taken, 0)
+        text = "".join(taken)
+        self._flushed += text
+        self.context = (self.context + text)[-MAX_CONTEXT:]
+        self.decoder.drop_front(count, context_state(self.context, self.engine.lexicon, self.engine.lm))
+        self.cursor -= count
 
     def commit(self) -> str:
-        """Finish the composition and return its text."""
+        """Finish the composition and return its text (a syllable in progress is dropped)."""
         words = self._segments()
         text = "".join(words)
-        if text and self.learn and self.engine.user is not None:
-            # Words the user picked by hand count as corrections.
-            pos, picked = 0, []
-            for w in words:
-                picked.append((pos, pos + len(w)) in self.manual)
-                pos += len(w)
-            self.engine.user.learn(words, corrected=False)
-            for w, was_picked in zip(words, picked):
-                if was_picked:
-                    self.engine.user.learn([w], corrected=True)
-            self.engine.user.save()
+        if text:
+            self._learn(words, 0)
         self.context = (self.context + text)[-MAX_CONTEXT:]
         self._clear()
         return text
 
+    def take_flushed(self) -> str:
+        """Text committed automatically since the last call (see MAX_BUFFER)."""
+        text, self._flushed = self._flushed, ""
+        return text
+
     def state(self) -> dict:
         return {"preedit": self.preedit(), "pending": self.pending, "cursor": self.cursor,
-                "syllables": len(self.decoder.syllables), "segments": self._segments()}
+                "caret": self.cursor + len(self.pending), "syllables": self._size,
+                "segments": self._segments(), "style": self.decoder.style}

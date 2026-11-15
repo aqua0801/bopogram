@@ -26,3 +26,8 @@ UTF-8、Tab 分隔，第一行為欄位名稱：
 - 句庫其餘句子在 `eval/devset/moztw_dev.tsv`，只用於開發時調整權重，不用於報告分數，與本測試集不重疊。
 
 重新產生：`python3 eval/tools/build_testset.py --dict <dict.tsv> --moztw <cc0-sentences/zh-TW> --corpus <corpus>`
+
+`note` 含 `〔正式模式〕` 的句子考的是「的／地／得」的區分。評估預設以正式模式（`--style formal`）進行；
+以口語模式（`--style casual`）評估時，輕聲「ㄉㄜ」位置的「地」「得」寫成「的」視為正確。
+
+`note` 以「試用案例」開頭的句子來自實際打字時遇到的選錯案例（2026-11-15 起，經同意後加入）。

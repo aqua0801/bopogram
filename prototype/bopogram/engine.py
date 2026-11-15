@@ -26,7 +26,10 @@ class Engine:
     {"dict": "../dict/dict.tsv",
      "models": [{"path": "ly.binary", "weight": 0.4}, ...],
      "beam": 16, "max_candidates": 40, "word_penalty": 0.0, "eos_weight": 0.0,
-     "user_model": null}
+     "style": "casual", "user_model": null}
+
+    "style" is "casual" (a lone neutral-tone ㄉㄜ is always 的) or "formal"
+    (的 / 地 / 得 are chosen by the model); the default is "casual".
     """
 
     def __init__(self, config: str | Path | None = None, use_user_model: bool = True):
@@ -42,8 +45,14 @@ class Engine:
             self.user = UserModel(user_path if user_path.is_absolute() else base / user_path)
         self._decoder_args = dict(beam=cfg.get("beam", 16), max_candidates=cfg.get("max_candidates", 40),
                                   word_penalty=cfg.get("word_penalty", 0.0),
-                                  eos_weight=cfg.get("eos_weight", 0.0))
+                                  eos_weight=cfg.get("eos_weight", 0.0),
+                                  style=cfg.get("style", "casual"))
         self.decoder = self.new_decoder()
+
+    def set_style(self, style: str) -> None:
+        """Style for this engine's own decoder and for decoders created afterwards."""
+        self.decoder.set_style(style)
+        self._decoder_args["style"] = style
 
     def new_decoder(self) -> Decoder:
         """A decoder with its own buffer, sharing this engine's dictionary and models."""
