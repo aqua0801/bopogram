@@ -178,6 +178,16 @@ impl<E: Engine> Controller<E> {
         self.cursor
     }
 
+    /// Where the caret belongs, in UTF-16 units from the start of the
+    /// preedit: at the candidate cursor, or at the very end (after the
+    /// unfinished syllable) when the cursor is past the last character.
+    pub fn caret_units(&self) -> usize {
+        if self.cursor >= self.text.chars().count() {
+            return self.preedit.encode_utf16().count();
+        }
+        self.preedit.chars().take(self.cursor).map(char::len_utf16).sum()
+    }
+
     pub fn chinese(&self) -> bool {
         self.chinese
     }
@@ -341,8 +351,14 @@ impl<E: Engine> Controller<E> {
 
     // -- keys --------------------------------------------------------------
 
-    pub fn key_down(&mut self, key: Key) -> Outcome {
+    /// Record a key press without acting on it. TSF may ask about a key
+    /// (`test_key`) and never deliver it; the Shift tracking still has to see it.
+    pub fn note_key_down(&mut self, key: Key) {
         self.shift_alone = is_shift(key.vk) && !key.ctrl && !key.alt;
+    }
+
+    pub fn key_down(&mut self, key: Key) -> Outcome {
+        self.note_key_down(key);
         let action = self.classify(key);
         if !matches!(action, Action::Pass | Action::Swallow | Action::NextPage | Action::PrevPage) {
             self.window_open = false;

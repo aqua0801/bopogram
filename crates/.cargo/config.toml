@@ -1,0 +1,7 @@
+# Link the C runtime statically. The IME DLL is loaded into arbitrary
+# applications and must not depend on a VC++ redistributable being installed.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
