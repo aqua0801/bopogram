@@ -16,7 +16,8 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows::Win32::Security::{
-    GetTokenInformation, TokenElevation, TokenUser, TOKEN_ELEVATION, TOKEN_QUERY, TOKEN_USER,
+    GetTokenInformation, TokenElevationType, TokenElevationTypeFull, TokenIsAppContainer,
+    TokenUser, TOKEN_INFORMATION_CLASS, TOKEN_QUERY, TOKEN_USER,
 };
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, WriteFile, FILE_FLAG_OVERLAPPED, FILE_SHARE_NONE, OPEN_EXISTING,
@@ -68,20 +69,40 @@ impl Token {
         }
     }
 
-    fn elevated(&self) -> bool {
-        let mut elevation = TOKEN_ELEVATION::default();
+    /// A 32-bit piece of token information; `None` if it cannot be read.
+    fn dword(&self, class: TOKEN_INFORMATION_CLASS) -> Option<u32> {
+        let mut value = 0u32;
         let mut len = 0u32;
         unsafe {
             GetTokenInformation(
                 self.0,
-                TokenElevation,
-                Some(&mut elevation as *mut _ as *mut c_void),
-                std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+                class,
+                Some(&mut value as *mut _ as *mut c_void),
+                std::mem::size_of::<u32>() as u32,
                 &mut len,
             )
-            .is_ok()
-                && elevation.TokenIsElevated != 0
+            .ok()?;
         }
+        Some(value)
+    }
+
+    /// May this process start the host? The host must run as the user's
+    /// ordinary desktop process, so two kinds of process must not start it:
+    ///
+    /// - An app container (Store apps, the Start menu): the host would be
+    ///   locked inside the container, one copy per app, unreachable by
+    ///   everything else.
+    /// - A process elevated through UAC while the user's other programs are
+    ///   not: they could not open the elevated host's pipe. Where UAC does
+    ///   not split the token (everything runs with the same rights), there
+    ///   is no such gap and starting the host is fine.
+    ///
+    /// When in doubt the answer is no.
+    fn may_launch_host(&self) -> bool {
+        let app_container = self.dword(TokenIsAppContainer);
+        let elevation = self.dword(TokenElevationType);
+        app_container == Some(0)
+            && elevation.is_some_and(|kind| kind != TokenElevationTypeFull.0 as u32)
     }
 }
 
@@ -248,8 +269,7 @@ pub struct PipeEngine {
     /// The host executable: started when the pipe is absent, and the only
     /// program we accept as the pipe's server. `None` skips both.
     host_exe: Option<PathBuf>,
-    /// Starting the host from an elevated process would make an elevated
-    /// host that ordinary applications cannot reach.
+    /// False in processes that must not start the host (see Token::may_launch_host).
     may_launch: bool,
     connection: Option<Connection>,
     next_id: u64,
@@ -268,7 +288,7 @@ impl PipeEngine {
         Some(PipeEngine {
             pipe_name: wide(&format!(r"\\.\pipe\bopogram-{sid}")),
             host_exe,
-            may_launch: !token.elevated(),
+            may_launch: token.may_launch_host(),
             connection: None,
             next_id: 1,
             last_launch: None,

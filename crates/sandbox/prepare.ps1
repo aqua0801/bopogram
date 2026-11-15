@@ -37,8 +37,20 @@ $out = Join-Path $Work "out"
 $runtimeCopy = Join-Path $Work "runtime"
 New-Item -ItemType Directory -Force $stage, $out | Out-Null
 Copy-Item (Join-Path $release "bopogram_ime.dll"), (Join-Path $release "bopogram-host.exe") $stage -Force
-Copy-Item (Join-Path $PSScriptRoot "setup.ps1"), (Join-Path $PSScriptRoot "test.html") $stage -Force
+foreach ($file in "setup.ps1", "testform.ps1", "test.html") {
+    Copy-Item (Join-Path $PSScriptRoot $file) $stage -Force
+}
 Remove-Item (Join-Path $out "*") -Force -ErrorAction SilentlyContinue
+
+# The compiled KenLM module needs the VC++ runtime (msvcp140.dll), which a
+# fresh sandbox does not have. Stage the module with this system's copies of
+# the runtime DLLs beside it.
+$kenlm = Join-Path $stage "kenlm"
+New-Item -ItemType Directory -Force $kenlm | Out-Null
+Copy-Item (Join-Path $prototype ".venv\Lib\site-packages\kenlm*.pyd") $kenlm -Force
+foreach ($dll in "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll") {
+    Copy-Item (Join-Path $env:SystemRoot "System32\$dll") $kenlm -Force
+}
 
 # The sandbox gets its own copy of the runtime bundle, so that what is typed
 # there never reaches the real personal data (userdata\user.json).

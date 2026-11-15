@@ -12,6 +12,20 @@ if ($env:USERNAME -ne "WDAGUtilityAccount") {
 }
 Set-Content -Path $log -Value "setup started $(Get-Date -Format s)" -Encoding UTF8
 
+# Smart App Control blocks unsigned code, which is all of ours. Turn it off
+# for this disposable sandbox only.
+$ciPolicy = "HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy"
+$sacBefore = (Get-ItemProperty $ciPolicy -ErrorAction SilentlyContinue).VerifiedAndReputablePolicyState
+Log "Smart App Control state before: $sacBefore (0 off, 1 on, 2 evaluation)"
+try {
+    Set-ItemProperty $ciPolicy -Name VerifiedAndReputablePolicyState -Value 0 -Type DWord -ErrorAction Stop
+    $refresh = & CiTool.exe --refresh 2>&1 | Out-String
+    Log "CiTool --refresh exit code: $LASTEXITCODE $($refresh.Trim() -replace '\s+', ' ')"
+} catch {
+    Log "turning Smart App Control off failed: $_"
+}
+Log "Smart App Control state after: $((Get-ItemProperty $ciPolicy -ErrorAction SilentlyContinue).VerifiedAndReputablePolicyState)"
+
 $clsid = "{B6B6D901-0BBF-4287-A302-F265DBE9A46C}"
 $profile = "{79EFFB1B-3CE8-41DB-9CA2-3318EC0AED82}"
 $install = "C:\Bopogram"
@@ -19,13 +33,14 @@ New-Item -ItemType Directory -Force $install | Out-Null
 Copy-Item "C:\stage\bopogram_ime.dll", "C:\stage\bopogram-host.exe" $install -Force
 
 # A virtual environment on top of the read-only Python, pointed at the
-# read-only engine source and its compiled KenLM module.
+# read-only engine source.
 $venv = Join-Path $install "venv"
 & "C:\Python312\python.exe" -m venv --without-pip $venv
-Set-Content -Path (Join-Path $venv "Lib\site-packages\bopogram.pth") -Encoding ASCII -Value @(
-    "C:\bopogram-prototype",
-    "C:\bopogram-prototype\.venv\Lib\site-packages"
-)
+# KenLM goes into the environment itself, with the VC++ runtime DLLs it needs
+# beside it (extension modules find their dependencies in their own folder).
+$sitePackages = Join-Path $venv "Lib\site-packages"
+Copy-Item "C:\stage\kenlm\*" $sitePackages -Force
+Set-Content -Path (Join-Path $sitePackages "bopogram.pth") -Encoding ASCII -Value "C:\bopogram-prototype"
 $python = Join-Path $venv "Scripts\python.exe"
 $config = "C:\bopogram-runtime\config.json"
 $hostConfig = @{ python = $python; config = $config } | ConvertTo-Json
@@ -58,7 +73,19 @@ try {
     Log "language list failed: $_"
 }
 
+# What Code Integrity blocked, if anything.
+try {
+    $blocked = Get-WinEvent -LogName "Microsoft-Windows-CodeIntegrity/Operational" -MaxEvents 200 -ErrorAction Stop |
+        Where-Object { $_.TimeCreated -gt (Get-Date).AddMinutes(-10) -and $_.LevelDisplayName -ne "Information" }
+    Log "Code Integrity warnings/errors in the last 10 minutes: $(@($blocked).Count)"
+    foreach ($event in @($blocked) | Select-Object -First 12) {
+        Log "  [$($event.Id)] $(($event.Message -split "`n")[0].Trim())"
+    }
+} catch {
+    Log "Code Integrity log unavailable: $_"
+}
+
 # 4. Things to type into.
-Start-Process notepad.exe
+Start-Process powershell.exe -ArgumentList "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", "C:\stage\testform.ps1"
 Start-Process "C:\stage\test.html"
 Log "setup finished $(Get-Date -Format s)"
