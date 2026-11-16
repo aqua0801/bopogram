@@ -4,6 +4,8 @@
     bopogram convert --bopomofo "ㄨㄛˇ ㄗㄞˋ ㄐㄧㄚ" --context "上文" --nbest 5
     bopogram eval eval/testset/testset.tsv --readings eval/readings/testset_bopomofo.tsv
     bopogram serve          # JSON lines on stdin/stdout, see bopogram/server.py
+    bopogram lookup 垃圾 行   # how the dictionary reads these words / characters
+    bopogram lookup --bopomofo "ㄌㄜˋ ㄙㄜˋ"   # what a reading can become
 """
 
 from __future__ import annotations
@@ -27,6 +29,11 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--context", default="", help="text before the cursor (read-only)")
     c.add_argument("--nbest", type=int, default=1)
     c.add_argument("--style", choices=["casual", "formal"], help="override the configured style")
+
+    lk = sub.add_parser("lookup", help="show dictionary readings of words, or the words of a reading")
+    lk.add_argument("words", nargs="*", help="words or single characters")
+    lk.add_argument("--bopomofo", help="syllables separated by spaces: list the words read this way")
+    lk.add_argument("--layout", default="dachen", choices=sorted(LAYOUTS))
 
     s = sub.add_parser("serve", help="JSON-lines protocol on stdin/stdout for a front end")
     s.add_argument("--layout", default="dachen", choices=sorted(LAYOUTS))
@@ -62,6 +69,35 @@ def main(argv: list[str] | None = None) -> int:
             engine.set_style(args.style)
         for text, score in engine.convert(syllables, context=args.context, nbest=args.nbest):
             print(f"{text}\t{score:.3f}" if args.nbest > 1 else text)
+        return 0
+
+    if args.cmd == "lookup":
+        import json
+
+        from .engine import config_path
+        from .lexicon import Lexicon
+
+        path = config_path(args.config)
+        lexicon = Lexicon((path.parent / json.loads(path.read_text(encoding="utf-8"))["dict"]).resolve())
+        layout = LAYOUTS[args.layout]
+        if args.bopomofo:
+            words = lexicon.candidates(tuple(args.bopomofo.split()))
+            print(" ".join(words) if words else "(the dictionary has no word with this reading)")
+
+        def show(word: str, indent: str = "") -> bool:
+            readings = lexicon.readings(word)
+            for syls, tag in readings:
+                note = {"var": "  (variant reading)", "alt": "  (citation-tone spelling)"}.get(tag.partition(":")[2], "")
+                print(f"{indent}{word}\t{' '.join(syls)}\tkeys: {layout.to_keys(list(syls))!r}{note}")
+            return bool(readings)
+
+        for word in args.words:
+            if not show(word):
+                print(f"{word}\t(not in the dictionary as a word)")
+            if len(word) > 1:  # also show each character, to see which one is the problem
+                for ch in dict.fromkeys(word):
+                    if not show(ch, "  "):
+                        print(f"  {ch}\t(not in the dictionary: this character cannot be typed)")
         return 0
 
     if args.cmd == "serve":
