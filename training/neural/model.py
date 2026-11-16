@@ -80,7 +80,7 @@ class Block(nn.Module):
         self.ff2 = nn.Linear(cfg.d_ff, cfg.d_model)
         self.drop = nn.Dropout(cfg.dropout)
 
-    def forward(self, x: torch.Tensor, attn_mask: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, attn_mask: torch.Tensor | None) -> torch.Tensor:
         b, n, d = x.shape
         q, k, v = self.qkv(self.norm1(x)).view(b, n, 3, self.n_heads, d // self.n_heads).permute(2, 0, 3, 1, 4)
         a = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask,
@@ -127,7 +127,8 @@ class Converter(nn.Module):
         is_syl = bases > 0
         x = x + (self.base_emb(bases) + self.tone_emb(tones)) * is_syl[..., None]
         x = self.drop(x)
-        attn_mask = (~pad)[:, None, None, :]  # nobody attends to padding
+        # Nobody attends to padding. A single unpadded sequence (inference) needs no mask.
+        attn_mask = None if b == 1 else (~pad)[:, None, None, :]
         for blk in self.blocks:
             x = blk(x, attn_mask)
         return self.norm(x)

@@ -45,6 +45,8 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--char-freq", help="character frequency TSV (char-unigram baseline)")
     e.add_argument("--style", default="formal", choices=["casual", "formal"],
                    help="the test set uses standard 的/地/得, so it is scored in formal style by default")
+    e.add_argument("--neural-model", help="ONNX model to run live after every syllable "
+                                          "(overrides the config; latency then includes the model)")
     e.add_argument("--neural-scores", help="JSONL from training/neural/score_testset.py")
     e.add_argument("--neural-mode", default="fuse", choices=["fuse", "rerank", "alone"],
                    help="fuse: add the scores inside the lattice; rerank: re-order the n-gram "

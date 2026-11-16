@@ -112,6 +112,13 @@ class Decoder:
         self.position_weight = weight
         self.position_floor = floor
 
+    def rescore(self, scores: list[dict[str, float]] | None, weight: float = 1.0,
+                floor: float = -12.0) -> None:
+        """Replace the position scores and decode the whole buffer again. Needed after
+        every change of the buffer, because the neural model reads all of it."""
+        self.set_position_scores(scores, weight, floor)
+        self._rebuild(0, list(self.syllables))
+
     def _position_score(self, i: int, word: str) -> float:
         scores, floor = self.position_scores, self.position_floor
         total = 0.0

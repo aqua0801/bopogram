@@ -16,6 +16,8 @@
 | unar（The Unarchiver） | https://theunarchiver.com/command-line-tools | LGPL-2.1-or-later | 訓練階段：以外部命令列工具解壓 RAR，不連結、不散布 |
 | NumPy | https://numpy.org/ | BSD-3-Clause | 訓練階段：神經模型訓練資料的陣列檔（`training/neural/`） |
 | PyTorch（含其 CUDA 執行庫） | https://pytorch.org/ | BSD-3-Clause（CUDA 執行庫為 NVIDIA 專有授權，只在訓練機上使用，不散布） | 第 5 階段：訓練神經逐位置評分模型（`training/neural/`），不隨輸入法散布 |
+| ONNX Runtime | https://github.com/microsoft/onnxruntime | MIT | 第 5 階段：在 CPU 上執行神經模型（原型引擎的選用依賴 `onnxruntime`；訓練端用其量化工具） |
+| ONNX、ONNX Script | https://github.com/onnx/onnx 、 https://github.com/microsoft/onnxscript | Apache-2.0、MIT | 第 5 階段：把訓練好的模型匯出成 ONNX 檔（`training/neural/export_onnx.py`） |
 
 ## 語料
 

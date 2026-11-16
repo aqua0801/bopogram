@@ -86,6 +86,21 @@ class DecoderTest(unittest.TestCase):
         self.assertTrue(s.preedit().endswith(("在", "再")))
 
 
+    def test_position_scores_shift_the_choice_but_never_remove_a_word(self):
+        s = make_session()
+        type_keys(s, "ji3y94ru8 ")
+        self.assertEqual(s.preedit(), "我在家")
+        d = s.decoder
+        d.rescore([{}, {"再": -0.1, "在": -9.0}, {}], weight=1.0)
+        self.assertEqual(d.best_text(), "我再家")
+        # A character the model gives no chance at all is only penalised down to the floor,
+        # so a pinned or strongly supported word still wins.
+        d.rescore([{}, {"再": 0.0}, {}], weight=0.05, floor=-12.0)
+        self.assertEqual(d.best_text(), "我在家")
+        d.rescore(None)
+        self.assertEqual(d.best_text(), "我在家")
+
+
 class SessionTest(unittest.TestCase):
     def test_pending_symbols_and_backspace(self):
         s = make_session()
