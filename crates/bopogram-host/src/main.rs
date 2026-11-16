@@ -8,7 +8,9 @@
 //!   bopogram-host --client
 //!
 //! Paths not given on the command line are read from `bopogram-host.json`
-//! next to the executable: {"python": "...", "config": "..."}.
+//! next to the executable: {"python": "...", "config": "..."}. An optional
+//! "trace" there (or --trace <file>) makes the engine log every request and
+//! response to that file, for debugging; it records everything typed.
 
 mod client;
 mod engine;
@@ -28,10 +30,11 @@ struct Args {
     client: bool,
     python: Option<PathBuf>,
     config: Option<PathBuf>,
+    trace: Option<PathBuf>,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut args = Args { client: false, python: None, config: None };
+    let mut args = Args { client: false, python: None, config: None, trace: None };
     let mut it = std::env::args_os().skip(1);
     while let Some(arg) = it.next() {
         match arg.to_str() {
@@ -42,6 +45,7 @@ fn parse_args() -> Result<Args, String> {
             Some("--config") => {
                 args.config = Some(it.next().ok_or("--config needs a path")?.into())
             }
+            Some("--trace") => args.trace = Some(it.next().ok_or("--trace needs a path")?.into()),
             _ => return Err(format!("unknown argument {arg:?}")),
         }
     }
@@ -50,7 +54,7 @@ fn parse_args() -> Result<Args, String> {
 
 /// Fill in whatever the command line left out from `bopogram-host.json`.
 fn engine_config(args: Args) -> Result<EngineConfig, String> {
-    let (mut python, mut config) = (args.python, args.config);
+    let (mut python, mut config, mut trace) = (args.python, args.config, args.trace);
     if python.is_none() || config.is_none() {
         let path = std::env::current_exe()
             .map_err(|e| e.to_string())?
@@ -63,10 +67,12 @@ fn engine_config(args: Args) -> Result<EngineConfig, String> {
         let field = |name: &str| file.get(name).and_then(|v| v.as_str()).map(PathBuf::from);
         python = python.or_else(|| field("python"));
         config = config.or_else(|| field("config"));
+        trace = trace.or_else(|| field("trace"));
     }
     Ok(EngineConfig {
         python: python.ok_or("no python path configured")?,
         config: config.ok_or("no engine config path configured")?,
+        trace,
     })
 }
 

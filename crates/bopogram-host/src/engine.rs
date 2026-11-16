@@ -26,6 +26,9 @@ pub struct EngineConfig {
     pub python: PathBuf,
     /// `config.json` of the runtime bundle.
     pub config: PathBuf,
+    /// Debugging: the engine appends every request and response to this
+    /// file. It records everything typed, so it is only ever set by hand.
+    pub trace: Option<PathBuf>,
 }
 
 pub struct Router {
@@ -73,6 +76,12 @@ impl Router {
             log!("engine sent a line that is not a JSON object; dropped");
             return;
         };
+        // An internal error of the engine: one line with the kind of error
+        // (the text before the colon; the rest could quote what was typed).
+        if response.get("ok") == Some(&Value::Bool(false)) && !response.contains_key("preedit") {
+            let error = response.get("error").and_then(Value::as_str).unwrap_or("");
+            log!("engine error: {}", error.split(':').next().unwrap_or(""));
+        }
         let Some(sid) = response.remove("sid").and_then(|v| v.as_u64()) else {
             return;
         };
@@ -100,11 +109,14 @@ fn read_line(reader: &mut impl BufRead) -> Option<String> {
 /// Start the engine and wait until it reports that the models are loaded.
 fn spawn(cfg: &EngineConfig) -> io::Result<Engine> {
     let stderr = crate::log::handle().map(Stdio::from).unwrap_or_else(Stdio::null);
-    let mut child = Command::new(&cfg.python)
-        // Without -X utf8, Python uses the ANSI code page for piped stdio.
-        .args(["-X", "utf8", "-m", "bopogram.cli", "--config"])
-        .arg(&cfg.config)
-        .arg("serve")
+    let mut command = Command::new(&cfg.python);
+    // Without -X utf8, Python uses the ANSI code page for piped stdio.
+    command.args(["-X", "utf8", "-m", "bopogram.cli", "--config"]).arg(&cfg.config).arg("serve");
+    if let Some(trace) = &cfg.trace {
+        log!("TRACE IS ON: everything typed is written to {}", trace.display());
+        command.arg("--trace").arg(trace);
+    }
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(stderr)

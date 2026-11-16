@@ -31,7 +31,7 @@ fn type_a_sentence_through_the_host() {
     // The first attempt starts the host. Its pipe exists before the models
     // are loaded, so keep asking until a request is actually answered.
     let started = Instant::now();
-    while engine.request(&Op::State).is_none() {
+    while engine.request(&Op::State).is_err() {
         assert!(started.elapsed() < Duration::from_secs(30), "host did not come up");
         thread::sleep(Duration::from_millis(100));
     }

@@ -82,7 +82,7 @@ pub struct Response {
 
 impl Response {
     /// `None` unless the object carries the composition state. Error replies
-    /// produced by the host (engine down, timeout) do not, and count as failures.
+    /// (from the host: engine down; from the engine: an internal error) do not.
     pub fn from_value(value: &Value) -> Option<Self> {
         let text = |name: &str| value.get(name)?.as_str().map(str::to_owned);
         let pending = text("pending")?;
@@ -118,10 +118,30 @@ impl Response {
     }
 }
 
-/// Something that answers requests. `None` means the engine could not be
-/// reached in time; the caller must not block or retry on the same key.
+/// Why a request has no response. The three cases leave the engine's
+/// session in different states, so the caller must treat them differently.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Failure {
+    /// Nobody to talk to (host not running, pipe broken, engine restarted).
+    /// The session and whatever it was composing are gone.
+    Unreachable,
+    /// The request was sent and not answered in time. The engine still
+    /// handles it, so its session is now ahead of what the caller knows;
+    /// text it commits meanwhile comes with the next response.
+    TimedOut,
+    /// The engine answered that it could not do this (an internal error).
+    /// The session is alive and the composition is as it was.
+    Rejected,
+}
+
+/// Something that answers requests. A request never blocks for long, and
+/// the caller must not retry the same request.
 pub trait Engine {
-    fn request(&mut self, op: &Op) -> Option<Response>;
+    fn request(&mut self, op: &Op) -> Result<Response, Failure>;
+
+    /// Give up on the session: nothing sent so far may have any effect on
+    /// later responses (late commits included).
+    fn abandon(&mut self) {}
 }
 
 #[cfg(test)]

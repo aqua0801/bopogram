@@ -1,8 +1,9 @@
 //! Named pipe client for the engine host.
 //!
 //! This runs on the application's UI thread, inside the key handler, so
-//! every wait has a deadline. If the host cannot be reached in time the
-//! request fails and the key is left to the application.
+//! every wait has a deadline. A request that is not answered in time stays
+//! with the engine: the connection is kept and the late answer is read
+//! (and skipped, except for text it commits) before the next one.
 
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
@@ -31,7 +32,7 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
 
-use crate::protocol::{Engine, Op, Response};
+use crate::protocol::{Engine, Failure, Op, Response};
 
 /// Longest wait for one request, from the handoff notes.
 const REQUEST_TIMEOUT: Duration = Duration::from_millis(200);
@@ -172,6 +173,9 @@ struct Connection {
     event: HANDLE,
     /// Bytes received after the last complete line.
     buffered: Vec<u8>,
+    /// Text committed by answers that arrived after their request timed
+    /// out; handed over with the next answer.
+    late_commit: String,
 }
 
 impl Drop for Connection {
@@ -216,7 +220,8 @@ impl Connection {
                 return None;
             }
         };
-        let connection = Connection { pipe, event, buffered: Vec::new() };
+        let connection =
+            Connection { pipe, event, buffered: Vec::new(), late_commit: String::new() };
         // Only talk to our own host: the pipe name alone proves nothing.
         if let Some(expected) = host_exe {
             let mut pid = 0u32;
@@ -234,44 +239,53 @@ impl Connection {
         started: windows::core::Result<()>,
         overlapped: &OVERLAPPED,
         deadline: Instant,
-    ) -> Option<usize> {
+    ) -> Result<usize, Io> {
         let mut transferred = 0u32;
         unsafe {
             if let Err(err) = started {
                 if err.code() != ERROR_IO_PENDING.to_hresult() {
-                    return None;
+                    return Err(Io::Broken);
                 }
                 let left = deadline.saturating_duration_since(Instant::now()).as_millis() as u32;
                 if WaitForSingleObject(self.event, left) != WAIT_OBJECT_0 {
-                    // The buffer must not be touched by the kernel after we return.
+                    // The buffer must not be touched by the kernel after we
+                    // return, so wait for the cancellation. If the operation
+                    // finished just before it, the bytes count: dropping
+                    // them would put the connection out of step.
                     let _ = CancelIo(self.pipe);
-                    let _ = GetOverlappedResult(self.pipe, overlapped, &mut transferred, true);
-                    return None;
+                    return match GetOverlappedResult(self.pipe, overlapped, &mut transferred, true) {
+                        Ok(()) => Ok(transferred as usize),
+                        Err(_) => Err(Io::TimedOut),
+                    };
                 }
             }
-            GetOverlappedResult(self.pipe, overlapped, &mut transferred, false).ok()?;
+            GetOverlappedResult(self.pipe, overlapped, &mut transferred, false)
+                .map_err(|_| Io::Broken)?;
         }
-        Some(transferred as usize)
+        Ok(transferred as usize)
     }
 
-    fn write(&self, mut data: &[u8], deadline: Instant) -> Option<()> {
+    fn write(&self, mut data: &[u8], deadline: Instant) -> Result<(), Io> {
         while !data.is_empty() {
             let overlapped = OVERLAPPED { hEvent: self.event, ..OVERLAPPED::default() };
             let started = unsafe {
                 WriteFile(self.pipe, Some(data), None, Some(&overlapped as *const _ as *mut _))
             };
             let written = self.complete(started, &overlapped, deadline)?;
+            if written == 0 {
+                return Err(Io::Broken);
+            }
             data = &data[written..];
         }
-        Some(())
+        Ok(())
     }
 
-    fn read_line(&mut self, deadline: Instant) -> Option<Vec<u8>> {
+    fn read_line(&mut self, deadline: Instant) -> Result<Vec<u8>, Io> {
         loop {
             if let Some(end) = self.buffered.iter().position(|&b| b == b'\n') {
                 let mut line: Vec<u8> = self.buffered.drain(..=end).collect();
                 line.pop();
-                return Some(line);
+                return Ok(line);
             }
             let mut chunk = [0u8; 4096];
             let overlapped = OVERLAPPED { hEvent: self.event, ..OVERLAPPED::default() };
@@ -280,23 +294,54 @@ impl Connection {
             };
             let read = self.complete(started, &overlapped, deadline)?;
             if read == 0 {
-                return None;
+                return Err(Io::Broken);
             }
             self.buffered.extend_from_slice(&chunk[..read]);
         }
     }
 
-    fn round_trip(&mut self, line: &str, id: u64, deadline: Instant) -> Option<Response> {
-        self.write(format!("{line}\n").as_bytes(), deadline)?;
+    fn round_trip(&mut self, line: &str, id: u64, deadline: Instant) -> Result<Response, Failure> {
+        // A request that is not known to have been sent whole leaves the
+        // connection unusable, whatever the reason.
+        self.write(format!("{line}\n").as_bytes(), deadline).map_err(|_| Failure::Unreachable)?;
         loop {
-            let reply = self.read_line(deadline)?;
-            let value: Value = serde_json::from_slice(&reply).ok()?;
-            // Anything else is the late answer to a request we gave up on.
-            if value.get("id").and_then(Value::as_u64) == Some(id) {
-                return Response::from_value(&value);
+            let reply = match self.read_line(deadline) {
+                Ok(reply) => reply,
+                // The request is with the engine; its answer is read later.
+                Err(Io::TimedOut) => return Err(Failure::TimedOut),
+                Err(Io::Broken) => return Err(Failure::Unreachable),
+            };
+            let value: Value = serde_json::from_slice(&reply).map_err(|_| Failure::Unreachable)?;
+            if value.get("id").and_then(Value::as_u64) != Some(id) {
+                // The late answer to a request we stopped waiting for. Its
+                // state is superseded by the answer still to come, but text
+                // it committed exists nowhere else.
+                if let Some(text) = value.get("commit").and_then(Value::as_str) {
+                    self.late_commit.push_str(text);
+                }
+                continue;
             }
+            return match Response::from_value(&value) {
+                Some(mut response) => {
+                    if !self.late_commit.is_empty() {
+                        let mut text = std::mem::take(&mut self.late_commit);
+                        text.push_str(response.commit.as_deref().unwrap_or(""));
+                        response.commit = Some(text);
+                    }
+                    Ok(response)
+                }
+                // The host's own errors mean the engine (and the session) is gone.
+                None if value.get("host").is_some() => Err(Failure::Unreachable),
+                None => Err(Failure::Rejected),
+            };
         }
     }
+}
+
+/// Why a pipe operation did not finish.
+enum Io {
+    TimedOut,
+    Broken,
 }
 
 pub struct PipeEngine {
@@ -356,19 +401,25 @@ impl PipeEngine {
 }
 
 impl Engine for PipeEngine {
-    fn request(&mut self, op: &Op) -> Option<Response> {
+    fn request(&mut self, op: &Op) -> Result<Response, Failure> {
         if !self.connect() {
-            return None;
+            return Err(Failure::Unreachable);
         }
         let id = self.next_id;
         self.next_id += 1;
         let deadline = Instant::now() + REQUEST_TIMEOUT;
-        let response = self.connection.as_mut()?.round_trip(&op.to_json(id), id, deadline);
-        if response.is_none() {
-            // The connection may be out of step with the host; a new one
-            // gets a new, empty session.
+        let connection = self.connection.as_mut().ok_or(Failure::Unreachable)?;
+        let result = connection.round_trip(&op.to_json(id), id, deadline);
+        if result == Err(Failure::Unreachable) {
+            // A new connection gets a new, empty session.
             self.connection = None;
         }
-        response
+        result
+    }
+
+    /// Closing the connection ends the session in the engine, and with it
+    /// every answer that is still on its way.
+    fn abandon(&mut self) {
+        self.connection = None;
     }
 }

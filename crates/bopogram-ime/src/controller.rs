@@ -11,10 +11,14 @@
 //!
 //! No Windows calls here, so this is tested with plain `cargo test`.
 
-use crate::protocol::{Engine, Op, Response};
+use crate::protocol::{Engine, Failure, Op, Response};
 
 /// Candidates per page; the digit keys 1-9 pick from the page.
 pub const PAGE_SIZE: usize = 9;
+
+/// Unanswered requests in a row after which the engine is taken to be
+/// hung, and the composition is given up (its visible text is committed).
+const TIMEOUT_LIMIT: u32 = 5;
 
 pub const CASUAL: &str = "casual";
 pub const FORMAL: &str = "formal";
@@ -155,6 +159,9 @@ pub struct Controller<E: Engine> {
     /// A request failed, so the engine may still hold a composition that
     /// the front end has given up on. Discard it before the next request.
     stale: bool,
+    /// Requests in a row that were sent but not answered in time. While
+    /// this is not zero the engine's session is ahead of the state below.
+    behind: u32,
     /// The engine has not been told the current `enabled` state yet.
     learning_unsent: bool,
     /// The style the user chose, if known. The engine is told whenever it
@@ -185,6 +192,7 @@ impl<E: Engine> Controller<E> {
             shift_alone: false,
             prefix: false,
             stale: false,
+            behind: 0,
             learning_unsent: false,
             wanted_style: None,
             style: None,
@@ -218,8 +226,10 @@ impl<E: Engine> Controller<E> {
         self.chinese
     }
 
+    /// Also true while the engine has not answered: it may be composing
+    /// something this side has not seen yet.
     pub fn composing(&self) -> bool {
-        !self.preedit.is_empty()
+        !self.preedit.is_empty() || self.behind > 0
     }
 
     /// "casual" or "formal".
@@ -413,7 +423,18 @@ impl<E: Engine> Controller<E> {
     }
 
     /// One request, with the bookkeeping that keeps both sides in step.
-    fn exchange(&mut self, op: &Op) -> Option<Response> {
+    fn exchange(&mut self, op: &Op) -> Result<Response, Failure> {
+        let result = self.exchange_inner(op);
+        match result {
+            // Every response carries the whole state: back in step.
+            Ok(_) => self.behind = 0,
+            Err(Failure::TimedOut) => self.behind += 1,
+            Err(_) => {}
+        }
+        result
+    }
+
+    fn exchange_inner(&mut self, op: &Op) -> Result<Response, Failure> {
         if self.stale {
             // The first Escape only drops an unfinished syllable.
             self.engine.request(&Op::Escape)?;
@@ -432,7 +453,32 @@ impl<E: Engine> Controller<E> {
         }
         let response = self.engine.request(op)?;
         self.absorb(&response);
-        Some(response)
+        Ok(response)
+    }
+
+    /// Catch up after a request that was not answered in time: the engine
+    /// has handled it by now, or will before it answers this one. Without
+    /// this the composition would show (and the next key would be judged
+    /// by) a state the engine has already left.
+    fn catch_up(&mut self) {
+        if self.behind == 0 {
+            return;
+        }
+        match self.engine.request(&Op::State) {
+            Ok(response) => {
+                self.absorb(&response);
+                self.behind = 0;
+            }
+            Err(Failure::TimedOut) => {
+                self.behind += 1;
+                if self.behind >= TIMEOUT_LIMIT {
+                    self.lost();
+                }
+            }
+            Err(Failure::Unreachable) => self.lost(),
+            // It answers, so nothing is outstanding any more.
+            Err(Failure::Rejected) => self.behind = 0,
+        }
     }
 
     fn clear(&mut self) {
@@ -444,10 +490,14 @@ impl<E: Engine> Controller<E> {
         self.prefix = false;
     }
 
-    /// The engine did not answer. Give up on the composition, keeping the
+    /// The engine is gone or hung. Give up on the composition, keeping the
     /// text that was already on screen so the user does not lose it.
     fn lost(&mut self) {
         self.stale = true;
+        self.behind = 0;
+        // Whatever the old session still commits must not arrive later,
+        // on top of the text committed here.
+        self.engine.abandon();
         let text = std::mem::take(&mut self.text);
         self.committed.push_str(&text);
         self.clear();
@@ -465,7 +515,9 @@ impl<E: Engine> Controller<E> {
             return None;
         }
         self.window_open = false;
-        if self.exchange(&Op::Commit).is_none() {
+        self.catch_up();
+        // The text is needed now, so there is no waiting for a late answer.
+        if self.composing() && self.exchange(&Op::Commit).is_err() {
             self.lost();
         }
         self.take_committed()
@@ -473,8 +525,9 @@ impl<E: Engine> Controller<E> {
 
     /// Report the text before the cursor. Ignored while composing.
     pub fn set_context(&mut self, text: &str) {
-        if !self.composing() && self.exchange(&Op::Context(text.to_owned())).is_none() {
-            self.stale = true;
+        if !self.composing() {
+            // Only a hint: a failure here costs nothing.
+            let _ = self.exchange(&Op::Context(text.to_owned()));
         }
     }
 
@@ -486,6 +539,10 @@ impl<E: Engine> Controller<E> {
         }
         if self.composing() {
             self.stale = true;
+        }
+        if std::mem::take(&mut self.behind) > 0 {
+            // A late answer must not put text into the password field.
+            self.engine.abandon();
         }
         self.clear();
         self.enabled = enabled;
@@ -504,6 +561,7 @@ impl<E: Engine> Controller<E> {
 
     pub fn key_down(&mut self, key: Key) -> Outcome {
         self.note_key_down(key);
+        self.catch_up();
         let action = self.classify(key);
         let was_busy = self.composing() || self.prefix;
         if action != Action::Pass {
@@ -523,22 +581,22 @@ impl<E: Engine> Controller<E> {
         let count = self.candidates.len().max(1);
         let page = self.selected / PAGE_SIZE;
         let sent = match action {
-            Action::Pass | Action::Swallow | Action::CloseWindow => Some(()),
+            Action::Pass | Action::Swallow | Action::CloseWindow => Ok(()),
             Action::StartPrefix => {
                 self.prefix = true;
-                Some(())
+                Ok(())
             }
             Action::MoveSelection(step) => {
                 self.selected = (self.selected + count).wrapping_add_signed(step) % count;
-                Some(())
+                Ok(())
             }
             Action::NextPage => {
                 self.selected = (page + 1) % self.pages() * PAGE_SIZE;
-                Some(())
+                Ok(())
             }
             Action::PrevPage => {
                 self.selected = (page + self.pages() - 1) % self.pages() * PAGE_SIZE;
-                Some(())
+                Ok(())
             }
             Action::Send(op) => self.exchange(&op).map(drop),
             Action::OpenCandidates => self.exchange(&Op::Candidates).map(|response| {
@@ -554,7 +612,7 @@ impl<E: Engine> Controller<E> {
                 let next = if self.style() == FORMAL { CASUAL } else { FORMAL };
                 self.wanted_style = Some(next.to_owned());
                 let done = self.exchange(&Op::State).map(drop);
-                if done.is_some() {
+                if done.is_ok() {
                     outcome.style_changed = true;
                 } else {
                     self.wanted_style = before;
@@ -562,12 +620,21 @@ impl<E: Engine> Controller<E> {
                 done
             }
         };
-        if sent.is_none() {
-            // Engine unreachable. With nothing composed the key simply goes
-            // to the application; otherwise it is dropped, because it was
-            // meant for a composition that no longer exists.
-            outcome.eaten = was_busy;
-            self.lost();
+        match sent {
+            Ok(()) => {}
+            // The engine has the key and is merely slow: the composition
+            // stays. Wait once more for its answer, so that the screen
+            // shows what this key did.
+            Err(Failure::TimedOut) => self.catch_up(),
+            // The engine refused this one key; the composition is intact.
+            Err(Failure::Rejected) => {}
+            Err(Failure::Unreachable) => {
+                // With nothing composed the key simply goes to the
+                // application; otherwise it is dropped, because it was
+                // meant for a composition that no longer exists.
+                outcome.eaten = was_busy;
+                self.lost();
+            }
         }
         outcome.commit = self.take_committed();
         outcome
@@ -607,14 +674,45 @@ mod tests {
         style: String,
         /// Committed automatically with the next response, as a full buffer would be.
         flush: Option<String>,
+        /// This many requests are handled but answered too late.
+        slow: usize,
+        /// Requests fail with an internal error and change nothing.
+        broken: bool,
+        /// Text committed by responses nobody waited for.
+        late: String,
+        abandoned: bool,
         log: Vec<Op>,
     }
 
     impl Engine for Fake {
-        fn request(&mut self, op: &Op) -> Option<Response> {
+        fn request(&mut self, op: &Op) -> Result<Response, Failure> {
             if self.down {
-                return None;
+                return Err(Failure::Unreachable);
             }
+            if self.broken {
+                return Err(Failure::Rejected);
+            }
+            let mut response = self.handle(op);
+            if self.slow > 0 {
+                self.slow -= 1;
+                self.late.push_str(response.commit.as_deref().unwrap_or(""));
+                return Err(Failure::TimedOut);
+            }
+            if !self.late.is_empty() {
+                let late = std::mem::take(&mut self.late);
+                response.commit = Some(late + response.commit.as_deref().unwrap_or(""));
+            }
+            Ok(response)
+        }
+
+        fn abandon(&mut self) {
+            self.abandoned = true;
+            self.late.clear();
+        }
+    }
+
+    impl Fake {
+        fn handle(&mut self, op: &Op) -> Response {
             self.log.push(op.clone());
             let mut response = Response { ok: true, ..Response::default() };
             match op {
@@ -654,7 +752,7 @@ mod tests {
             response.caret = response.preedit.chars().count();
             response.style =
                 Some(if self.style.is_empty() { CASUAL.to_owned() } else { self.style.clone() });
-            Some(response)
+            response
         }
     }
 
@@ -924,6 +1022,78 @@ mod tests {
         c.key_down(key('j'));
         assert_eq!(c.engine_mut().log, [Op::Escape, Op::Escape, Op::Key('j')]);
         assert_eq!(c.preedit(), "j");
+    }
+
+    #[test]
+    fn slow_engine_keeps_the_composition() {
+        // The tone key is answered late: nothing is committed, and the
+        // second wait shows the finished syllable.
+        let mut c = typed("ji3ji");
+        c.engine_mut().slow = 1;
+        assert_eq!(c.key_down(key('3')), eaten(None));
+        assert_eq!(c.preedit(), "字字");
+        assert_eq!(c.engine_mut().log.last(), Some(&Op::State));
+
+        // Still no answer after the second wait: the screen is behind, but
+        // nothing is lost and the next key catches up first.
+        c.key_down(key('j'));
+        c.key_down(key('i'));
+        c.engine_mut().slow = 2;
+        assert_eq!(c.key_down(key('3')), eaten(None));
+        assert_eq!(c.preedit(), "字字ji");
+        assert!(c.composing());
+        assert_eq!(c.key_down(code(vk::DOWN)), eaten(None));
+        assert!(c.candidate_page().is_some(), "judged by the state the engine is in");
+        assert_eq!(c.preedit(), "字字字");
+        assert!(!c.engine_mut().abandoned);
+    }
+
+    #[test]
+    fn slow_first_key_is_not_typed_twice() {
+        let mut c = Controller::new(Fake { slow: 2, ..Fake::default() });
+        assert_eq!(c.key_down(key('j')), eaten(None), "the engine has it");
+        assert!(c.test_key(code(vk::BACK)), "there may be a composition");
+        c.key_down(key('i'));
+        assert_eq!(c.preedit(), "ji");
+    }
+
+    #[test]
+    fn slow_commit_arrives_once() {
+        let mut c = typed("ji3");
+        c.engine_mut().slow = 1;
+        assert_eq!(c.key_down(code(vk::RETURN)), eaten(Some("字")));
+        assert!(!c.composing());
+
+        // The automatic commit of a long buffer, answered late.
+        let mut c = typed("ji3");
+        c.engine_mut().flush = Some("前面".into());
+        c.engine_mut().slow = 2;
+        assert_eq!(c.key_down(key('j')), eaten(None));
+        assert_eq!(c.key_down(key('i')), eaten(Some("前面")));
+        assert_eq!(c.preedit(), "字ji");
+    }
+
+    #[test]
+    fn hung_engine_gives_up_with_the_text() {
+        let mut c = typed("ji3j");
+        c.engine_mut().slow = usize::MAX;
+        assert_eq!(c.key_down(key('i')), eaten(None)); // 2 unanswered
+        assert!(c.composing());
+        assert_eq!(c.key_down(key('3')), eaten(Some("字"))); // 5: given up
+        assert!(!c.composing());
+        assert!(c.engine_mut().abandoned);
+    }
+
+    #[test]
+    fn engine_error_changes_nothing() {
+        let mut c = typed("ji3j");
+        c.engine_mut().broken = true;
+        assert_eq!(c.key_down(key('i')), eaten(None));
+        assert_eq!(c.preedit(), "字j");
+        c.engine_mut().broken = false;
+        c.key_down(key('i'));
+        assert_eq!(c.preedit(), "字ji");
+        assert_eq!(c.engine_mut().log.last(), Some(&Op::Key('i')), "no reset in between");
     }
 
     #[test]

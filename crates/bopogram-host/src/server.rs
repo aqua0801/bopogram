@@ -74,8 +74,10 @@ fn read_request(reader: &mut impl BufRead) -> io::Result<Option<String>> {
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
+/// An error of the host's own. `host` tells the client that this is not
+/// the engine refusing one request: the engine cannot be reached at all.
 fn error(request: Option<&Map<String, Value>>, message: &str) -> String {
-    let mut reply = json!({"ok": false, "error": message});
+    let mut reply = json!({"ok": false, "error": message, "host": true});
     if let Some(id) = request.and_then(|r| r.get("id")) {
         reply["id"] = id.clone();
     }

@@ -105,7 +105,8 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 - AppContainer 程式（Windows 搜尋、開始功能表、市集 App）連不到引擎，在裡面只能打英文，請切回微軟注音。
 - 以系統管理員身分執行的程式不會自己啟動引擎；引擎已在執行時可正常使用。
 - 引擎啟動要載入模型約 1 至 2 秒，這段時間的按鍵會直接變成英文。
-- 引擎沒回應（超過 200 ms）或當掉時，按鍵直接交給程式，已顯示的組字會原樣送出。
+- 引擎回應慢（單次超過 200 ms）時組字會保留，畫面最多再等 200 ms 後補上；
+  連續 5 次沒回應或引擎當掉時才放棄，已顯示的組字會原樣送出。
 - 候選字只能用鍵盤選，不能用滑鼠點。
 - 密碼欄位會自動停用（不組字、不學習、不記錄）；判斷依賴程式的宣告，
   遇到沒被認出的密碼欄位請先切到英文模式，並回報是哪個程式。
@@ -127,5 +128,16 @@ python D:\bopogram\prototype\tools\review_log.py D:\bopogram-data\bopogram-runti
 2. 按了哪些鍵，預期看到什麼，實際看到什麼。
 3. `%LOCALAPPDATA%\Bopogram\host.log` 最後幾行。
 4. 重開該程式後是否還會發生。
+
+**文字被吞、莫名送出**：開啟引擎的追蹤記錄後重現問題，再把檔案交回來。
+追蹤檔會記下**所有打的字**（密碼欄位除外），查完務必關掉並刪除檔案。
+
+```
+# 開啟（以系統管理員身分）
+powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\install.ps1 -Trace D:\bopogram-trace.txt
+# 關閉：不加 -Trace 再裝一次，然後刪除 D:\bopogram-trace.txt
+```
+
+開啟期間 `host.log` 會有一行 `TRACE IS ON`。
 
 **緊急狀況**（某個程式因輸入法無法使用）：Win+空白鍵切回微軟注音即可；仍有問題就執行移除腳本。

@@ -20,6 +20,9 @@ param(
     # Must be a folder only administrators can write to: the DLL is loaded
     # into every application, elevated ones included.
     [string]$Install = (Join-Path $env:ProgramFiles "Bopogram"),
+    # Debugging only: the engine writes every request and response (so,
+    # everything typed) to this file. Install again without it to turn it off.
+    [string]$Trace = "",
     [switch]$NoKeyboard
 )
 $ErrorActionPreference = "Stop"
@@ -60,9 +63,11 @@ foreach ($file in $dll, $hostExe, $settingsExe) {
     }
     Copy-Item $file $target
 }
-$hostConfig = @{ python = $Python; config = $Config; review_tool = $reviewTool } | ConvertTo-Json
-[IO.File]::WriteAllText((Join-Path $Install "bopogram-host.json"), $hostConfig)
+$hostConfig = @{ python = $Python; config = $Config; review_tool = $reviewTool }
+if ($Trace) { $hostConfig.trace = $Trace }
+[IO.File]::WriteAllText((Join-Path $Install "bopogram-host.json"), ($hostConfig | ConvertTo-Json))
 Write-Output "Files installed in $Install."
+if ($Trace) { Write-Output "TRACE IS ON: everything typed is written to $Trace. Install again without -Trace to turn it off." }
 
 # 3. Register the text service.
 $registration = Start-Process regsvr32.exe -ArgumentList "/s", "`"$(Join-Path $Install 'bopogram_ime.dll')`"" -Wait -PassThru
