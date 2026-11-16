@@ -79,6 +79,9 @@ def run_eval(args) -> int:
     readings = load_readings(args.readings)
     engine = Engine(args.config, use_user_model=False)
     engine.set_style(args.style)
+    if args.neural_model:
+        engine.set_neural(args.neural_model, args.neural_weight, args.neural_floor)
+    live = engine.neural is not None and args.system == "bopogram" and not args.neural_scores
 
     char_freq: dict[str, float] = {}
     if args.system == "char-unigram":
@@ -135,8 +138,12 @@ def run_eval(args) -> int:
         for syl in syllables:
             t0 = time.perf_counter()
             decoder.push(syl)
+            if live:
+                engine.rescore(decoder, context)
             text = decoder.best_text()
             timings.append(time.perf_counter() - t0)
+        if live:
+            decoder.set_position_scores(None)
         return text
 
     # Warm up caches so the first sentences do not distort latency.

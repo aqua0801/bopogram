@@ -18,6 +18,8 @@
 | serde_json | https://github.com/serde-rs/json | MIT OR Apache-2.0 | Windows 前端（`crates/`）：解析與產生協定的 JSON 行 |
 | NumPy | https://numpy.org/ | BSD-3-Clause | 訓練階段：神經模型訓練資料的陣列檔（`training/neural/`） |
 | PyTorch（含其 CUDA 執行庫） | https://pytorch.org/ | BSD-3-Clause（CUDA 執行庫為 NVIDIA 專有授權，只在訓練機上使用，不散布） | 第 5 階段：訓練神經逐位置評分模型（`training/neural/`），不隨輸入法散布 |
+| ONNX Runtime | https://github.com/microsoft/onnxruntime | MIT | 第 5 階段：在 CPU 上執行神經模型（原型引擎的選用依賴 `onnxruntime`；訓練端用其量化工具） |
+| ONNX、ONNX Script | https://github.com/onnx/onnx 、 https://github.com/microsoft/onnxscript | Apache-2.0、MIT | 第 5 階段：把訓練好的模型匯出成 ONNX 檔（`training/neural/export_onnx.py`） |
 
 ## 語料
 
@@ -37,6 +39,7 @@
 | 名稱 | 來源 | 授權 | 用途 |
 |---|---|---|---|
 | 教育部《重編國語辭典修訂本》《國語辭典簡編本》《成語典》（2026-09-29 版） | https://language.moe.gov.tw/001/Upload/Files/site_content/M0001/respub/index.html | CC BY-ND 3.0 臺灣 | 注音字典的詞條與讀音。repo 只含建置腳本，字典成品不進 git、不隨專案散布，由使用者自行下載資料後在本機產生 |
+| CNS11643 中文標準交換碼全字庫（屬性資料 `Properties.zip`、對照表 `MapingTables.zip`，版本 20261028） | https://data.gov.tw/dataset/5961 | 政府資料開放授權條款－第1版（須註明出處；資料集另提供 OFL-1.1 供擇一，本專案採前者） | 注音字典：補上教育部辭典沒有收錄的單字及其注音（來源標記 `cns`）。資料來源：數位發展部「全字庫」。只在本機建置時讀取，原始檔不進 repo |
 
 ## 待查證（尚未使用）
 

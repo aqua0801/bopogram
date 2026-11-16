@@ -6,6 +6,9 @@ requires-python = ">=3.12"
 dependencies = [
     "mwparserfromhell>=0.6.6",
     "numpy>=2.5.4",
+    "onnx>=1.23.2",
+    "onnxruntime>=1.32.0",
+    "onnxscript>=0.7.2",
     "opencc>=1.1.9",
     "openpyxl>=3.1.5",
     "pyarrow>=26.0.1",

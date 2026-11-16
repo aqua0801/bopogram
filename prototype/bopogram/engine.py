@@ -27,12 +27,15 @@ class Engine:
     {"dict": "../dict/dict.tsv",
      "models": [{"path": "ly.binary", "weight": 0.4}, ...],
      "beam": 16, "max_candidates": 40, "word_penalty": 0.0, "eos_weight": 0.0,
-     "style": "casual", "user_model": null, "typing_log": null}
+     "style": "casual", "user_model": null, "typing_log": null,
+     "neural": {"model": "neural/neural.int8.onnx", "weight": 0.3, "floor": -12.0, "threads": 2}}
 
     "style" is "casual" (a lone neutral-tone ㄉㄜ is always 的) or "formal"
     (的 / 地 / 得 are chosen by the model); the default is "casual".
     "typing_log" names a local file that records committed compositions for
     later review (see typing_log.py); it is off when absent or null.
+    "neural" adds the scores of the position-wise model (see neural.py) to the
+    lattice; absent or null means the n-gram engine alone.
     """
 
     def __init__(self, config: str | Path | None = None, use_user_model: bool = True):
@@ -50,11 +53,27 @@ class Engine:
         if use_user_model and cfg.get("typing_log"):
             log_path = Path(cfg["typing_log"]).expanduser()
             self.typing_log = TypingLog(log_path if log_path.is_absolute() else base / log_path)
+        self.neural = None
+        self.neural_weight, self.neural_floor = 0.0, -12.0
+        if cfg.get("neural"):
+            self.set_neural(**{**cfg["neural"], "model": (base / cfg["neural"]["model"]).resolve()})
         self._decoder_args = dict(beam=cfg.get("beam", 16), max_candidates=cfg.get("max_candidates", 40),
                                   word_penalty=cfg.get("word_penalty", 0.0),
                                   eos_weight=cfg.get("eos_weight", 0.0),
                                   style=cfg.get("style", "casual"))
         self.decoder = self.new_decoder()
+
+    def set_neural(self, model, weight: float = 0.3, floor: float = -12.0, threads: int = 2) -> None:
+        from .neural import NeuralScorer  # imported only when used: ONNX Runtime is optional
+
+        self.neural = NeuralScorer(model, threads)
+        self.neural_weight, self.neural_floor = weight, floor
+
+    def rescore(self, decoder: Decoder, context: str) -> None:
+        """Refresh a decoder's neural scores after its buffer changed (no-op without a model)."""
+        if self.neural is not None:
+            scores = self.neural.score(context, decoder.syllables) if decoder.syllables else None
+            decoder.rescore(scores, self.neural_weight, self.neural_floor)
 
     def set_style(self, style: str) -> None:
         """Style for this engine's own decoder and for decoders created afterwards."""
@@ -74,6 +93,7 @@ class Engine:
         self.start(context)
         for s in syllables:
             self.decoder.push(s)
+        self.rescore(self.decoder, context)
         return [("".join(words), score) for words, score in self.decoder.nbest(nbest)]
 
     def convert_keys(self, keys: str, layout: str = "dachen", **kw) -> list[tuple[str, float]]:

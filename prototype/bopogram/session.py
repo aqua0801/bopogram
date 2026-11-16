@@ -52,6 +52,7 @@ class Session:
     def _clear(self) -> None:
         self.initial = self.medial = self.final = ""
         self.cursor = 0  # number of buffer items before the cursor
+        self.decoder.set_position_scores(None)
         self.decoder.reset(context_state(self.context, self.engine.lexicon, self.engine.lm))
 
     @property
@@ -70,9 +71,15 @@ class Session:
         """Bopomofo symbols of the syllable being typed."""
         return self.initial + self.medial + self.final
 
+    def _rescore(self) -> None:
+        rescore = getattr(self.engine, "rescore", None)
+        if rescore is not None:
+            rescore(self.decoder, self.context)
+
     def _insert(self, item: str) -> None:
         self.decoder.insert(self.cursor, item)
         self.cursor += 1
+        self._rescore()
         self._limit()
 
     def key(self, key: str) -> bool:
@@ -122,11 +129,13 @@ class Session:
         elif self.cursor > 0:
             self.decoder.delete(self.cursor - 1)
             self.cursor -= 1
+            self._rescore()
 
     def delete(self) -> None:
         """Remove the item after the cursor (the Delete key)."""
         if not self.pending and self.cursor < self._size:
             self.decoder.delete(self.cursor)
+            self._rescore()
 
     def move(self, delta: int) -> None:
         if not self.pending:
@@ -254,6 +263,7 @@ class Session:
             plain = self.engine.new_decoder()
             plain.style = dec.style
             plain.reset(dec.nodes[0][0].state)
+            plain.set_position_scores(dec.position_scores, dec.position_weight, dec.position_floor)
             for item in dec.syllables:
                 plain.push(item)
             first = plain.best_text()
@@ -279,6 +289,7 @@ class Session:
         self.context = (self.context + text)[-MAX_CONTEXT:]
         self.decoder.drop_front(count, context_state(self.context, self.engine.lexicon, self.engine.lm))
         self.cursor -= count
+        self._rescore()
 
     def commit(self) -> str:
         """Finish the composition and return its text (a syllable in progress is dropped)."""
