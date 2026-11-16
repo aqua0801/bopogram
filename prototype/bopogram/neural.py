@@ -40,6 +40,9 @@ class NeuralScorer:
         # Spellings the dictionary accepts but the model was not trained with
         # (see training/dict/typing_variants.tsv) are scored as the standard reading.
         self.aliases: dict[str, str] = {"˙ㄇㄛ": "˙ㄇㄜ"}
+        # Tone-sandhi spellings of 一 / 不 were not in the training data either; the
+        # model has no opinion on them (they get the score of its best candidate).
+        self.sandhi = {"ㄧˊ": "一", "ㄧˋ": "一", "ㄅㄨˊ": "不"}
 
     def _context_ids(self, text: str) -> list[int]:
         """Same encoding as training/neural/make_data.py."""
@@ -99,5 +102,8 @@ class NeuralScorer:
             x = logits[row, ids].astype(np.float64)
             x -= x.max()
             logp = x - np.log(np.exp(x).sum())
-            out.append(dict(zip(cand_chars, logp.tolist())))
+            scores = dict(zip(cand_chars, logp.tolist()))
+            if syl in self.sandhi:
+                scores[self.sandhi[syl]] = 0.0
+            out.append(scores)
         return out

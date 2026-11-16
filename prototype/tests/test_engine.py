@@ -23,9 +23,13 @@ DICT = """我\tㄨㄛˇ\ttest
 看\tㄎㄢˋ\ttest
 看看\tㄎㄢˋ ㄎㄢˋ\ttest
 的\t˙ㄉㄜ\ttest
+一\tㄧ\ttest
+一\tㄧˋ\ttest:var
+意\tㄧˋ\ttest
+ㄨ\tㄨ\tsymbol
 地\t˙ㄉㄜ\ttest
 """
-UNIGRAM = {"我": 0.2, "在": 0.15, "再": 0.1, "家": 0.1, "加": 0.05, "看": 0.1, "看看": 0.05, "的": 0.2}
+UNIGRAM = {"一": 0.3, "意": 0.01, "地": 0.01, "我": 0.2, "在": 0.15, "再": 0.1, "家": 0.1, "加": 0.05, "看": 0.1, "看看": 0.05, "的": 0.2}
 BIGRAM = {("看看", "地"): 0.9, ("我", "在"): 0.4, ("在", "家"): 0.5, ("我", "再"): 0.2, ("再", "看看"): 0.6, ("在", "看看"): 0.05}
 
 
@@ -85,6 +89,21 @@ class DecoderTest(unittest.TestCase):
         self.assertTrue(s.preedit().startswith("我"))
         self.assertTrue(s.preedit().endswith(("在", "再")))
 
+
+    def test_tone_sandhi_needs_the_right_following_tone(self):
+        s = make_session()
+        type_keys(s, "u4")                   # ㄧˋ alone: not 一, although 一 is far more frequent
+        self.assertEqual(s.preedit(), "意")
+        type_keys(s, "ru8 ")                 # followed by a first tone (ㄐㄧㄚ): the sandhi reading applies
+        self.assertEqual(s.preedit(), "一家")
+        s.escape()
+        type_keys(s, "u4y94")                # followed by a fourth tone: ㄧˋ cannot be 一
+        self.assertEqual(s.preedit()[0], "意")
+
+    def test_bopomofo_symbol_is_a_candidate(self):
+        s = make_session()
+        type_keys(s, "j ")                   # ㄨ + first tone: nothing else is read ㄨ in the toy dictionary
+        self.assertIn("ㄨ", [c["word"] for c in s.candidates()])
 
     def test_position_scores_shift_the_choice_but_never_remove_a_word(self):
         s = make_session()

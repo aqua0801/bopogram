@@ -1,7 +1,7 @@
 """Build the Bopogram pronunciation dictionary (word -> bopomofo) locally.
 
 Usage:
-    uv run python dict/build_dict.py MOE_DIR OUT_DIR [--twngrams DIR] [--manual FILE]
+    uv run python dict/build_dict.py MOE_DIR OUT_DIR [--twngrams DIR] [--manual FILE] [--cns DIR]
 
 Inputs (downloaded by the user / pipeline, never committed):
   MOE_DIR    unpacked Ministry of Education dictionary spreadsheets
@@ -21,6 +21,8 @@ Outputs in OUT_DIR:
 Format rules (agreed): one syllable per character; first tone unmarked;
 neutral tone written with a leading "˙"; a word with several readings
 appears on several lines. Source tags: concised, idiom, revised, web, manual,
+"cns" (characters added from the CNS 11643 database) or "symbol" (a bopomofo
+symbol standing for itself),
 with ":var" appended for variant readings (sandhi, alternative, colloquial,
 literary) and ":alt" for the citation-tone spelling of a neutral-tone word.
 """
@@ -96,6 +98,9 @@ def main() -> None:
     ap.add_argument("out_dir", type=Path)
     ap.add_argument("--twngrams", type=Path)
     ap.add_argument("--manual", type=Path)
+    ap.add_argument("--cns", type=Path,
+                    help="CNS 11643 open data folder (props/CNS_phonetic.txt, maps/Unicode/...): "
+                         "adds characters the dictionaries above do not have")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -249,6 +254,69 @@ def main() -> None:
             entries[key] = tag if tag.endswith(":var") else tag.split(":")[0] + ":alt"
             typed_added += 1
     stats["typing_variants"] = typed_added
+
+    # Characters missing from the dictionaries above, from the CNS 11643 character
+    # database (tag "cns"). Only whole characters are added; nothing existing changes.
+    # Simplified forms are left out: this is a Traditional Chinese input method.
+    if args.cns:
+        import opencc
+
+        to_trad = opencc.OpenCC("s2t")
+        code_to_char: dict[str, str] = {}
+        with open(args.cns / "maps" / "Unicode" / "CNS2UNICODE_Unicode BMP.txt", encoding="utf-8-sig") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) == 2:
+                    code_to_char[parts[0]] = chr(int(parts[1], 16))
+        have = {w for w, _ in entries if len(w) == 1}
+        cns_chars = set()
+        with open(args.cns / "props" / "CNS_phonetic.txt", encoding="utf-8-sig") as fh:
+            for line in fh:
+                parts = line.rstrip("\n").split("\t")
+                ch = code_to_char.get(parts[0]) if len(parts) == 2 else None
+                if ch is None or ch in have or not ("一" <= ch <= "鿿") or not SYLLABLE.match(parts[1]):
+                    continue
+                if to_trad.convert(ch) != ch:
+                    stats["cns_skipped_simplified"] += 1
+                    continue
+                entries[(ch, (parts[1],))] = "cns"
+                cns_chars.add(ch)
+        stats["cns_chars"] = len(cns_chars)
+
+    # Tone sandhi of 一 and 不: people type the tone they say (一個 as ㄧˊ, 一起 as ㄧˋ,
+    # 不要 as ㄅㄨˊ). Words get an ":alt" entry with the spoken tone; the single
+    # characters get a ":var" entry, which the engine only uses when the next
+    # syllable has the tone that causes the change (see SANDHI in the engine's decoder).
+    def tone_of(syl: str) -> int:
+        return 5 if syl.startswith("˙") else {"ˊ": 2, "ˇ": 3, "ˋ": 4}.get(syl[-1], 1)
+
+    def spoken(ch: str, syl: str, nxt: str) -> str:
+        if ch == "不" and syl == "ㄅㄨˋ" and tone_of(nxt) == 4:
+            return "ㄅㄨˊ"
+        if ch == "一" and syl == "ㄧ":
+            if tone_of(nxt) == 4 or nxt == "˙ㄍㄜ":
+                return "ㄧˊ"
+            if tone_of(nxt) in (1, 2, 3):
+                return "ㄧˋ"
+        return syl
+
+    sandhi_added = 0
+    for (word, syls), tag in list(entries.items()):
+        if len(word) < 2 or tag.endswith(":var") or not ("一" in word[:-1] or "不" in word[:-1]):
+            continue
+        new = tuple(spoken(word[i], syls[i], syls[i + 1]) if i + 1 < len(word) else syls[i]
+                    for i in range(len(word)))
+        if new != syls and (word, new) not in entries:
+            entries[(word, new)] = tag.split(":")[0] + ":alt"
+            sandhi_added += 1
+    for ch, syl in (("一", "ㄧˊ"), ("一", "ㄧˋ"), ("不", "ㄅㄨˊ")):
+        entries.setdefault((ch, (syl,)), "concised:var")
+    stats["sandhi_alternatives"] = sandhi_added
+
+    # Bopomofo symbols themselves: a lone symbol typed with the first tone can be
+    # chosen from the candidate list (tag "symbol"), as in Microsoft Bopomofo.
+    for sym in "ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙㄧㄨㄩㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ":
+        entries[(sym, (sym,))] = "symbol"
 
     ordered = sorted(entries.items(), key=lambda kv: (kv[0][0], kv[0][1]))
     with open(args.out_dir / "dict.tsv", "w", encoding="utf-8") as fh:
