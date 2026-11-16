@@ -258,16 +258,21 @@ impl<E: Engine> Controller<E> {
             return Action::Pass;
         }
         if key.ctrl {
-            if key.shift {
-                return Action::Pass;
-            }
-            return match key.vk {
-                vk::OEM_3 => Action::ToggleStyle,
-                // Ctrl with these keys types punctuation; every other
-                // shortcut belongs to the application.
-                vk::OEM_COMMA | vk::OEM_PERIOD | vk::OEM_7 | vk::OEM_4 | vk::OEM_6 => {
-                    ascii(key.vk, false).map_or(Action::Pass, |c| Action::Send(Op::Symbol(c)))
-                }
+            // Ctrl with these keys types full-width punctuation; every
+            // other shortcut belongs to the application.
+            let punctuation = if key.shift {
+                // ： ？ ！
+                matches!(key.vk, vk::OEM_1 | vk::OEM_2 | 0x31)
+            } else {
+                // ， 。 、 ； 【 】
+                matches!(
+                    key.vk,
+                    vk::OEM_COMMA | vk::OEM_PERIOD | vk::OEM_7 | vk::OEM_1 | vk::OEM_4 | vk::OEM_6
+                )
+            };
+            return match ascii(key.vk, key.shift) {
+                Some(c) if punctuation => Action::Send(Op::Symbol(c)),
+                _ if key.vk == vk::OEM_3 && !key.shift => Action::ToggleStyle,
                 _ => Action::Pass,
             };
         }
@@ -795,6 +800,16 @@ mod tests {
         assert_eq!(c.key_down(Key { shift: true, ..key('1') }), eaten(None));
         assert_eq!(c.key_down(Key { ctrl: true, ..key(',') }), eaten(None));
         assert_eq!(c.key_down(key('[')), eaten(None));
+        // Ctrl+Shift with ; / 1 are ： ？ ！; other Ctrl+Shift keys are shortcuts.
+        let ctrl_shift = |vk| Key { vk, ctrl: true, shift: true, ..Key::default() };
+        assert!(c.test_key(Key { vk: vk::OEM_1, ctrl: true, ..Key::default() }));
+        assert!(!c.test_key(ctrl_shift(vk::OEM_COMMA)));
+        assert!(!c.test_key(Key { vk: vk::OEM_2, ctrl: true, ..Key::default() }));
+        for (vk, symbol) in [(vk::OEM_1, ':'), (vk::OEM_2, '?'), (0x31, '!')] {
+            assert!(c.key_down(ctrl_shift(vk)).eaten);
+            assert_eq!(c.engine_mut().log.last(), Some(&Op::Symbol(symbol)));
+            c.key_down(code(vk::BACK));
+        }
         assert_eq!(c.preedit(), "字<!,[");
 
         // Punctuation also starts a composition.
