@@ -53,8 +53,8 @@ fn type_a_sentence_through_the_host() {
     controller.key_down(Key { vk: vk::ESCAPE, ..Key::default() });
     assert!(controller.candidate_page().is_none());
 
-    // Punctuation joins the composition; Left then a syllable inserts before it.
-    controller.key_down(Key { vk: vk::OEM_COMMA, shift: true, ..Key::default() });
+    // Punctuation joins the composition (Ctrl+comma is the full-width comma).
+    controller.key_down(Key { vk: vk::OEM_COMMA, ctrl: true, ..Key::default() });
     assert_eq!(controller.preedit(), "我在家，");
     assert_eq!(controller.caret_units(), 4);
     controller.key_down(Key { vk: vk::LEFT, ..Key::default() });

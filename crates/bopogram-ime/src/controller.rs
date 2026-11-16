@@ -308,8 +308,9 @@ impl<E: Engine> Controller<E> {
             }
         }
 
-        // Latin letters (Shift or Caps Lock) go into the composition as they
-        // are; with nothing composed they are the application's.
+        // Latin letters (Shift or Caps Lock) and the Shift symbols (: " < > ? ! ...)
+        // go into the composition as they are, half-width; with nothing
+        // composed they are the application's.
         if key.shift || key.caps {
             if let Some(c) = typed.filter(char::is_ascii_alphabetic) {
                 let c = if key.shift ^ key.caps {
@@ -326,8 +327,10 @@ impl<E: Engine> Controller<E> {
         }
         if key.shift {
             return match typed.filter(char::is_ascii_punctuation) {
-                Some(c) => Action::Send(Op::Symbol(c)),
-                None => idle, // Shift+Space (full/half width) is not implemented
+                Some(c) if composing && self.pending.is_empty() => {
+                    Action::Send(Op::Text(c.to_string()))
+                }
+                _ => idle, // Shift+Space (full/half width) is not implemented
             };
         }
 
@@ -786,7 +789,7 @@ mod tests {
         let mut c = typed("ji3");
         c.key_down(code(vk::SHIFT));
         assert_eq!(c.key_down(Key { shift: true, ..key(',') }), eaten(None));
-        assert_eq!(c.engine_mut().log.last(), Some(&Op::Symbol('<')));
+        assert_eq!(c.engine_mut().log.last(), Some(&Op::Text("<".into())));
         c.key_up(code(vk::SHIFT));
         assert!(c.chinese(), "shift used with another key must not toggle");
         assert_eq!(c.key_down(Key { shift: true, ..key('1') }), eaten(None));
@@ -796,7 +799,8 @@ mod tests {
 
         // Punctuation also starts a composition.
         let mut c = Controller::new(Fake::default());
-        assert!(c.starts_composition(Key { shift: true, ..key(',') }));
+        assert!(!c.test_key(Key { shift: true, ..key(',') }), "half-width, typed by the application");
+        assert!(c.starts_composition(Key { ctrl: true, ..key(',') }));
         assert!(c.key_down(Key { ctrl: true, ..key(',') }).eaten);
         assert_eq!(c.preedit(), ",");
     }

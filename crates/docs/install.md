@@ -75,6 +75,8 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 與微軟新注音相同的部分見 `prototype\docs\frontend-handoff.md` 的按鍵表。與它不同或需要知道的：
 
 - Shift 單按：中／英切換。Ctrl+`` ` ``：口語／正式切換。
+- Shift 加符號鍵輸入半形符號（`:` `"` `<` `>` `?` `!` 等）：組字中插入組字區，沒在組字時直接交給程式。
+  全形標點用 Ctrl 加符號、單按 `=` `[` `]` `\` `'`，或先按 `` ` `` 再按符號鍵。
 - Ctrl 加符號只接 `,` `.` `'` `[` `]`，其他 Ctrl 組合一律交給程式。
 - 沒有全形／半形切換（Shift+空白鍵）。
 
