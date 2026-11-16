@@ -14,6 +14,7 @@ Bopomofo IME, so that users of that IME need not relearn anything):
     removes the item before the cursor, Delete the one after it. While a
     syllable is in progress, Backspace removes its last symbol.
   * Symbols and other text can be inserted at the cursor; they stay as typed.
+    A symbol can be changed to a related one from the candidate list.
   * Down opens the candidates of the word after the cursor (the last word when
     the cursor is at the end); Up changes that word
     to its next candidate without opening the list.
@@ -29,7 +30,7 @@ from .engine import Engine
 from .layouts import LAYOUTS
 from .layouts.base import FINALS, INITIALS, MEDIALS, TONE_FIRST
 from .lexicon import MAX_WORD_LEN
-from .symbols import full_width
+from .symbols import alternatives, full_width
 
 MAX_CONTEXT = 200
 MAX_BUFFER = 30  # items kept in the composition buffer before the front is committed
@@ -187,8 +188,8 @@ class Session:
             return []
         start = span[0]
         syls = self.decoder.syllables
-        if is_literal(syls[start]):
-            return []
+        if is_literal(syls[start]):  # a symbol can be changed to a related symbol
+            return [{"word": alt, "start": start, "length": 1} for alt in alternatives(syls[start][1:])]
         out, seen = [], set()
         for length in range(min(MAX_WORD_LEN, len(syls) - start), 0, -1):
             words = self.engine.lexicon.candidates(tuple(syls[start:start + length]))
@@ -204,6 +205,11 @@ class Session:
         if not 0 <= index < len(cands):
             return False
         c = cands[index]
+        if is_literal(self.decoder.syllables[c["start"]]):
+            self.decoder.delete(c["start"])
+            self.decoder.insert(c["start"], literal(c["word"]))
+            self._rescore()
+            return True
         span = (c["start"], c["start"] + c["length"])
         pinned = {s: w for s, w in self.decoder.pinned.items() if s[1] <= span[0] or s[0] >= span[1]}
         pinned[span] = c["word"]
