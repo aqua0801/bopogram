@@ -110,7 +110,10 @@ class Decoder:
             known = [w for w in cands if self.lm.unigram(w) > floor]
             cands = known or cands
             if len(cands) > self.max_candidates:
-                cands = sorted(cands, key=self.lm.unigram, reverse=True)[: self.max_candidates]
+                rank = self.lm.unigram
+                if len(key) == 1:
+                    rank = lambda w: self.lm.unigram(w) + self.lexicon.reading_logp(w, key[0])
+                cands = sorted(cands, key=rank, reverse=True)[: self.max_candidates]
             self._cand_cache[key] = cands
         return cands
 
@@ -212,8 +215,13 @@ class Decoder:
                 token = word
                 if j - i == 1 and is_literal(key[0]):
                     token = None if word.isspace() else self.lm.map_token(word, self.lexicon.__contains__)
-                if j - i == 1 and (word, key[0]) in SANDHI:
-                    bonus += SANDHI_PENALTY
+                if j - i == 1:
+                    if (word, key[0]) in SANDHI:
+                        bonus += SANDHI_PENALTY  # sandhi tones have their own rule
+                    elif token is word:
+                        # P(word, reading | history) = P(word | history) * P(reading | word):
+                        # a character is less likely under a reading it seldom has.
+                        bonus += self.lexicon.reading_logp(word, key[0])
                 for h in hyps:
                     logp, state = score_fn(h.state, token) if token is not None else (0.0, h.state)
                     total = h.score + logp + self.word_penalty + bonus

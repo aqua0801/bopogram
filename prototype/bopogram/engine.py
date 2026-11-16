@@ -34,6 +34,8 @@ class Engine:
     (的 / 地 / 得 are chosen by the model); the default is "casual".
     "typing_log" names a local file that records committed compositions for
     later review (see typing_log.py); it is off when absent or null.
+    "reading_prior" names the (character, syllable, count) table that makes a
+    character less likely under a reading it seldom has; optional.
     "neural" adds the scores of the position-wise model (see neural.py) to the
     lattice; absent or null means the n-gram engine alone.
     """
@@ -43,6 +45,9 @@ class Engine:
         cfg = json.loads(path.read_text(encoding="utf-8"))
         base = path.parent
         self.lexicon = Lexicon((base / cfg["dict"]).resolve())
+        if cfg.get("reading_prior"):
+            self.lexicon.load_reading_prior((base / cfg["reading_prior"]).resolve(),
+                                            cfg.get("reading_prior_weight", 1.0))
         self.lm = MixtureLM([(base / m["path"]).resolve() for m in cfg["models"]],
                             [m["weight"] for m in cfg["models"]])
         self.user = None

@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 
 from .decoder import is_literal
+from .lexicon import READING_ALIASES
 
 MAX_CONTEXT = 40
 
@@ -39,7 +40,7 @@ class NeuralScorer:
                        for s, chars in meta["candidates"].items() if chars}
         # Spellings the dictionary accepts but the model was not trained with
         # (see training/dict/typing_variants.tsv) are scored as the standard reading.
-        self.aliases: dict[str, str] = {"˙ㄇㄛ": "˙ㄇㄜ"}
+        self.aliases: dict[str, str] = dict(READING_ALIASES)
         # Tone-sandhi spellings of 一 / 不 were not in the training data either; the
         # model has no opinion on them (they get the score of its best candidate).
         self.sandhi = {"ㄧˊ": "一", "ㄧˋ": "一", "ㄅㄨˊ": "不"}

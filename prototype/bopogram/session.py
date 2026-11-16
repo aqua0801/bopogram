@@ -193,7 +193,11 @@ class Session:
         out, seen = [], set()
         for length in range(min(MAX_WORD_LEN, len(syls) - start), 0, -1):
             words = self.engine.lexicon.candidates(tuple(syls[start:start + length]))
-            for word in sorted(words, key=self.engine.lm.unigram, reverse=True):
+            rank = self.engine.lm.unigram
+            if length == 1:  # single characters: frequent under THIS reading first
+                lexicon, syl = self.engine.lexicon, syls[start]
+                rank = lambda w: self.engine.lm.unigram(w) + lexicon.reading_logp(w, syl)
+            for word in sorted(words, key=rank, reverse=True):
                 if word not in seen:
                     seen.add(word)
                     out.append({"word": word, "start": start, "length": length})
