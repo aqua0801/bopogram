@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import json
 import os
 from pathlib import Path
@@ -67,6 +68,11 @@ class Engine:
                                   eos_weight=cfg.get("eos_weight", 0.0),
                                   style=cfg.get("style", "casual"))
         self.decoder = self.new_decoder()
+        # The dictionary is millions of long-lived Python objects. Without this, every
+        # full garbage collection walks all of them and a keystroke now and then takes
+        # over 100 ms. Freezing moves what exists now out of the collector's sight.
+        gc.collect()
+        gc.freeze()
 
     def set_neural(self, model, weight: float = 0.3, floor: float = -12.0, threads: int = 2) -> None:
         from .neural import NeuralScorer  # imported only when used: ONNX Runtime is optional

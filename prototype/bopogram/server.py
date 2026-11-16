@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 
 from .engine import Engine
 from .session import Session
@@ -91,8 +92,12 @@ def handle(session: Session, req: dict) -> dict:
     return res
 
 
-def serve(config: str | None = None, layout: str = "dachen") -> int:
+def serve(config: str | None = None, layout: str = "dachen", trace: str | None = None) -> int:
+    """`trace` names a file that receives every request and response with a
+    timestamp. It is a debugging aid for front-end work and records everything
+    typed, so it is off unless asked for and must not be left on."""
     engine = Engine(config)
+    trace_fh = open(trace, "a", encoding="utf-8") if trace else None
     sessions: dict[int, Session] = {}
     out = sys.stdout
     out.write(json.dumps({"ok": True, "ready": True}) + "\n")
@@ -101,6 +106,7 @@ def serve(config: str | None = None, layout: str = "dachen") -> int:
         line = line.strip()
         if not line:
             continue
+        t0 = time.perf_counter()
         try:
             req = json.loads(line)
             if req.get("op") == "quit":
@@ -108,6 +114,8 @@ def serve(config: str | None = None, layout: str = "dachen") -> int:
             sid = int(req.get("sid", 0))
             if req.get("op") == "close":
                 sessions.pop(sid, None)
+                if engine.user is not None:
+                    engine.user.save(force=True)
                 res = {"ok": True}
             else:
                 session = sessions.get(sid)
@@ -121,4 +129,10 @@ def serve(config: str | None = None, layout: str = "dachen") -> int:
                 res[field] = req[field]
         out.write(json.dumps(res, ensure_ascii=False) + "\n")
         out.flush()
+        if trace_fh:
+            trace_fh.write(f"{time.strftime('%H:%M:%S')} {(time.perf_counter() - t0) * 1000:.1f}ms "
+                           f"> {line}\n          < {json.dumps(res, ensure_ascii=False)}\n")
+            trace_fh.flush()
+    if engine.user is not None:
+        engine.user.save(force=True)
     return 0

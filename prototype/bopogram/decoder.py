@@ -322,6 +322,23 @@ class Decoder:
                 break
         return out
 
+    def best_items(self) -> list[tuple[str, int, int]]:
+        """The best result as (text, word start, word end) per buffer item.
+
+        A dictionary word has one character per item. A syllable no word matches is
+        shown as typed (several bopomofo symbols) but is still ONE item, so positions
+        must be counted in items, never in characters of the text.
+        """
+        res = self.nbest(1)
+        out: list[tuple[str, int, int]] = []
+        for word in (res[0][0] if res else []):
+            a = len(out)
+            if len(word) > 1 and a < len(self.syllables) and word == self.syllables[a]:
+                out.append((word, a, a + 1))  # unconverted syllable
+            else:
+                out.extend((ch, a, a + len(word)) for ch in word)
+        return out
+
     def best_text(self) -> str:
         res = self.nbest(1)
         return "".join(res[0][0]) if res else ""

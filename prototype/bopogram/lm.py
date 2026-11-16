@@ -42,6 +42,8 @@ class MixtureLM:
         self.weights = [w / total for w in weights]
         self._single = n == 1
         self._cache: dict[tuple[State, str], tuple[float, State]] = {}
+        self._unigram: dict[str, float] = {}
+        self._null: State | None = None
 
     @classmethod
     def from_config(cls, config_path: str | Path) -> "MixtureLM":
@@ -79,19 +81,26 @@ class MixtureLM:
                 out.append(o)
             logp = math.log(p) if p > 0.0 else -99.0
         res = (logp, tuple(out))
-        if len(self._cache) > 2_000_000:
+        if len(self._cache) > 300_000:
             self._cache.clear()
         self._cache[key] = res
         return res
 
     def unigram(self, token: str) -> float:
         """Context-free ln P(token); used to rank candidates and to segment context."""
-        null = []
-        for m in self.models:
-            s = kenlm.State()
-            m.NullContextWrite(s)
-            null.append(s)
-        return self.score(tuple(null), token)[0]
+        hit = self._unigram.get(token)
+        if hit is None:
+            if self._null is None:
+                null = []
+                for m in self.models:
+                    s = kenlm.State()
+                    m.NullContextWrite(s)
+                    null.append(s)
+                self._null = tuple(null)
+            if len(self._unigram) > 500_000:
+                self._unigram.clear()
+            hit = self._unigram[token] = self.score(self._null, token)[0]
+        return hit
 
     # -- token mapping ----------------------------------------------------
     @staticmethod

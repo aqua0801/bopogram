@@ -83,6 +83,20 @@ class DecoderTest(unittest.TestCase):
         type_keys(s, "d04d04")
         self.assertEqual(s.preedit(), "我再看看")
 
+    def test_unconverted_syllable_is_one_item(self):
+        # ㄌㄚ has no character in the toy dictionary: it is shown as typed, counts as one
+        # item for the cursor, and committing it must work.
+        s = make_session(UserModel())
+        type_keys(s, "ji3x8 y94")
+        self.assertEqual(s.preedit(), "我ㄌㄚ在")
+        self.assertEqual((s.cursor, s.state()["caret"]), (3, 4))
+        s.move(-1)
+        self.assertEqual(s.state()["caret"], 3)
+        s.backspace()
+        self.assertEqual(s.preedit(), "我在")
+        type_keys(s, "x8 ")
+        self.assertEqual(s.commit(), "我ㄌㄚ在")
+
     def test_unknown_syllable_does_not_break_decoding(self):
         s = make_session()
         type_keys(s, "ji3x8 y94")            # ㄌㄚ is not in the toy dictionary
@@ -263,6 +277,11 @@ class SessionTest(unittest.TestCase):
             s.commit()
             self.assertEqual(user.unigrams.get("我"), 1)
             self.assertTrue((Path(d) / "user.json").exists())
+            type_keys(s, "ru8 ")
+            s.commit()                       # saved again only after a while, or when forced
+            self.assertNotIn("家", (Path(d) / "user.json").read_text(encoding="utf-8"))
+            user.save(force=True)
+            self.assertIn("家", (Path(d) / "user.json").read_text(encoding="utf-8"))
 
     def test_user_model_changes_ranking(self):
         user = UserModel()
