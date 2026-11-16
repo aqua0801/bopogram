@@ -37,6 +37,8 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("serve", help="JSON-lines protocol on stdin/stdout for a front end")
     s.add_argument("--layout", default="dachen", choices=sorted(LAYOUTS))
+    s.add_argument("--trace", help="debugging: append every request and response to this file "
+                                   "(records everything typed; do not leave it on)")
 
     e = sub.add_parser("eval", help="score a test set")
     e.add_argument("testset")
@@ -105,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "serve":
         from .server import serve
 
-        return serve(args.config, args.layout)
+        return serve(args.config, args.layout, args.trace)
 
     from .evaluate import run_eval
 

@@ -190,6 +190,24 @@ python tools\review_log.py D:\bopogram-data\bopogram-runtime\userdata
 逐筆核准／拒絕，只有核准的紀錄會被匯出（`typing_export.jsonl`，不含時間；
 選「核准但不含上文」的紀錄不會匯出上文）。匯出檔由使用者自行複製到 WSL。
 
+## 除錯：記錄引擎收到與回覆的每一行
+
+懷疑按鍵遺失、文字被吞、莫名送出時，讓 host 啟動引擎時多加 `--trace <檔案>`：
+
+```
+python -m bopogram.cli --config <執行包>\config.json serve --trace D:\bopogram-trace.txt
+```
+
+檔案內每筆是「時間、引擎處理耗時、請求、回應」。對照它就能判斷問題在哪一邊：
+請求沒出現＝前端沒送到；回應的 `preedit`／`commit` 正確但畫面不對＝前端處理回應有誤；
+耗時接近或超過管線逾時＝逾時設定太短。**這個檔案會記下所有打的字，查完就關掉並刪除。**
+
+前端必須處理的三種回應：
+1. `ok: false` 且沒有 `preedit` 欄位（引擎內部錯誤）：不要動組字區，把錯誤記下來。
+2. 非 `commit` 指令的回應帶有 `commit`（組字區超過 30 個字時自動送出最前面的詞）：
+   先把 `commit` 的文字送進文件，**組字不可結束**，接著用回應的 `preedit` 更新組字區。
+3. 逾時：這次按鍵之後引擎與前端的狀態可能不一致，下一次請求前先送 `state` 重新同步。
+
 ## 測試順序
 
 1. 引擎在 Windows 命令列能跑（上面第 4 步）。

@@ -11,7 +11,11 @@ from __future__ import annotations
 import json
 import math
 import os
+import time
 from pathlib import Path
+
+
+SAVE_INTERVAL = 30.0
 
 
 class UserModel:
@@ -20,6 +24,8 @@ class UserModel:
         self.weight = weight
         self.unigrams: dict[str, int] = {}
         self.bigrams: dict[str, int] = {}
+        self._saved_at = 0.0
+        self._dirty = False
         if self.path and self.path.exists():
             data = json.loads(self.path.read_text(encoding="utf-8"))
             self.unigrams = data.get("unigrams", {})
@@ -28,6 +34,7 @@ class UserModel:
     def learn(self, words: list[str], corrected: bool = False) -> None:
         """Record a committed word sequence. A manual correction counts more."""
         step = 3 if corrected else 1
+        self._dirty = True
         prev = None
         for w in words:
             self.unigrams[w] = self.unigrams.get(w, 0) + step
@@ -44,9 +51,14 @@ class UserModel:
             return 0.0
         return self.weight * (math.log1p(b) + 0.3 * math.log1p(u))
 
-    def save(self) -> None:
-        if not self.path:
+    def save(self, force: bool = False) -> None:
+        """Write the file, at most once every SAVE_INTERVAL seconds unless `force`:
+        rewriting it on every commit would make each commit slower as it grows."""
+        if not self.path or not self._dirty:
             return
+        if not force and time.monotonic() - self._saved_at < SAVE_INTERVAL:
+            return
+        self._saved_at, self._dirty = time.monotonic(), False
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps({"unigrams": self.unigrams, "bigrams": self.bigrams},

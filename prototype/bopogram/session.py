@@ -166,6 +166,10 @@ class Session:
         res = self.decoder.nbest(1)
         return res[0][0] if res else []
 
+    def _items(self) -> list[tuple[str, int, int]]:
+        """(text, word start, word end) for every buffer item; see Decoder.best_items."""
+        return self.decoder.best_items()
+
     def _span_at_cursor(self) -> tuple[int, int] | None:
         """The word the candidate list refers to: the one holding the character
         after the cursor (the last one when the cursor is at the end). With
@@ -174,12 +178,8 @@ class Session:
             return None
         target = self.cursor if self.candidate_side == "after" else self.cursor - 1
         target = max(0, min(self._size - 1, target))
-        pos = 0
-        for word in self._segments():
-            if pos <= target < pos + len(word):
-                return pos, pos + len(word)
-            pos += len(word)
-        return None
+        items = self._items()
+        return (items[target][1], items[target][2]) if target < len(items) else None
 
     def candidates(self) -> list[dict]:
         """Words that can start where the word at the cursor starts, longest first."""
@@ -227,7 +227,7 @@ class Session:
         span = self._span_at_cursor()
         if span is None:
             return False
-        current = "".join(self._segments())[span[0]:span[1]]
+        current = "".join(t for t, _, _ in self._items()[span[0]:span[1]])
         cands = self.candidates()
         same = [i for i, c in enumerate(cands) if c["length"] == span[1] - span[0]]
         if len(same) < 2:
@@ -237,28 +237,38 @@ class Session:
 
     # -- output -----------------------------------------------------------
     def preedit(self) -> str:
-        text = "".join(self._segments())
-        return text[:self.cursor] + self.pending + text[self.cursor:]
+        texts = [t for t, _, _ in self._items()]
+        return "".join(texts[:self.cursor]) + self.pending + "".join(texts[self.cursor:])
 
-    def _learn(self, words: list[str], first_pos: int) -> None:
-        """Record committed words; runs are cut at literals, picked words count as corrections."""
+    def _learn(self, count: int) -> None:
+        """Record the words covering the first `count` items; runs are cut at literals
+        and unconverted syllables, and words picked by hand count as corrections."""
         user = self.engine.user
         if not self.learn or user is None:
             return
-        items, pos, run, picked = self.decoder.syllables, first_pos, [], []
-        for w in words + [None]:
-            if w is None or is_literal(items[pos]):
-                if run:
-                    user.learn(run, corrected=False)
-                    for word in picked:
-                        user.learn([word], corrected=True)
-                run, picked = [], []
-            else:
-                run.append(w)
-                if (pos, pos + len(w)) in self.decoder.pinned:
-                    picked.append(w)
-            if w is not None:
-                pos += len(w)
+        buf, run, picked, last = self.decoder.syllables, [], [], None
+
+        def flush() -> None:
+            if run:
+                user.learn(list(run), corrected=False)
+                for word in picked:
+                    user.learn([word], corrected=True)
+            run.clear()
+            picked.clear()
+
+        items = self._items()[:count]
+        for k, (text, a, b) in enumerate(items):
+            if (a, b) == last:
+                continue
+            last = (a, b)
+            word = "".join(t for t, _, _ in items[a:b])
+            if b > count or is_literal(buf[a]) or (b - a == 1 and len(text) > 1) or word not in self.engine.lexicon:
+                flush()
+                continue
+            run.append(word)
+            if (a, b) in self.decoder.pinned:
+                picked.append(word)
+        flush()
         user.save()
 
     def _record(self, count: int, auto: bool) -> None:
@@ -267,8 +277,8 @@ class Session:
         if log is None or not self.learn or not count:
             return
         dec = self.decoder
-        text = "".join(self._segments())
-        first = text
+        texts = [t for t, _, _ in self._items()]
+        first = texts
         if dec.pinned:  # what the engine would have chosen without the user's picks
             plain = self.engine.new_decoder()
             plain.style = dec.style
@@ -276,25 +286,23 @@ class Session:
             plain.set_position_scores(dec.position_scores, dec.position_weight, dec.position_floor)
             for item in dec.syllables:
                 plain.push(item)
-            first = plain.best_text()
+            first = [t for t, _, _ in plain.best_items()]
         picked = [(a, b - a, w) for (a, b), w in sorted(dec.pinned.items()) if b <= count]
-        log.write(dec.syllables[:count], first[:count], text[:count], picked, self.context, dec.style, auto)
+        log.write(dec.syllables[:count], "".join(first[:count]), "".join(texts[:count]), picked,
+                  self.context, dec.style, auto)
 
     def _limit(self) -> None:
         """Commit the first words when the buffer is too long. Committed text is final."""
         if self._size <= MAX_BUFFER:
             return
-        words, count, taken = self._segments(), 0, []
-        for w in words:
-            if self._size - count <= MAX_BUFFER or count + len(w) > self.cursor:
-                break
-            taken.append(w)
-            count += len(w)
-        if not taken:
+        items, count = self._items(), 0
+        while count < len(items) and self._size - count > MAX_BUFFER and items[count][2] <= self.cursor:
+            count = items[count][2]  # whole words only, and never past the cursor
+        if not count:
             return
-        self._learn(taken, 0)
+        self._learn(count)
         self._record(count, auto=True)
-        text = "".join(taken)
+        text = "".join(t for t, _, _ in items[:count])
         self._flushed += text
         self.context = (self.context + text)[-MAX_CONTEXT:]
         self.decoder.drop_front(count, context_state(self.context, self.engine.lexicon, self.engine.lm))
@@ -303,10 +311,9 @@ class Session:
 
     def commit(self) -> str:
         """Finish the composition and return its text (a syllable in progress is dropped)."""
-        words = self._segments()
-        text = "".join(words)
+        text = "".join(self._segments())
         if text:
-            self._learn(words, 0)
+            self._learn(self._size)
             self._record(self._size, auto=False)
         self.context = (self.context + text)[-MAX_CONTEXT:]
         self._clear()
@@ -319,5 +326,6 @@ class Session:
 
     def state(self) -> dict:
         return {"preedit": self.preedit(), "pending": self.pending, "cursor": self.cursor,
-                "caret": self.cursor + len(self.pending), "syllables": self._size,
+                "caret": len("".join(t for t, _, _ in self._items()[:self.cursor])) + len(self.pending),
+                "syllables": self._size,
                 "segments": self._segments(), "style": self.decoder.style}
