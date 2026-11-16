@@ -100,7 +100,7 @@ class SessionTest(unittest.TestCase):
     def test_select_pins_a_candidate(self):
         s = make_session()
         type_keys(s, "ji3y94ru8 ")
-        s.move(-1)                           # cursor after 在: the list is for 在
+        s.move(-2)                           # cursor before 在: the list is for 在
         words = [c["word"] for c in s.candidates()]
         self.assertIn("再", words)
         self.assertTrue(s.select(words.index("再")))
@@ -143,7 +143,7 @@ class SessionTest(unittest.TestCase):
     def test_pins_follow_edits(self):
         s = make_session()
         type_keys(s, "ji3y94ru8 ")
-        s.move(-1)
+        s.move(-2)
         words = [c["word"] for c in s.candidates()]
         s.select(words.index("再"))
         s.move_to(False)
@@ -177,7 +177,7 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(s.preedit(), "我再")
         self.assertTrue(s.cycle())
         self.assertEqual(s.preedit(), "我在")
-        s.move(-1)
+        s.move(-2)
         self.assertFalse(s.cycle())          # 我 has no other candidate
 
     def test_long_buffer_commits_its_first_words(self):

@@ -14,7 +14,8 @@ Bopomofo IME, so that users of that IME need not relearn anything):
     removes the item before the cursor, Delete the one after it. While a
     syllable is in progress, Backspace removes its last symbol.
   * Symbols and other text can be inserted at the cursor; they stay as typed.
-  * Down opens the candidates of the word at the cursor; Up changes that word
+  * Down opens the candidates of the word after the cursor (the last word when
+    the cursor is at the end); Up changes that word
     to its next candidate without opening the list.
   * Escape discards the syllable in progress, or else the whole buffer.
   * When the buffer grows past MAX_BUFFER, its first words are committed.
@@ -42,8 +43,9 @@ class Session:
         self.layout = LAYOUTS[layout]
         self.context = ""
         self.learn = True  # the front end turns this off for password fields
-        # Which character the candidate list refers to: the one "before" or "after" the cursor.
-        self.candidate_side = "before"
+        # Which character the candidate list refers to: the one "after" the cursor (as in
+        # Microsoft Bopomofo; at the end of the buffer it is the last character) or "before" it.
+        self.candidate_side = "after"
         self._flushed = ""  # text committed automatically since the last state() call
         self._clear()
 
@@ -156,7 +158,8 @@ class Session:
 
     def _span_at_cursor(self) -> tuple[int, int] | None:
         """The word the candidate list refers to: the one holding the character
-        before the cursor (after it when `candidate_side` is "after" or at the start)."""
+        after the cursor (the last one when the cursor is at the end). With
+        `candidate_side` "before" it is the character before the cursor instead."""
         if not self._size:
             return None
         target = self.cursor if self.candidate_side == "after" else self.cursor - 1
