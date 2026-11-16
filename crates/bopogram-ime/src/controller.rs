@@ -577,10 +577,19 @@ impl<E: Engine> Controller<E> {
     pub fn key_up(&mut self, key: Key) -> Outcome {
         let mut outcome = Outcome::default();
         if is_shift(key.vk) && std::mem::take(&mut self.shift_alone) && self.enabled {
-            self.chinese = !self.chinese;
-            outcome.commit = self.finish();
+            outcome.commit = self.toggle_chinese();
         }
         outcome
+    }
+
+    /// Switch Chinese/English (the tray button does this too). Returns the
+    /// text of the composition that the switch ended, if there was one.
+    pub fn toggle_chinese(&mut self) -> Option<String> {
+        if !self.enabled {
+            return None;
+        }
+        self.chinese = !self.chinese;
+        self.finish()
     }
 }
 

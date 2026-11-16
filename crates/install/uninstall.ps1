@@ -45,7 +45,7 @@ foreach ($key in "HKLM:\SOFTWARE\Classes\CLSID\$clsid", "HKLM:\SOFTWARE\Microsof
 }
 
 # 3. Files. Applications that loaded the DLL keep it open until they exit.
-Get-Process bopogram-host -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process bopogram-host, bopogram-settings -ErrorAction SilentlyContinue | Stop-Process -Force
 try {
     if (Test-Path $Install) { Remove-Item $Install -Recurse -Force }
     Write-Output "Removed $Install."

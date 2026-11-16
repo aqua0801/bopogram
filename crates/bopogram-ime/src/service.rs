@@ -25,15 +25,17 @@ use windows::Win32::UI::TextServices::{
     ITfDisplayAttributeInfo, ITfDisplayAttributeProvider, ITfDisplayAttributeProvider_Impl,
     ITfKeyEventSink, ITfKeyEventSink_Impl, ITfKeystrokeMgr, ITfTextInputProcessor,
     ITfTextInputProcessorEx, ITfTextInputProcessorEx_Impl, ITfTextInputProcessor_Impl,
-    ITfThreadMgr, TF_ES_ASYNCDONTCARE, TF_ES_READWRITE,
+    ITfLangBarItemButton, ITfLangBarItemMgr, ITfLangBarItemSink, ITfThreadMgr,
+    TF_ES_ASYNCDONTCARE, TF_ES_READWRITE, TF_LBI_ICON, TF_LBI_TEXT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetCursorPos, GetGUIThreadInfo, GetWindowLongW, GUITHREADINFO, GWL_STYLE,
 };
 
-use crate::controller::{Controller, Key, FORMAL};
+use crate::controller::{Controller, Key, CASUAL, FORMAL};
 use crate::display::{AttributeEnumerator, CompositionAttribute};
-use crate::dll::{host_path, GUID_DISPLAY_ATTRIBUTE};
+use crate::dll::{host_path, settings_path, GUID_DISPLAY_ATTRIBUTE};
+use crate::langbar::ModeButton;
 use crate::pipe::PipeEngine;
 use crate::popup::Popup;
 use crate::{edit, guard, settings, wide};
@@ -42,7 +44,7 @@ use crate::{edit, guard, settings, wide};
 const ES_PASSWORD: i32 = 0x0020;
 
 #[derive(Default)]
-struct State {
+pub(crate) struct State {
     thread_mgr: Option<ITfThreadMgr>,
     client: u32,
     /// `None` when the engine can never be reached from this process
@@ -59,9 +61,82 @@ struct State {
     shown_caret: usize,
     /// Last answer about the focused field being a password field.
     password: bool,
+    /// The mode button in the input indicator, and whoever wants to hear
+    /// that it changed.
+    button: Option<ITfLangBarItemButton>,
+    button_sink: Option<ITfLangBarItemSink>,
 }
 
-type Shared = Rc<RefCell<State>>;
+pub(crate) type Shared = Rc<RefCell<State>>;
+
+// -- what the mode button needs ----------------------------------------------
+
+pub(crate) fn is_chinese(state: &Shared) -> bool {
+    with_controller(state, |c| c.chinese()).unwrap_or(true)
+}
+
+pub(crate) fn is_formal(state: &Shared) -> bool {
+    with_controller(state, |c| c.style() == FORMAL).unwrap_or(false)
+}
+
+pub(crate) fn has_button_sink(state: &Shared) -> bool {
+    with(state, |s| s.button_sink.is_some()).unwrap_or(false)
+}
+
+pub(crate) fn set_button_sink(state: &Shared, sink: Option<ITfLangBarItemSink>) {
+    with(state, |s| s.button_sink = sink);
+}
+
+/// Tell the input indicator that the button looks different now.
+fn button_changed(state: &Shared) {
+    if let Some(sink) = with(state, |s| s.button_sink.clone()).flatten() {
+        unsafe {
+            let _ = sink.OnUpdate(TF_LBI_ICON | TF_LBI_TEXT);
+        }
+    }
+}
+
+/// Switch Chinese/English from the button. A composition in progress is
+/// committed to the focused document.
+pub(crate) fn toggle_mode(state: &Shared) {
+    let Some((commit, thread_mgr, client)) = with(state, |s| {
+        let commit = s.controller.as_mut()?.toggle_chinese();
+        s.shown.clear();
+        s.shown_caret = 0;
+        if let Some(popup) = &s.popup {
+            popup.hide();
+        }
+        Some((commit, s.thread_mgr.clone()?, s.client))
+    })
+    .flatten() else {
+        return;
+    };
+    if let Some(text) = commit {
+        let context = unsafe { thread_mgr.GetFocus().and_then(|document| document.GetTop()) };
+        if let Ok(context) = context {
+            let state = Rc::clone(state);
+            let document = context.clone();
+            edit::run(&context, client, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE, move |cookie| {
+                write(&state, &document, cookie, None, Some(&text), "", 0)
+            });
+        }
+    }
+    button_changed(state);
+}
+
+/// Choose the casual or the formal style from the menu.
+pub(crate) fn choose_style(state: &Shared, formal: bool) {
+    let style = if formal { FORMAL } else { CASUAL };
+    with_controller(state, |c| c.want_style(style));
+    settings::save_style(style);
+}
+
+/// Open the settings window, a separate program.
+pub(crate) fn open_settings() {
+    if let Some(exe) = settings_path().filter(|exe| exe.exists() && crate::pipe::may_launch()) {
+        crate::pipe::spawn(&exe);
+    }
+}
 
 fn with<R>(state: &Shared, f: impl FnOnce(&mut State) -> R) -> Option<R> {
     state.try_borrow_mut().ok().map(|mut state| f(&mut state))
@@ -146,7 +221,7 @@ fn write(
     state: &Shared,
     context: &ITfContext,
     cookie: u32,
-    sink: &ITfCompositionSink,
+    sink: Option<&ITfCompositionSink>,
     commit: Option<&str>,
     preedit: &str,
     caret: usize,
@@ -188,7 +263,7 @@ fn write(
             None => {
                 let start = edit::insertion_point(context, cookie)?;
                 let owner: ITfContextComposition = context.cast()?;
-                let started = owner.StartComposition(cookie, &start, sink)?;
+                let started = owner.StartComposition(cookie, &start, sink.ok_or(E_FAIL)?)?;
                 with(state, |s| s.composition = Some(started.clone()));
                 started
             }
@@ -248,7 +323,7 @@ impl TextService_Impl {
             let state = Rc::clone(&self.state);
             let document = context.clone();
             edit::run(context, client, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE, move |cookie| {
-                write(&state, &document, cookie, &sink, commit.as_deref(), &preedit, caret)
+                write(&state, &document, cookie, Some(&sink), commit.as_deref(), &preedit, caret)
             });
         }
         self.refresh_popup();
@@ -298,7 +373,7 @@ impl TextService_Impl {
         self.update(context, outcome.commit);
         if outcome.style_changed {
             // Remembered for the other applications and for the next session.
-            settings::save_style(if formal { FORMAL } else { crate::controller::CASUAL });
+            settings::save_style(if formal { FORMAL } else { CASUAL });
             self.tip(if formal { "正式" } else { "口語" });
         }
         outcome.eaten
@@ -331,6 +406,7 @@ impl TextService_Impl {
         }
         self.update(context, outcome.commit);
         self.tip(if chinese { "中" } else { "英" });
+        button_changed(&self.state);
     }
 }
 
@@ -341,11 +417,18 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
 
     fn Deactivate(&self) -> Result<()> {
         guard(Ok(()), || {
-            let (thread_mgr, client) =
-                with(&self.state, |s| (s.thread_mgr.take(), s.client)).unwrap_or_default();
-            if let Some(keystrokes) = thread_mgr.and_then(|m| m.cast::<ITfKeystrokeMgr>().ok()) {
+            let (thread_mgr, client, button) =
+                with(&self.state, |s| (s.thread_mgr.take(), s.client, s.button.take()))
+                    .unwrap_or_default();
+            if let Some(thread_mgr) = thread_mgr {
                 unsafe {
-                    let _ = keystrokes.UnadviseKeyEventSink(client);
+                    if let Ok(keystrokes) = thread_mgr.cast::<ITfKeystrokeMgr>() {
+                        let _ = keystrokes.UnadviseKeyEventSink(client);
+                    }
+                    if let (Some(button), Ok(bar)) = (button, thread_mgr.cast::<ITfLangBarItemMgr>())
+                    {
+                        let _ = bar.RemoveItem(&button);
+                    }
                 }
             }
             with(&self.state, |s| {
@@ -382,12 +465,20 @@ impl ITfTextInputProcessorEx_Impl for TextService_Impl {
                 }
                 controller
             });
+            // The mode button. The input method works without it.
+            let button: ITfLangBarItemButton = ModeButton::new(Rc::clone(&self.state)).into();
+            let button = thread_mgr
+                .cast::<ITfLangBarItemMgr>()
+                .and_then(|bar| bar.AddItem(&button))
+                .is_ok()
+                .then_some(button);
             with(&self.state, |s| {
                 *s = State {
                     thread_mgr: Some(thread_mgr),
                     client,
                     controller,
                     attribute,
+                    button,
                     ..State::default()
                 };
             });

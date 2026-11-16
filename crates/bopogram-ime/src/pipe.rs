@@ -44,6 +44,41 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+/// May this process start our helper programs (the host, the settings
+/// window)? See `Token::may_launch_host`.
+pub fn may_launch() -> bool {
+    Token::current().is_some_and(|token| token.may_launch_host())
+}
+
+/// Start a program without waiting for it and without handing it any of
+/// the application's handles.
+pub fn spawn(exe: &Path) {
+    let application = wide(&exe.to_string_lossy());
+    let mut command = wide(&format!("\"{}\"", exe.to_string_lossy()));
+    let directory = exe.parent().map(|dir| wide(&dir.to_string_lossy()));
+    let startup =
+        STARTUPINFOW { cb: std::mem::size_of::<STARTUPINFOW>() as u32, ..STARTUPINFOW::default() };
+    let mut process = PROCESS_INFORMATION::default();
+    unsafe {
+        let started = CreateProcessW(
+            PCWSTR(application.as_ptr()),
+            Some(PWSTR(command.as_mut_ptr())),
+            None,
+            None,
+            false,
+            CREATE_NO_WINDOW | DETACHED_PROCESS,
+            None,
+            directory.as_ref().map_or(PCWSTR::null(), |dir| PCWSTR(dir.as_ptr())),
+            &startup,
+            &mut process,
+        );
+        if started.is_ok() {
+            let _ = CloseHandle(process.hProcess);
+            let _ = CloseHandle(process.hThread);
+        }
+    }
+}
+
 struct Token(HANDLE);
 
 impl Token {
@@ -316,33 +351,7 @@ impl PipeEngine {
             return;
         }
         self.last_launch = Some(Instant::now());
-        let application = wide(&exe.to_string_lossy());
-        let mut command = wide(&format!("\"{}\"", exe.to_string_lossy()));
-        let directory = exe.parent().map(|dir| wide(&dir.to_string_lossy()));
-        let startup = STARTUPINFOW {
-            cb: std::mem::size_of::<STARTUPINFOW>() as u32,
-            ..STARTUPINFOW::default()
-        };
-        let mut process = PROCESS_INFORMATION::default();
-        unsafe {
-            let started = CreateProcessW(
-                PCWSTR(application.as_ptr()),
-                Some(PWSTR(command.as_mut_ptr())),
-                None,
-                None,
-                // The application's handles are none of the host's business.
-                false,
-                CREATE_NO_WINDOW | DETACHED_PROCESS,
-                None,
-                directory.as_ref().map_or(PCWSTR::null(), |dir| PCWSTR(dir.as_ptr())),
-                &startup,
-                &mut process,
-            );
-            if started.is_ok() {
-                let _ = CloseHandle(process.hProcess);
-                let _ = CloseHandle(process.hThread);
-            }
-        }
+        spawn(exe);
     }
 }
 

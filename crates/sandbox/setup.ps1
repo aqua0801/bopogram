@@ -30,7 +30,7 @@ $clsid = "{B6B6D901-0BBF-4287-A302-F265DBE9A46C}"
 $profile = "{79EFFB1B-3CE8-41DB-9CA2-3318EC0AED82}"
 $install = "C:\Bopogram"
 New-Item -ItemType Directory -Force $install | Out-Null
-Copy-Item "C:\stage\bopogram_ime.dll", "C:\stage\bopogram-host.exe" $install -Force
+Copy-Item "C:\stage\bopogram_ime.dll", "C:\stage\bopogram-host.exe", "C:\stage\bopogram-settings.exe" $install -Force
 
 # A virtual environment on top of the read-only Python, pointed at the
 # read-only engine source.
@@ -43,7 +43,9 @@ Copy-Item "C:\stage\kenlm\*" $sitePackages -Force
 Set-Content -Path (Join-Path $sitePackages "bopogram.pth") -Encoding ASCII -Value "C:\bopogram-prototype"
 $python = Join-Path $venv "Scripts\python.exe"
 $config = "C:\bopogram-runtime\config.json"
-$hostConfig = @{ python = $python; config = $config } | ConvertTo-Json
+$hostConfig = @{
+    python = $python; config = $config; review_tool = "C:\bopogram-prototype\tools\review_log.py"
+} | ConvertTo-Json
 [IO.File]::WriteAllText((Join-Path $install "bopogram-host.json"), $hostConfig)
 
 # 1. The engine on its own.

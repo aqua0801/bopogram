@@ -4,7 +4,8 @@
 #   powershell -ExecutionPolicy Bypass -File crates\install\install.ps1
 #
 # What it changes:
-#   - copies bopogram_ime.dll and bopogram-host.exe to $Install and writes
+#   - copies bopogram_ime.dll, bopogram-host.exe and bopogram-settings.exe
+#     to $Install and writes
 #     bopogram-host.json there
 #   - regsvr32: HKLM\SOFTWARE\Classes\CLSID\{B6B6D901-...} and
 #     HKLM\SOFTWARE\Microsoft\CTF\TIP\{B6B6D901-...}
@@ -34,7 +35,9 @@ $profile = "{79EFFB1B-3CE8-41DB-9CA2-3318EC0AED82}"
 $release = Join-Path (Split-Path -Parent $PSScriptRoot) "target\release"
 $dll = Join-Path $release "bopogram_ime.dll"
 $hostExe = Join-Path $release "bopogram-host.exe"
-foreach ($path in $Python, $Config, $dll, $hostExe) {
+$settingsExe = Join-Path $release "bopogram-settings.exe"
+$reviewTool = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "prototype\tools\review_log.py"
+foreach ($path in $Python, $Config, $dll, $hostExe, $settingsExe) {
     if (-not (Test-Path $path)) { throw "missing: $path (build with 'cargo build --release' in crates\)" }
 }
 
@@ -45,11 +48,11 @@ Write-Output "Engine check passed."
 
 # 2. Files. A DLL that applications have loaded cannot be overwritten, but it
 #    can be renamed; the old copy is removed by a later install or uninstall.
-Get-Process bopogram-host -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process bopogram-host, bopogram-settings -ErrorAction SilentlyContinue | Stop-Process -Force
 New-Item -ItemType Directory -Force $Install | Out-Null
 Get-ChildItem $Install -Filter "*.old-*" | Remove-Item -Force -ErrorAction SilentlyContinue
 $stamp = Get-Date -Format "yyyyMMddHHmmss"
-foreach ($file in $dll, $hostExe) {
+foreach ($file in $dll, $hostExe, $settingsExe) {
     $target = Join-Path $Install (Split-Path -Leaf $file)
     if (Test-Path $target) {
         try { Remove-Item $target -Force }
@@ -57,7 +60,7 @@ foreach ($file in $dll, $hostExe) {
     }
     Copy-Item $file $target
 }
-$hostConfig = @{ python = $Python; config = $Config } | ConvertTo-Json
+$hostConfig = @{ python = $Python; config = $Config; review_tool = $reviewTool } | ConvertTo-Json
 [IO.File]::WriteAllText((Join-Path $Install "bopogram-host.json"), $hostConfig)
 Write-Output "Files installed in $Install."
 

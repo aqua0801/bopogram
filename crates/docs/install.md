@@ -27,7 +27,7 @@ Python 或執行包不在預設位置時，加上 `-Python <python.exe>`、`-Con
 | 步驟 | 動到的地方 |
 |---|---|
 | 1. 先單獨執行引擎確認可用 | 無 |
-| 2. 複製 `bopogram_ime.dll`、`bopogram-host.exe`，寫入 `bopogram-host.json` | `C:\Program Files\Bopogram\` |
+| 2. 複製 `bopogram_ime.dll`、`bopogram-host.exe`、`bopogram-settings.exe`，寫入 `bopogram-host.json` | `C:\Program Files\Bopogram\` |
 | 3. `regsvr32` 註冊文字服務 | `HKLM\SOFTWARE\Classes\CLSID\{B6B6D901-0BBF-4287-A302-F265DBE9A46C}`、`HKLM\SOFTWARE\Microsoft\CTF\TIP\{B6B6D901-0BBF-4287-A302-F265DBE9A46C}` |
 | 4. 把輸入法加進目前使用者的「中文（繁體，台灣）」鍵盤 | 目前使用者的語言清單（`Set-WinUserLanguageList`，存在 `HKCU`） |
 
@@ -62,13 +62,31 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 
 | 項目 | 位置 |
 |---|---|
-| 前端 DLL、host | `C:\Program Files\Bopogram\` |
+| 前端 DLL、host、設定程式 | `C:\Program Files\Bopogram\` |
 | 引擎程式 | `D:\bopogram\prototype`（`git pull` 後，結束 `bopogram-host.exe` 即使用新版） |
 | 字典、模型、設定 | `D:\bopogram-data\bopogram-runtime\` |
 | 個人化資料、打字紀錄 | 同上的 `userdata\` |
 
 全部在本機，沒有任何網路連線。引擎由 `bopogram-host.exe` 在第一次打字時啟動，常駐約 360 MB 記憶體；
 要重新啟動引擎，在工作管理員結束 `bopogram-host.exe` 即可，下次打字會自動再起來。
+
+## 工具列圖示與設定
+
+切到本輸入法時，工作列的輸入指示區會出現「中」或「英」的圖示：
+
+- 左鍵：切換中／英（同單按 Shift）。
+- 右鍵：選單，可切換口語／正式，或開啟「設定…」。
+
+設定視窗（`bopogram-settings.exe`，也可以直接執行）的選項：
+
+| 選項 | 存在哪裡 | 何時生效 |
+|---|---|---|
+| 選字風格：口語／正式 | `%LOCALAPPDATA%\Bopogram\style.txt` | 切換到任一程式時 |
+| 個人化學習 | 執行包 `config.json` 的 `user_model` | 套用時重新啟動引擎 |
+| 打字紀錄 | 執行包 `config.json` 的 `typing_log` | 套用時重新啟動引擎 |
+
+另有「審核打字紀錄…」（開啟 `review_log.py`）、「開啟資料夾」（`userdata\`）、「重新啟動引擎」。
+關閉個人化學習或打字紀錄不會刪除已存的資料。
 
 ## 按鍵
 

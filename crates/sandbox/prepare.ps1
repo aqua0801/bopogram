@@ -36,7 +36,9 @@ $stage = Join-Path $Work "stage"
 $out = Join-Path $Work "out"
 $runtimeCopy = Join-Path $Work "runtime"
 New-Item -ItemType Directory -Force $stage, $out | Out-Null
-Copy-Item (Join-Path $release "bopogram_ime.dll"), (Join-Path $release "bopogram-host.exe") $stage -Force
+foreach ($file in "bopogram_ime.dll", "bopogram-host.exe", "bopogram-settings.exe") {
+    Copy-Item (Join-Path $release $file) $stage -Force
+}
 foreach ($file in "setup.ps1", "testform.ps1", "test.html") {
     Copy-Item (Join-Path $PSScriptRoot $file) $stage -Force
 }

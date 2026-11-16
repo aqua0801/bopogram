@@ -17,6 +17,8 @@
 //! - `edit`: edit sessions and the operations on the document.
 //! - `display`: the display attribute that underlines the composition.
 //! - `popup`: the candidate window.
+//! - `langbar`: the mode button in the taskbar's input indicator, and its menu.
+//! - `settings`: the style file shared by all applications.
 
 pub mod controller;
 pub mod pipe;
@@ -25,6 +27,7 @@ pub mod protocol;
 mod display;
 mod dll;
 mod edit;
+mod langbar;
 mod popup;
 mod register;
 mod service;

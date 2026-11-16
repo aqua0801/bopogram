@@ -51,6 +51,11 @@ pub fn module_path() -> Option<PathBuf> {
     (len > 0 && len < buf.len()).then(|| PathBuf::from(String::from_utf16_lossy(&buf[..len])))
 }
 
+/// The settings window, a program of its own in the same folder.
+pub fn settings_path() -> Option<PathBuf> {
+    Some(module_path()?.with_file_name("bopogram-settings.exe"))
+}
+
 pub fn host_path() -> Option<PathBuf> {
     Some(module_path()?.with_file_name(HOST_EXE))
 }
