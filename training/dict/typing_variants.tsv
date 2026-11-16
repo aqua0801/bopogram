@@ -1,0 +1,6 @@
+# Spellings people type that differ from the dictionary's reading.
+# Format: character <TAB> reading in the dictionary <TAB> reading people also type.
+# Every dictionary entry in which the character has the first reading gets a
+# second entry with the other one, tagged ":alt" (accepted as input, same word).
+麼	˙ㄇㄜ	˙ㄇㄛ
+麽	˙ㄇㄜ	˙ㄇㄛ

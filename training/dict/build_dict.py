@@ -232,6 +232,24 @@ def main() -> None:
             twins += 1
     stats["everyday_spelling_twins"] = twins
 
+    # Spellings people type that differ from the dictionary reading (typing_variants.tsv).
+    variants: dict[tuple[str, str], str] = {}
+    variants_file = Path(__file__).resolve().parent / "typing_variants.tsv"
+    if variants_file.exists():
+        for line in variants_file.read_text(encoding="utf-8").splitlines():
+            parts = line.split("\t")
+            if len(parts) == 3 and not line.startswith("#"):
+                variants[(parts[0], parts[1])] = parts[2]
+    typed_added = 0
+    for (word, syls), tag in list(entries.items()):
+        if not any((ch, syl) in variants for ch, syl in zip(word, syls)):
+            continue
+        key = (word, tuple(variants.get((ch, syl), syl) for ch, syl in zip(word, syls)))
+        if key not in entries:
+            entries[key] = tag if tag.endswith(":var") else tag.split(":")[0] + ":alt"
+            typed_added += 1
+    stats["typing_variants"] = typed_added
+
     ordered = sorted(entries.items(), key=lambda kv: (kv[0][0], kv[0][1]))
     with open(args.out_dir / "dict.tsv", "w", encoding="utf-8") as fh:
         for (word, syls), tag in ordered:
