@@ -60,7 +60,7 @@ class TypingLogTest(unittest.TestCase):
         s.escape()
         type_keys(s, "ji3")
         s.text("pw9")
-        s.symbol("<")
+        s.symbol(",")
         s.commit()
         raw = self.path.read_text(encoding="utf-8")
         for secret in ("abc", "123", "pw9"):

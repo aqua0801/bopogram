@@ -45,6 +45,9 @@ def main() -> None:
         total += model.stat().st_size
         m["path"] = f"models/{model.name}"
     cfg["dict"] = "dict.tsv"
+    if cfg.get("reading_prior"):
+        shutil.copy2((src.parent / cfg["reading_prior"]).resolve(), out / "reading_prior.tsv")
+        cfg["reading_prior"] = "reading_prior.tsv"
     cfg["user_model"] = "userdata/user.json"  # created on first use, stays on this machine
     if args.neural:
         (out / "neural").mkdir(exist_ok=True)

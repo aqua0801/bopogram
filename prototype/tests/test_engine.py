@@ -193,15 +193,31 @@ class SessionTest(unittest.TestCase):
         self.assertFalse(s.key(" "))         # nothing composed: the application gets the space
         type_keys(s, "ji3")
         self.assertTrue(s.key(" "))          # a space inside the buffer
-        self.assertTrue(s.symbol("<"))
+        self.assertTrue(s.symbol(","))
         self.assertTrue(s.text("OK"))
         self.assertFalse(s.symbol("a"))
         type_keys(s, "y94ru8 ")
         self.assertEqual(s.preedit(), "我 ，OK在家")
         s.move_to(False)
-        s.move(2)
-        self.assertEqual(s.candidates(), []) # a literal has no candidates
+        s.move(1)
+        self.assertEqual(s.candidates(), []) # a space has no candidates
         self.assertEqual(s.commit(), "我 ，OK在家")
+
+    def test_symbol_table_and_alternatives(self):
+        from bopogram.symbols import full_width
+        self.assertEqual([full_width(k) for k in ",.';:?![]<>\""],
+                         list("，。、；：？！【】＜＞＂"))
+        self.assertIsNone(full_width("a"))
+        s = make_session()
+        type_keys(s, "ji3")
+        s.symbol("[")
+        self.assertEqual(s.preedit(), "我【")
+        words = [c["word"] for c in s.candidates()]
+        self.assertEqual(words[:2], ["【", "「"])
+        self.assertTrue(s.select(1))
+        self.assertEqual(s.preedit(), "我「")
+        self.assertTrue(s.cycle())           # Up moves on to the next related symbol
+        self.assertEqual(s.preedit(), "我『")
 
     def test_cycle_changes_the_word_without_a_list(self):
         s = make_session()
