@@ -33,7 +33,12 @@ class MixtureLM:
     def __init__(self, model_paths: list[str | Path], weights: list[float] | None = None):
         if not model_paths:
             raise ValueError("at least one model is required")
-        self.models = [kenlm.Model(str(p)) for p in model_paths]
+        # Read the models into memory instead of mapping the files: with a lazy
+        # mapping the first use of each part of a model waits for the disk, which
+        # showed up as keystrokes taking hundreds of milliseconds.
+        config = kenlm.Config()
+        config.load_method = kenlm.LoadMethod.READ
+        self.models = [kenlm.Model(str(p), config) for p in model_paths]
         n = len(self.models)
         weights = weights or [1.0 / n] * n
         if len(weights) != n:
