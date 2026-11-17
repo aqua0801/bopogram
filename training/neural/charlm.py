@@ -10,7 +10,7 @@ assigned readings. At typing time the dictionary supplies the candidates and
 this model only says which candidate sentence reads best (charlm_rerank.py).
 
 DATA_DIR is the output of make_data.py; only the character arrays are used.
-RUN_DIR receives last.pt (written atomically) and log.tsv; the run resumes
+RUN_DIR receives last.pt (written atomically), stepN.pt at every evaluation and log.tsv; the run resumes
 from last.pt when it exists.
 """
 
@@ -225,6 +225,7 @@ def main() -> None:
     log = open(args.run_dir / "log.tsv", "a", encoding="utf-8")
     model.train()
     t0, seen, run_loss, run_n = time.time(), 0, 0.0, 0
+    skipped, max_norm = 0, 0.0
     for batch in loader:
         if step >= args.steps:
             break
@@ -234,7 +235,12 @@ def main() -> None:
         loss = lm_loss(model, batch, device)
         opt.zero_grad(set_to_none=True)
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        norm = float(torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0))
+        if not math.isfinite(norm) or not math.isfinite(float(loss)):
+            skipped += 1  # one bad batch must not poison the optimizer state
+            opt.zero_grad(set_to_none=True)
+            continue
+        max_norm = max(max_norm, norm)
         opt.step()
         step += 1
         seen += int((batch[:, 1:] > 0).sum())
@@ -242,13 +248,18 @@ def main() -> None:
         run_n += 1
         if step % 100 == 0:
             rate = seen / (time.time() - t0)
-            line = f"{step}\t{run_loss / run_n:.4f}\t{lr_at(step):.2e}"
+            line = f"{step}\t{run_loss / run_n:.4f}\t{lr_at(step):.2e}\t{max_norm:.1f}\t{skipped}"
             print(f"step {line}\t{rate / 1000:.1f}k char/s", flush=True)
+            max_norm = 0.0
             log.write(line + "\n")
             log.flush()
             run_loss, run_n = 0.0, 0
         if step % args.save_every == 0 or step == args.steps:
             save()
+        if step % args.eval_every == 0:
+            # Numbered copies: a run that degrades later can fall back to an earlier state.
+            torch.save({"model": model.state_dict(), "step": step, "config": asdict(cfg),
+                        "chars": corpus.vocab["chars"]}, args.run_dir / f"step{step}.pt")
         if step % args.eval_every == 0 or step == args.steps:
             msg = " ".join(f"{k}={v:.2f}" for k, v in validate(model, corpus, device).items())
             print(f"perplexity at step {step}: {msg}", flush=True)
