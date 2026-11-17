@@ -56,6 +56,9 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--neural-weight", type=float, default=1.0)
     e.add_argument("--neural-floor", type=float, default=-12.0)
     e.add_argument("--errors", help="write wrong sentences to this file")
+    e.add_argument("--dump-nbest", help="write the engine's best results per sentence (JSONL) for external rescoring")
+    e.add_argument("--nbest", type=int, default=10)
+    e.add_argument("--beam", type=int, help="with --dump-nbest: beam width, without merging equal model states")
     e.add_argument("--json", help="write the metrics to this file")
     args = ap.parse_args(argv)
 

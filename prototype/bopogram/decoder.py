@@ -85,6 +85,10 @@ class Decoder:
         self.position_scores: list[dict[str, float]] | None = None
         self.position_weight = 0.0
         self.position_floor = -12.0
+        # False keeps hypotheses with different histories apart instead of merging those
+        # with the same language-model state: slower, but nbest() then lists real
+        # alternatives (used to produce candidate lists for external rescoring).
+        self.merge = True
         self._cand_cache: dict[tuple[str, ...], list[str]] = {}
         # Spans the user has fixed by picking a candidate: (start, end) -> word.
         self.pinned: dict[tuple[int, int], str] = {}
@@ -229,9 +233,10 @@ class Decoder:
                         total += refund.get(id(h), 0.0)
                     if extra is not None:
                         total += extra(h.word, word)
-                    old = merged.get(state)
+                    slot = state if self.merge else (state, id(h))
+                    old = merged.get(slot)
                     if old is None or total > old.score:
-                        merged[state] = Hyp(total, state, word, i, h)
+                        merged[slot] = Hyp(total, state, word, i, h)
         if not merged:
             # No dictionary word ends here (e.g. a syllable the dictionary lacks):
             # keep decoding by passing the raw syllable through as an unknown token.
