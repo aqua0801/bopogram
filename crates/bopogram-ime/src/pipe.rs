@@ -176,6 +176,9 @@ struct Connection {
     /// Text committed by answers that arrived after their request timed
     /// out; handed over with the next answer.
     late_commit: String,
+    /// Answers to requests up to this id are dropped unread: the
+    /// composition they belong to was given up.
+    ignore_through: u64,
 }
 
 impl Drop for Connection {
@@ -221,7 +224,7 @@ impl Connection {
             }
         };
         let connection =
-            Connection { pipe, event, buffered: Vec::new(), late_commit: String::new() };
+            Connection { pipe, event, buffered: Vec::new(), late_commit: String::new(), ignore_through: 0 };
         // Only talk to our own host: the pipe name alone proves nothing.
         if let Some(expected) = host_exe {
             let mut pid = 0u32;
@@ -312,7 +315,15 @@ impl Connection {
                 Err(Io::Broken) => return Err(Failure::Unreachable),
             };
             let value: Value = serde_json::from_slice(&reply).map_err(|_| Failure::Unreachable)?;
-            if value.get("id").and_then(Value::as_u64) != Some(id) {
+            let answered = value.get("id").and_then(Value::as_u64);
+            if answered != Some(id) {
+                // The host gave up waiting for the engine: it is gone.
+                if value.get("host").is_some() {
+                    return Err(Failure::Unreachable);
+                }
+                if answered.is_some_and(|late| late <= self.ignore_through) {
+                    continue;
+                }
                 // The late answer to a request we stopped waiting for. Its
                 // state is superseded by the answer still to come, but text
                 // it committed exists nowhere else.
@@ -417,9 +428,12 @@ impl Engine for PipeEngine {
         result
     }
 
-    /// Closing the connection ends the session in the engine, and with it
-    /// every answer that is still on its way.
+    /// The session is kept (the engine finishes what it was sent, and
+    /// learns from it); only the answers still on their way are dropped.
     fn abandon(&mut self) {
-        self.connection = None;
+        if let Some(connection) = self.connection.as_mut() {
+            connection.late_commit.clear();
+            connection.ignore_through = self.next_id - 1;
+        }
     }
 }
