@@ -30,7 +30,7 @@ def main() -> None:
     ap.add_argument("--neural-weight", type=float, default=0.3)
     ap.add_argument("--charlm", type=Path,
                     help="folder with charlm.int8.onnx and charlm.json (training/neural/export_charlm.py)")
-    ap.add_argument("--charlm-weight", type=float, default=0.3)
+    ap.add_argument("--charlm-weight", type=float, default=0.8)
     ap.add_argument("--typing-log", action="store_true",
                     help="record committed compositions in userdata/typing_log.jsonl for later "
                          "review with tools/review_log.py (off by default)")
