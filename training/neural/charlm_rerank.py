@@ -5,7 +5,8 @@ Usage:
 
 The n-best files come from `bopogram eval --dump-nbest FILE --beam 100 --nbest N`.
 Each candidate gets   n-gram score + weight * ln P_charlm(sentence | left context).
-The weight is chosen on the development set and then applied to the test set.
+The weight (and with --gate the largest n-gram score gap the LM may overrule) is
+chosen on the development set and then applied to the test set.
 """
 
 from __future__ import annotations
@@ -43,15 +44,16 @@ def encode(text: str, cid: dict[str, int]) -> list[int]:
 
 
 @torch.no_grad()
-def score_file(model, cid, path: Path, top: int, device) -> tuple[list[dict], float]:
+def score_file(model, cid, path: Path, top: int, device, eos: bool = False) -> tuple[list[dict], float]:
     rows, spent = [], 0.0
     with open(path, encoding="utf-8") as fh:
         for line in fh:
             rec = json.loads(line)
             hyps = rec["hyps"][:top]
             prefix = [cid[BOS]] + encode(rec["context"][-MAX_CONTEXT:], cid)
-            seqs = [(prefix + encode(text, cid))[-MAX_LEN:] for text, _ in hyps]
-            n_pre = len(seqs[0]) - len(hyps[0][0])
+            tail = [cid[BOS]] if eos else []
+            seqs = [(prefix + encode(text, cid) + tail)[-MAX_LEN:] for text, _ in hyps]
+            n_pre = len(seqs[0]) - len(encode(hyps[0][0], cid)) - len(tail)
             t0 = time.perf_counter()
             batch = torch.tensor(seqs, device=device)
             logp = torch.log_softmax(model(batch[:, :-1]).float(), dim=-1)
@@ -63,10 +65,20 @@ def score_file(model, cid, path: Path, top: int, device) -> tuple[list[dict], fl
     return rows, spent / max(1, len(rows))
 
 
-def accuracy(rows: list[dict], weight: float) -> dict[str, list[int]]:
+GAPS = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, float("inf")]
+
+
+def choose(hyps, weight: float, gap: float = float("inf")) -> str:
+    """Best candidate by n-gram + weight * LM, among those whose n-gram score is within
+    `gap` of the n-gram's own best: the LM may only overrule the n-gram where it is unsure."""
+    top = hyps[0][1]
+    return max((h for h in hyps if top - h[1] <= gap), key=lambda h: h[1] + weight * h[2])[0]
+
+
+def accuracy(rows: list[dict], weight: float, gap: float = float("inf")) -> dict[str, list[int]]:
     out: dict[str, list[int]] = {}
     for r in rows:
-        best = max(r["hyps"], key=lambda h: h[1] + weight * h[2])[0]
+        best = choose(r["hyps"], weight, gap)
         for g in ("all", r["category"]):
             st = out.setdefault(g, [0, 0, 0])
             st[0] += 1
@@ -82,6 +94,7 @@ def main() -> None:
     ap.add_argument("test", type=Path)
     ap.add_argument("--top", type=int, nargs="+", default=[5, 10, 20])
     ap.add_argument("--cpu", action="store_true")
+    ap.add_argument("--gate", action="store_true", help="also tune the largest n-gram score gap the LM may overrule")
     ap.add_argument("--changes", type=Path, help="write test sentences whose result changed")
     args = ap.parse_args()
 
@@ -91,13 +104,22 @@ def main() -> None:
     cid = {c: i for i, c in enumerate(ckpt["chars"])}
     print(f"character LM at step {step}, {model.n_params() / 1e6:.1f}M parameters, {device}")
     for top in args.top:
-        dev, _ = score_file(model, cid, args.dev, top, device)
-        test, per = score_file(model, cid, args.test, top, device)
-        dev_acc = {w: accuracy(dev, w)["all"] for w in WEIGHTS}
-        w = max(WEIGHTS, key=lambda x: dev_acc[x][1])
-        print(f"\ntop {top}: weight {w} (dev {dev_acc[0.0][1] / dev_acc[0.0][0]:.1%} -> "
-              f"{dev_acc[w][1] / dev_acc[w][0]:.1%}), {per * 1000:.1f} ms per sentence")
-        base, new = accuracy(test, 0.0), accuracy(test, w)
+        eos = bool(ckpt.get("eos"))
+        dev, _ = score_file(model, cid, args.dev, top, device, eos)
+        test, per = score_file(model, cid, args.test, top, device, eos)
+        gaps = GAPS if args.gate else [float("inf")]
+        dev_acc = {(w, g): accuracy(dev, w, g)["all"] for w in WEIGHTS for g in gaps}
+        w, gap = max(dev_acc, key=lambda k: (dev_acc[k][1], -k[1]))
+        base_dev = dev_acc[(0.0, gaps[0])]
+        print(f"\ntop {top}: weight {w}, gap {gap} (dev {base_dev[1] / base_dev[0]:.1%} -> "
+              f"{dev_acc[(w, gap)][1] / dev_acc[(w, gap)][0]:.1%}), {per * 1000:.1f} ms per sentence")
+        if args.gate:
+            for g in gaps:
+                wb = max(WEIGHTS, key=lambda x: dev_acc[(x, g)][1])
+                t = accuracy(test, wb, g)["all"]
+                print(f"    gap {g:>4}: best weight {wb}  dev {dev_acc[(wb, g)][1] / dev_acc[(wb, g)][0]:.2%}"
+                      f"  test {t[1] / t[0]:.1%}")
+        base, new = accuracy(test, 0.0), accuracy(test, w, gap)
         for g in sorted(base, key=lambda k: (k != "all", k)):
             n = base[g][0]
             print(f"  {g:<10}{n:>5}  {base[g][1] / n:6.1%} -> {new[g][1] / n:6.1%}   "
@@ -106,7 +128,7 @@ def main() -> None:
             with open(args.changes, "w", encoding="utf-8") as fh:
                 for r in test:
                     a = max(r["hyps"], key=lambda h: h[1])[0]
-                    b = max(r["hyps"], key=lambda h: h[1] + w * h[2])[0]
+                    b = choose(r["hyps"], w, gap)
                     if a != b:
                         kind = "fixed" if b == r["gold"] else "broken" if a == r["gold"] else "other"
                         fh.write(f"{kind}\t{r['id']}\t{r['gold']}\t{a}\t{b}\n")

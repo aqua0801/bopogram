@@ -81,13 +81,17 @@ class CharLM(nn.Module):
         return sum(p.numel() for p in self.parameters())
 
 
-def crop(chars: np.ndarray, bos: int, rng: np.random.Generator) -> np.ndarray:
+def crop(chars: np.ndarray, bos: int, rng: np.random.Generator, eos: bool) -> np.ndarray:
     """One training sequence: usually the start of a line, sometimes text from the middle
-    (at typing time the known text before the cursor may begin anywhere)."""
+    (at typing time the known text before the cursor may begin anywhere). With `eos` the
+    line ends with <s> as well, so the model learns how sentences end."""
+    tail = [bos] if eos else []
     if len(chars) > 8 and rng.random() < 0.3:
         start = int(rng.integers(1, len(chars) - 4))
-        return np.asarray(chars[start:start + MAX_LEN], dtype=np.int64)
-    return np.concatenate(([bos], chars[: MAX_LEN - 1])).astype(np.int64)
+        seq = np.concatenate((chars[start:], tail))
+    else:
+        seq = np.concatenate(([bos], chars, tail))
+    return seq[:MAX_LEN].astype(np.int64)
 
 
 class Batches(torch.utils.data.IterableDataset):
@@ -95,13 +99,15 @@ class Batches(torch.utils.data.IterableDataset):
 
     POOL = 20000
 
-    def __init__(self, data_dir: Path, max_tokens: int, seed: int):
+    def __init__(self, data_dir: Path, max_tokens: int, seed: int, eos: bool, weights: dict[str, float]):
         self.data_dir, self.max_tokens, self.seed = data_dir, max_tokens, seed
+        self.eos, self.source_weights = eos, weights
 
     def __iter__(self):
         info = torch.utils.data.get_worker_info()
         rng = np.random.default_rng([self.seed, info.id if info else 0])
         corpus = Corpus(self.data_dir)
+        reweight(corpus, self.source_weights)
         bos = corpus.vocab["chars"].index(BOS)
         while True:
             items = []
@@ -111,7 +117,7 @@ class Batches(torch.utils.data.IterableDataset):
                 shard = shards[rng.choice(len(shards), p=corpus.shard_p[name])]
                 chars, _ = corpus.sentence(shard, int(rng.integers(shard.lo, shard.n)))
                 if len(chars) >= 2:
-                    items.append(crop(chars, bos, rng))
+                    items.append(crop(chars, bos, rng, self.eos))
             items.sort(key=len)
             batches, cur = [], []
             for seq in items:
@@ -122,6 +128,17 @@ class Batches(torch.utils.data.IterableDataset):
             batches.append(cur)
             for i in rng.permutation(len(batches)):
                 yield pad(batches[i])
+
+
+def reweight(corpus: Corpus, weights: dict[str, float]) -> None:
+    """Override the sampling share of some sources (others keep their default share)."""
+    if weights:
+        w = np.array([weights.get(n, corpus.weights[i]) for i, n in enumerate(corpus.names)])
+        corpus.weights = w / w.sum()
+
+
+def parse_weights(text: str) -> dict[str, float]:
+    return {k: float(v) for k, v in (kv.split("=") for kv in text.split(",") if kv)}
 
 
 def pad(seqs: list[np.ndarray]) -> torch.Tensor:
@@ -138,7 +155,7 @@ def lm_loss(model: CharLM, batch: torch.Tensor, device, reduction: str = "mean")
 
 
 @torch.no_grad()
-def validate(model: CharLM, corpus: Corpus, device) -> dict[str, float]:
+def validate(model: CharLM, corpus: Corpus, device, eos: bool) -> dict[str, float]:
     """Perplexity per character on the held-out sentences of every source."""
     model.eval()
     bos = corpus.vocab["chars"].index(BOS)
@@ -146,7 +163,8 @@ def validate(model: CharLM, corpus: Corpus, device) -> dict[str, float]:
     by_src: dict[str, list[np.ndarray]] = {}
     for name, chars, _ in corpus.heldout():
         if len(chars) >= 2:
-            by_src.setdefault(name, []).append(np.concatenate(([bos], chars[: MAX_LEN - 1])).astype(np.int64))
+            seq = np.concatenate(([bos], chars, [bos] if eos else []))[:MAX_LEN]
+            by_src.setdefault(name, []).append(seq.astype(np.int64))
     for name, seqs in by_src.items():
         seqs.sort(key=len)
         tot = nll.setdefault(name, [0.0, 0])
@@ -183,6 +201,9 @@ def main() -> None:
     ap.add_argument("--save-every", type=int, default=1000)
     ap.add_argument("--eval-every", type=int, default=5000)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--no-eos", dest="eos", action="store_false", help="do not mark the end of a line")
+    ap.add_argument("--weights", type=parse_weights, default={},
+                    help="source sampling shares, e.g. twllm=0.2,zhwiki=0.25")
     args = ap.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -190,6 +211,8 @@ def main() -> None:
     torch.backends.cudnn.allow_tf32 = True
     args.run_dir.mkdir(parents=True, exist_ok=True)
     corpus = Corpus(args.data_dir)
+    reweight(corpus, args.weights)
+    print("source shares:", " ".join(f"{n}={w:.2f}" for n, w in zip(corpus.names, corpus.weights)), flush=True)
     cfg = LMConfig(n_chars=len(corpus.vocab["chars"]), d_model=args.d_model, n_layers=args.layers,
                    n_heads=args.heads, d_ff=4 * args.d_model)
     model = CharLM(cfg).to(device)
@@ -216,11 +239,11 @@ def main() -> None:
     def save() -> None:
         tmp = ckpt_path.with_suffix(".tmp")
         torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "step": step, "config": asdict(cfg),
-                    "chars": corpus.vocab["chars"]}, tmp)
+                    "chars": corpus.vocab["chars"], "eos": args.eos}, tmp)
         os.replace(tmp, ckpt_path)
 
     loader = torch.utils.data.DataLoader(
-        Batches(args.data_dir, args.tokens, args.seed + step), batch_size=None,
+        Batches(args.data_dir, args.tokens, args.seed + step, args.eos, args.weights), batch_size=None,
         num_workers=args.workers, pin_memory=True, prefetch_factor=4, persistent_workers=True)
     log = open(args.run_dir / "log.tsv", "a", encoding="utf-8")
     model.train()
@@ -259,9 +282,9 @@ def main() -> None:
         if step % args.eval_every == 0:
             # Numbered copies: a run that degrades later can fall back to an earlier state.
             torch.save({"model": model.state_dict(), "step": step, "config": asdict(cfg),
-                        "chars": corpus.vocab["chars"]}, args.run_dir / f"step{step}.pt")
+                        "chars": corpus.vocab["chars"], "eos": args.eos}, args.run_dir / f"step{step}.pt")
         if step % args.eval_every == 0 or step == args.steps:
-            msg = " ".join(f"{k}={v:.2f}" for k, v in validate(model, corpus, device).items())
+            msg = " ".join(f"{k}={v:.2f}" for k, v in validate(model, corpus, device, args.eos).items())
             print(f"perplexity at step {step}: {msg}", flush=True)
             log.write(f"{step}\tval\t{msg}\n")
             log.flush()
