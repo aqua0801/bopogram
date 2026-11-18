@@ -159,12 +159,12 @@ class Session:
             self.decoder.set_style(style)
         except ValueError:
             return False
+        self._rescore()
         return True
 
     # -- candidates -------------------------------------------------------
     def _segments(self) -> list[str]:
-        res = self.decoder.nbest(1)
-        return res[0][0] if res else []
+        return self.decoder.best_words()
 
     def _items(self) -> list[tuple[str, int, int]]:
         """(text, word start, word end) for every buffer item; see Decoder.best_items."""

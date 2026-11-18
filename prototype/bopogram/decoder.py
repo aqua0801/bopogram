@@ -25,7 +25,8 @@ from .lm import UNKNOWN_CHAR, MixtureLM, State
 # The three structural particles share one pronunciation. Everyday writing uses
 # 的 for all of them; formal writing distinguishes 的 / 地 / 得.
 PARTICLE_SYLLABLE = ("˙ㄉㄜ",)
-PARTICLE_CASUAL = ["的"]
+PARTICLE_CASUAL = "的"
+PARTICLE_FORMAL = ("地", "得")
 STYLES = ("casual", "formal")
 LITERAL = "="
 
@@ -85,6 +86,13 @@ class Decoder:
         self.position_scores: list[dict[str, float]] | None = None
         self.position_weight = 0.0
         self.position_floor = -12.0
+        # False keeps hypotheses with different histories apart instead of merging those
+        # with the same language-model state: slower, but nbest() then lists real
+        # alternatives (used to produce candidate lists for external rescoring).
+        self.merge = True
+        # Result chosen by an outside re-ranker (Engine.rescore) among nbest(); cleared
+        # whenever the buffer changes, so a stale choice is never shown.
+        self.choice: list[str] | None = None
         self._cand_cache: dict[tuple[str, ...], list[str]] = {}
         # Spans the user has fixed by picking a candidate: (start, end) -> word.
         self.pinned: dict[tuple[int, int], str] = {}
@@ -96,6 +104,7 @@ class Decoder:
         self.pinned = {}
         first = Hyp(0.0, start_state if start_state is not None else self.lm.begin(), None, 0, None)
         self.nodes: list[list[Hyp]] = [[first]]
+        self.choice = None
 
     def _candidates(self, key: tuple[str, ...]) -> list[str]:
         cands = self._cand_cache.get(key)
@@ -171,12 +180,14 @@ class Decoder:
         self.pinned = dict(pinned)
         self.syllables = []
         self.nodes = [[Hyp(0.0, start_state, None, 0, None)]]
+        self.choice = None
         for s in syllables:
             self.push(s)
 
     def push(self, syllable: str) -> None:
         """Append one syllable and build the lattice node after it."""
         self.syllables.append(syllable)
+        self.choice = None
         j = len(self.syllables)
         merged: dict[State, Hyp] = {}
         score_fn, extra = self.lm.score, self.extra_score
@@ -200,8 +211,9 @@ class Decoder:
                     keep.append(h)
                 hyps = keep
             key = tuple(self.syllables[i:j])
-            words = PARTICLE_CASUAL if self.style == "casual" and key == PARTICLE_SYLLABLE \
-                else self._candidates(key)
+            # Decoding is the same in both styles, so that 地 / 得 can still steer the
+            # segmentation around them; casual style only changes how they are shown.
+            words = self._candidates(key)
             if self.pinned:
                 fixed = self.pinned.get((i, j))
                 if fixed is not None:
@@ -229,9 +241,10 @@ class Decoder:
                         total += refund.get(id(h), 0.0)
                     if extra is not None:
                         total += extra(h.word, word)
-                    old = merged.get(state)
+                    slot = state if self.merge else (state, id(h))
+                    old = merged.get(slot)
                     if old is None or total > old.score:
-                        merged[state] = Hyp(total, state, word, i, h)
+                        merged[slot] = Hyp(total, state, word, i, h)
         if not merged:
             # No dictionary word ends here (e.g. a syllable the dictionary lacks):
             # keep decoding by passing the raw syllable through as an unknown token.
@@ -250,6 +263,7 @@ class Decoder:
         """Keep the first `keep` items' nodes and push the rest of `items` again."""
         self.syllables = items[:keep]
         del self.nodes[keep + 1:]
+        self.choice = None
         for item in items[keep:]:
             self.push(item)
 
@@ -329,9 +343,8 @@ class Decoder:
         shown as typed (several bopomofo symbols) but is still ONE item, so positions
         must be counted in items, never in characters of the text.
         """
-        res = self.nbest(1)
         out: list[tuple[str, int, int]] = []
-        for word in (res[0][0] if res else []):
+        for word in self.best_words():
             a = len(out)
             if len(word) > 1 and a < len(self.syllables) and word == self.syllables[a]:
                 out.append((word, a, a + 1))  # unconverted syllable
@@ -339,9 +352,29 @@ class Decoder:
                 out.extend((ch, a, a + len(word)) for ch in word)
         return out
 
-    def best_text(self) -> str:
+    def best_words(self) -> list[str]:
+        """The result to show: the re-ranker's choice if there is one, else the best path."""
+        if self.choice is not None:
+            return self.show(self.choice)
         res = self.nbest(1)
-        return "".join(res[0][0]) if res else ""
+        return self.show(res[0][0]) if res else []
+
+    def show(self, words: list[str]) -> list[str]:
+        """In casual style a lone particle 地 / 得 is written 的, unless the user picked it."""
+        if self.style != "casual":
+            return words
+        out, pos = [], 0
+        for w in words:
+            n = 1 if len(w) > 1 and pos < len(self.syllables) and w == self.syllables[pos] else len(w)
+            if (w in PARTICLE_FORMAL and self.syllables[pos:pos + 1] == list(PARTICLE_SYLLABLE)
+                    and self.pinned.get((pos, pos + 1)) != w):
+                w = PARTICLE_CASUAL
+            out.append(w)
+            pos += n
+        return out
+
+    def best_text(self) -> str:
+        return "".join(self.best_words())
 
     def decode(self, syllables: list[str], start_state: State | None = None, n: int = 1):
         """Convenience: decode a whole syllable sequence at once."""

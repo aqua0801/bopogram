@@ -81,7 +81,13 @@ def run_eval(args) -> int:
     engine.set_style(args.style)
     if args.neural_model:
         engine.set_neural(args.neural_model, args.neural_weight, args.neural_floor)
-    live = engine.neural is not None and args.system == "bopogram" and not args.neural_scores
+    if args.charlm_model:
+        engine.set_charlm(args.charlm_model, args.charlm_weight, args.charlm_top)
+    if args.no_charlm:
+        engine.charlm = None
+        engine.decoder.merge = True
+    live = ((engine.neural is not None or engine.charlm is not None)
+            and args.system == "bopogram" and not args.neural_scores)
 
     char_freq: dict[str, float] = {}
     if args.system == "char-unigram":
@@ -151,6 +157,9 @@ def run_eval(args) -> int:
         if row["id"] in readings:
             convert(readings[row["id"]], row.get("context") or "", [])
 
+    if args.dump_nbest and args.beam:
+        decoder.beam, decoder.merge = args.beam, False
+    dump = open(args.dump_nbest, "w", encoding="utf-8") if args.dump_nbest and args.system == "bopogram" else None
     stats = defaultdict(lambda: defaultdict(float))
     timings: list[float] = []
     errors: list[str] = []
@@ -162,6 +171,10 @@ def run_eval(args) -> int:
             skipped += 1
             continue
         hyp = convert(syls, row.get("context") or "", timings, row["id"])
+        if dump is not None:
+            hyps = [["".join(words), round(score, 4)] for words, score in decoder.nbest(args.nbest)]
+            dump.write(json.dumps({"id": row["id"], "category": row["category"], "context": row.get("context") or "",
+                                   "gold": gold, "hyps": hyps}, ensure_ascii=False) + "\n")
         if args.style == "casual":
             # Casual style writes 的 for every structural particle; that is not an error.
             gold = "".join("的" if s == "˙ㄉㄜ" and g in "地得" and h == "的" else g
@@ -180,6 +193,8 @@ def run_eval(args) -> int:
         if hyp != gold:
             errors.append(f"{row['id']}\t{row['category']}\t{gold}\t{hyp}\t{row.get('note') or ''}")
 
+    if dump is not None:
+        dump.close()
     result = {"system": args.system, "skipped": skipped, "groups": {}}
     print(f"system: {args.system}   (skipped {skipped} rows without usable readings)")
     print(f"{'group':<24}{'sentences':>10}{'sent.acc':>10}{'char.acc':>10}{'sent.acc(pronouns merged)':>28}")

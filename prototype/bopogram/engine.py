@@ -29,7 +29,8 @@ class Engine:
      "models": [{"path": "ly.binary", "weight": 0.4}, ...],
      "beam": 16, "max_candidates": 40, "word_penalty": 0.0, "eos_weight": 0.0,
      "style": "casual", "user_model": null, "typing_log": null,
-     "neural": {"model": "neural/neural.int8.onnx", "weight": 0.3, "floor": -12.0, "threads": 2}}
+     "neural": {"model": "neural/neural.int8.onnx", "weight": 0.3, "floor": -12.0, "threads": 2},
+     "charlm": {"model": "charlm/charlm.int8.onnx", "weight": 0.3, "top": 5, "threads": 2}}
 
     "style" is "casual" (a lone neutral-tone ㄉㄜ is always 的) or "formal"
     (的 / 地 / 得 are chosen by the model); the default is "casual".
@@ -39,6 +40,8 @@ class Engine:
     character less likely under a reading it seldom has; optional.
     "neural" adds the scores of the position-wise model (see neural.py) to the
     lattice; absent or null means the n-gram engine alone.
+    "charlm" re-ranks the decoder's `top` best results with the character language
+    model (see charlm.py); absent or null means no re-ranking.
     """
 
     def __init__(self, config: str | Path | None = None, use_user_model: bool = True):
@@ -63,6 +66,10 @@ class Engine:
         self.neural_weight, self.neural_floor = 0.0, -12.0
         if cfg.get("neural"):
             self.set_neural(**{**cfg["neural"], "model": (base / cfg["neural"]["model"]).resolve()})
+        self.charlm = None
+        self.charlm_weight, self.charlm_top = 0.0, 5
+        if cfg.get("charlm"):
+            self.set_charlm(**{**cfg["charlm"], "model": (base / cfg["charlm"]["model"]).resolve()})
         self._decoder_args = dict(beam=cfg.get("beam", 16), max_candidates=cfg.get("max_candidates", 40),
                                   word_penalty=cfg.get("word_penalty", 0.0),
                                   eos_weight=cfg.get("eos_weight", 0.0),
@@ -80,11 +87,27 @@ class Engine:
         self.neural = NeuralScorer(model, threads)
         self.neural_weight, self.neural_floor = weight, floor
 
+    def set_charlm(self, model, weight: float = 0.3, top: int = 5, threads: int = 2) -> None:
+        from .charlm import CharLMScorer  # imported only when used: ONNX Runtime is optional
+
+        self.charlm = CharLMScorer(model, threads)
+        self.charlm_weight, self.charlm_top = weight, top
+        # Merging hypotheses with equal n-gram state leaves near-identical results in
+        # nbest(); without merging the top few are real alternatives worth re-ranking.
+        if hasattr(self, "decoder"):
+            self.decoder.merge = False
+
     def rescore(self, decoder: Decoder, context: str) -> None:
-        """Refresh a decoder's neural scores after its buffer changed (no-op without a model)."""
+        """Refresh a decoder's model scores after its buffer changed (no-op without models)."""
         if self.neural is not None:
             scores = self.neural.score(context, decoder.syllables) if decoder.syllables else None
             decoder.rescore(scores, self.neural_weight, self.neural_floor)
+        if self.charlm is not None and decoder.syllables:
+            hyps = decoder.nbest(self.charlm_top)
+            if len(hyps) > 1:
+                lm = self.charlm.score(context, ["".join(words) for words, _ in hyps])
+                w = self.charlm_weight
+                decoder.choice = max(zip(hyps, lm), key=lambda hl: hl[0][1] + w * hl[1])[0][0]
 
     def set_style(self, style: str) -> None:
         """Style for this engine's own decoder and for decoders created afterwards."""
@@ -93,8 +116,10 @@ class Engine:
 
     def new_decoder(self) -> Decoder:
         """A decoder with its own buffer, sharing this engine's dictionary and models."""
-        return Decoder(self.lexicon, self.lm, extra_score=self.user.bonus if self.user else None,
-                       **self._decoder_args)
+        decoder = Decoder(self.lexicon, self.lm, extra_score=self.user.bonus if self.user else None,
+                          **self._decoder_args)
+        decoder.merge = self.charlm is None
+        return decoder
 
     def start(self, context: str = "") -> None:
         """Begin a composition; `context` is the text before the cursor (never modified)."""
@@ -105,7 +130,14 @@ class Engine:
         for s in syllables:
             self.decoder.push(s)
         self.rescore(self.decoder, context)
-        return [("".join(words), score) for words, score in self.decoder.nbest(nbest)]
+        show = self.decoder.show
+        out = [("".join(show(words)), score) for words, score in self.decoder.nbest(max(nbest, self.charlm_top))]
+        seen: set[str] = set()  # casual 地/得 -> 的 can make two results equal
+        out = [r for r in out if not (r[0] in seen or seen.add(r[0]))]
+        if self.decoder.choice is not None:  # the re-ranker's pick goes first
+            pick = "".join(show(self.decoder.choice))
+            out.sort(key=lambda r: r[0] != pick)
+        return out[:nbest]
 
     def convert_keys(self, keys: str, layout: str = "dachen", **kw) -> list[tuple[str, float]]:
         return self.convert(LAYOUTS[layout].to_syllables(keys), **kw)
