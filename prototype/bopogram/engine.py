@@ -130,9 +130,12 @@ class Engine:
         for s in syllables:
             self.decoder.push(s)
         self.rescore(self.decoder, context)
-        out = [("".join(words), score) for words, score in self.decoder.nbest(max(nbest, self.charlm_top))]
+        show = self.decoder.show
+        out = [("".join(show(words)), score) for words, score in self.decoder.nbest(max(nbest, self.charlm_top))]
+        seen: set[str] = set()  # casual 地/得 -> 的 can make two results equal
+        out = [r for r in out if not (r[0] in seen or seen.add(r[0]))]
         if self.decoder.choice is not None:  # the re-ranker's pick goes first
-            pick = "".join(self.decoder.choice)
+            pick = "".join(show(self.decoder.choice))
             out.sort(key=lambda r: r[0] != pick)
         return out[:nbest]
 

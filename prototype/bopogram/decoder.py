@@ -25,7 +25,8 @@ from .lm import UNKNOWN_CHAR, MixtureLM, State
 # The three structural particles share one pronunciation. Everyday writing uses
 # 的 for all of them; formal writing distinguishes 的 / 地 / 得.
 PARTICLE_SYLLABLE = ("˙ㄉㄜ",)
-PARTICLE_CASUAL = ["的"]
+PARTICLE_CASUAL = "的"
+PARTICLE_FORMAL = ("地", "得")
 STYLES = ("casual", "formal")
 LITERAL = "="
 
@@ -210,8 +211,9 @@ class Decoder:
                     keep.append(h)
                 hyps = keep
             key = tuple(self.syllables[i:j])
-            words = PARTICLE_CASUAL if self.style == "casual" and key == PARTICLE_SYLLABLE \
-                else self._candidates(key)
+            # Decoding is the same in both styles, so that 地 / 得 can still steer the
+            # segmentation around them; casual style only changes how they are shown.
+            words = self._candidates(key)
             if self.pinned:
                 fixed = self.pinned.get((i, j))
                 if fixed is not None:
@@ -353,9 +355,23 @@ class Decoder:
     def best_words(self) -> list[str]:
         """The result to show: the re-ranker's choice if there is one, else the best path."""
         if self.choice is not None:
-            return self.choice
+            return self.show(self.choice)
         res = self.nbest(1)
-        return res[0][0] if res else []
+        return self.show(res[0][0]) if res else []
+
+    def show(self, words: list[str]) -> list[str]:
+        """In casual style a lone particle 地 / 得 is written 的, unless the user picked it."""
+        if self.style != "casual":
+            return words
+        out, pos = [], 0
+        for w in words:
+            n = 1 if len(w) > 1 and pos < len(self.syllables) and w == self.syllables[pos] else len(w)
+            if (w in PARTICLE_FORMAL and self.syllables[pos:pos + 1] == list(PARTICLE_SYLLABLE)
+                    and self.pinned.get((pos, pos + 1)) != w):
+                w = PARTICLE_CASUAL
+            out.append(w)
+            pos += n
+        return out
 
     def best_text(self) -> str:
         return "".join(self.best_words())
