@@ -55,6 +55,11 @@ def main(argv: list[str] | None = None) -> int:
                         "engine's 10 best results; alone: the neural model's own choice")
     e.add_argument("--neural-weight", type=float, default=1.0)
     e.add_argument("--neural-floor", type=float, default=-12.0)
+    e.add_argument("--charlm-model", help="character LM (ONNX) to re-rank with after every syllable "
+                                          "(overrides the config)")
+    e.add_argument("--charlm-weight", type=float, default=0.3)
+    e.add_argument("--charlm-top", type=int, default=5)
+    e.add_argument("--no-charlm", action="store_true", help="ignore the config's character LM")
     e.add_argument("--errors", help="write wrong sentences to this file")
     e.add_argument("--dump-nbest", help="write the engine's best results per sentence (JSONL) for external rescoring")
     e.add_argument("--nbest", type=int, default=10)

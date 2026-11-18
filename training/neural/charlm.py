@@ -72,7 +72,8 @@ class CharLM(nn.Module):
         Padding sits on the right, so the causal mask alone keeps it out of sight."""
         n = chars.shape[1]
         x = self.drop(self.char_emb(chars) + self.pos_emb(torch.arange(n, device=chars.device)))
-        mask = torch.ones(n, n, dtype=torch.bool, device=chars.device).tril()
+        # Additive mask (0 / -inf): same meaning as a boolean one, and exports to ONNX correctly.
+        mask = torch.full((n, n), float("-inf"), device=chars.device).triu(1)
         for blk in self.blocks:
             x = blk(x, mask)
         return self.norm(x) @ self.char_emb.weight.T + self.out_bias

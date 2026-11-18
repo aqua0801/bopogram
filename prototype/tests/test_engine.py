@@ -292,6 +292,25 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(s.preedit(), "我再加")
 
 
+class RerankTest(unittest.TestCase):
+    def test_reranker_choice_is_shown_and_cleared_on_change(self):
+        from bopogram.engine import Engine
+
+        class FakeCharLM:
+            def score(self, context, texts):
+                return [10.0 if t.startswith("我再") else 0.0 for t in texts]
+
+        s = make_session()
+        eng = s.engine
+        eng.neural, eng.charlm, eng.charlm_top, eng.charlm_weight = None, FakeCharLM(), 5, 1.0
+        eng.rescore = lambda decoder, context: Engine.rescore(eng, decoder, context)
+        s.decoder.merge = False
+        type_keys(s, "ji3y94ru8 ")           # ㄨㄛˇ ㄗㄞˋ ㄐㄧㄚ: the n-gram alone says 我在家
+        self.assertEqual(s.preedit(), "我再家")
+        s.decoder.push("ㄐㄧㄚ")              # any change drops the stale choice
+        self.assertIsNone(s.decoder.choice)
+
+
 class ProtocolTest(unittest.TestCase):
     def test_requests(self):
         s = make_session()

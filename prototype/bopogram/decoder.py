@@ -89,6 +89,9 @@ class Decoder:
         # with the same language-model state: slower, but nbest() then lists real
         # alternatives (used to produce candidate lists for external rescoring).
         self.merge = True
+        # Result chosen by an outside re-ranker (Engine.rescore) among nbest(); cleared
+        # whenever the buffer changes, so a stale choice is never shown.
+        self.choice: list[str] | None = None
         self._cand_cache: dict[tuple[str, ...], list[str]] = {}
         # Spans the user has fixed by picking a candidate: (start, end) -> word.
         self.pinned: dict[tuple[int, int], str] = {}
@@ -100,6 +103,7 @@ class Decoder:
         self.pinned = {}
         first = Hyp(0.0, start_state if start_state is not None else self.lm.begin(), None, 0, None)
         self.nodes: list[list[Hyp]] = [[first]]
+        self.choice = None
 
     def _candidates(self, key: tuple[str, ...]) -> list[str]:
         cands = self._cand_cache.get(key)
@@ -175,12 +179,14 @@ class Decoder:
         self.pinned = dict(pinned)
         self.syllables = []
         self.nodes = [[Hyp(0.0, start_state, None, 0, None)]]
+        self.choice = None
         for s in syllables:
             self.push(s)
 
     def push(self, syllable: str) -> None:
         """Append one syllable and build the lattice node after it."""
         self.syllables.append(syllable)
+        self.choice = None
         j = len(self.syllables)
         merged: dict[State, Hyp] = {}
         score_fn, extra = self.lm.score, self.extra_score
@@ -255,6 +261,7 @@ class Decoder:
         """Keep the first `keep` items' nodes and push the rest of `items` again."""
         self.syllables = items[:keep]
         del self.nodes[keep + 1:]
+        self.choice = None
         for item in items[keep:]:
             self.push(item)
 
@@ -334,9 +341,8 @@ class Decoder:
         shown as typed (several bopomofo symbols) but is still ONE item, so positions
         must be counted in items, never in characters of the text.
         """
-        res = self.nbest(1)
         out: list[tuple[str, int, int]] = []
-        for word in (res[0][0] if res else []):
+        for word in self.best_words():
             a = len(out)
             if len(word) > 1 and a < len(self.syllables) and word == self.syllables[a]:
                 out.append((word, a, a + 1))  # unconverted syllable
@@ -344,9 +350,15 @@ class Decoder:
                 out.extend((ch, a, a + len(word)) for ch in word)
         return out
 
-    def best_text(self) -> str:
+    def best_words(self) -> list[str]:
+        """The result to show: the re-ranker's choice if there is one, else the best path."""
+        if self.choice is not None:
+            return self.choice
         res = self.nbest(1)
-        return "".join(res[0][0]) if res else ""
+        return res[0][0] if res else []
+
+    def best_text(self) -> str:
+        return "".join(self.best_words())
 
     def decode(self, syllables: list[str], start_state: State | None = None, n: int = 1):
         """Convenience: decode a whole syllable sequence at once."""

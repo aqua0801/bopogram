@@ -28,6 +28,9 @@ def main() -> None:
     ap.add_argument("--neural", type=Path,
                     help="folder with neural.int8.onnx and neural.json (training/neural/export_onnx.py)")
     ap.add_argument("--neural-weight", type=float, default=0.3)
+    ap.add_argument("--charlm", type=Path,
+                    help="folder with charlm.int8.onnx and charlm.json (training/neural/export_charlm.py)")
+    ap.add_argument("--charlm-weight", type=float, default=0.3)
     ap.add_argument("--typing-log", action="store_true",
                     help="record committed compositions in userdata/typing_log.jsonl for later "
                          "review with tools/review_log.py (off by default)")
@@ -55,6 +58,13 @@ def main() -> None:
             shutil.copy2(args.neural / name, out / "neural" / name)
             total += (out / "neural" / name).stat().st_size
         cfg["neural"] = {"model": "neural/neural.int8.onnx", "weight": args.neural_weight, "floor": -12.0,
+                         "threads": 2}
+    if args.charlm:
+        (out / "charlm").mkdir(exist_ok=True)
+        for name in ("charlm.int8.onnx", "charlm.json"):
+            shutil.copy2(args.charlm / name, out / "charlm" / name)
+            total += (out / "charlm" / name).stat().st_size
+        cfg["charlm"] = {"model": "charlm/charlm.int8.onnx", "weight": args.charlm_weight, "top": 5,
                          "threads": 2}
     cfg["typing_log"] = "userdata/typing_log.jsonl" if args.typing_log else None
     (out / "config.json").write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")

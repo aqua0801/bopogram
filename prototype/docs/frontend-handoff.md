@@ -178,6 +178,10 @@ Windows 端要寫的是 `crates/` 底下的前端。先讀完 `CLAUDE.md`，尤�
 
 個人化資料會寫在執行包的 `userdata\user.json`，只存在本機。
 
+執行包的 `charlm\`（約 18MB）是字級語言模型，用來重排引擎的前 5 名結果；
+`config.json` 的 `"charlm"` 設定它，刪掉這一項就回到純 n-gram。它由 ONNX Runtime 在 CPU 執行
+（`pip install -e .` 已包含），每個按鍵多約 1 到 3 毫秒。前端不需要任何改動。
+
 ## 打字紀錄（選用，預設關閉）
 
 執行包 `config.json` 加上 `"typing_log": "userdata/typing_log.jsonl"` 後，引擎在每次送出時

@@ -81,7 +81,13 @@ def run_eval(args) -> int:
     engine.set_style(args.style)
     if args.neural_model:
         engine.set_neural(args.neural_model, args.neural_weight, args.neural_floor)
-    live = engine.neural is not None and args.system == "bopogram" and not args.neural_scores
+    if args.charlm_model:
+        engine.set_charlm(args.charlm_model, args.charlm_weight, args.charlm_top)
+    if args.no_charlm:
+        engine.charlm = None
+        engine.decoder.merge = True
+    live = ((engine.neural is not None or engine.charlm is not None)
+            and args.system == "bopogram" and not args.neural_scores)
 
     char_freq: dict[str, float] = {}
     if args.system == "char-unigram":
