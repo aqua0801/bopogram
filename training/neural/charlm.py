@@ -203,6 +203,7 @@ def main() -> None:
     ap.add_argument("--eval-every", type=int, default=5000)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--no-eos", dest="eos", action="store_false", help="do not mark the end of a line")
+    ap.add_argument("--init", type=Path, help="start from this checkpoint's weights (new optimizer, step 0)")
     ap.add_argument("--weights", type=parse_weights, default={},
                     help="source sampling shares, e.g. twllm=0.2,zhwiki=0.25")
     args = ap.parse_args()
@@ -229,6 +230,12 @@ def main() -> None:
         opt.load_state_dict(ckpt["opt"])
         step = ckpt["step"]
         print(f"resumed from step {step}", flush=True)
+    elif args.init:
+        init = torch.load(args.init, map_location=device, weights_only=False)
+        if init["chars"] != corpus.vocab["chars"]:
+            raise SystemExit("--init checkpoint uses a different character table")
+        model.load_state_dict(init["model"])
+        print(f"initialised from {args.init} (step {init['step']})", flush=True)
     print(f"{model.n_params() / 1e6:.1f}M parameters, device {device}", flush=True)
 
     def lr_at(s: int) -> float:

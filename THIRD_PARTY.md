@@ -17,6 +17,7 @@
 | NumPy | https://numpy.org/ | BSD-3-Clause | 訓練階段：神經模型訓練資料的陣列檔（`training/neural/`） |
 | PyTorch（含其 CUDA 執行庫） | https://pytorch.org/ | BSD-3-Clause（CUDA 執行庫為 NVIDIA 專有授權，只在訓練機上使用，不散布） | 第 5 階段：訓練神經逐位置評分模型（`training/neural/`），不隨輸入法散布 |
 | ONNX Runtime | https://github.com/microsoft/onnxruntime | MIT | 第 5 階段：在 CPU 上執行神經模型（原型引擎的選用依賴 `onnxruntime`；訓練端用其量化工具） |
+| huggingface_hub | https://github.com/huggingface/huggingface_hub | Apache-2.0 | 訓練階段：下載 Hugging Face 上的資料檔（`training/pipeline/fineweb_extract.py`） |
 | ONNX、ONNX Script | https://github.com/onnx/onnx 、 https://github.com/microsoft/onnxscript | Apache-2.0、MIT | 第 5 階段：把訓練好的模型匯出成 ONNX 檔（`training/neural/export_onnx.py`） |
 
 ## 語料
@@ -31,6 +32,7 @@
 | twngrams（臺灣華語 1–4 詞組網站數統計，v0.1.0） | https://huggingface.co/datasets/taiwan-corpora/twngrams | CC0 1.0 | 第 2 階段：詞表來源與驗證（只有統計數字，不含原文） |
 | MozTW 華語句庫（cc0-sentences，`zh-TW/` 內的句子檔） | https://github.com/moztw/cc0-sentences | CC0 1.0 | 不進訓練語料；保留作為測試句集草稿的素材與開發用驗證集。不使用 `gpt-4.txt`（模型生成）與 repo 內的輸入法表格檔 |
 | TWLLM-Data（yentinglin/twllm-data，20250216） | https://huggingface.co/datasets/yentinglin/twllm-data | Apache-2.0 | 語言模型訓練語料：只取真實使用者的提問；模型生成的回答與合成提問子集（twllm-evol、twllm-synthetic）一律排除 |
+| FineWeb2（HuggingFaceFW/fineweb-2，`cmn_Hani` 子集，抽取 10 個檔案） | https://huggingface.co/datasets/HuggingFaceFW/fineweb-2 | ODC-By 1.0，另須遵守 Common Crawl 使用條款（https://commoncrawl.org/terms-of-use）；網頁原文著作權屬原作者 | 字級語言模型訓練語料（一般網頁文字）。只留繁體、非香港、無簡轉繁痕跡的頁面；依 `training/pipeline/data/fineweb_exclude.txt` 排除使用條款或 robots.txt 禁止 AI 訓練的網站（2026-11-18 查核前 40 大網站）、盜版小說站與中國官方媒體；與開發集、測試集重疊的句子已剔除 |
 
 ## 字典來源（只在本機建置，成品不散布）
 

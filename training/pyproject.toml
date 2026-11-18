@@ -4,6 +4,7 @@ version = "0.0.0"
 description = "Corpus collection, cleaning and model training scripts for Bopogram"
 requires-python = ">=3.12"
 dependencies = [
+    "huggingface-hub>=2.4.0",
     "mwparserfromhell>=0.6.6",
     "numpy>=2.5.4",
     "onnx>=1.23.2",
