@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use windows::core::{implement, IUnknownImpl, Interface, Ref, Result, BOOL, GUID};
-use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, LPARAM, POINT, RECT, WPARAM};
+use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -30,7 +30,8 @@ use windows::Win32::UI::TextServices::{
     ITfUIElementMgr, TF_ES_ASYNCDONTCARE, TF_ES_READWRITE, TF_LBI_ICON, TF_LBI_TEXT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetCursorPos, GetGUIThreadInfo, GetWindowLongW, GUITHREADINFO, GWL_STYLE,
+    GetClassNameW, GetCursorPos, GetGUIThreadInfo, GetWindowLongW, KillTimer, SetTimer,
+    GUITHREADINFO, GWL_STYLE,
 };
 
 use crate::controller::{Controller, Key, CASUAL, FORMAL};
@@ -87,6 +88,46 @@ pub(crate) type Shared = Rc<RefCell<State>>;
 
 pub(crate) fn is_chinese(state: &Shared) -> bool {
     with_controller(state, |c| c.chinese()).unwrap_or(true)
+}
+
+/// For the taskbar asking what to show: the shared mode is taken on first,
+/// so that it never shows a mode this application is about to leave. No
+/// notification is sent from here (the taskbar is asking already).
+pub(crate) fn current_mode(state: &Shared) -> bool {
+    if settings::shared_mode_cached() && with_controller(state, |c| !c.composing()).unwrap_or(false) {
+        if let Some(chinese) = settings::load_mode() {
+            with_controller(state, |c| c.set_chinese(chinese));
+        }
+    }
+    is_chinese(state)
+}
+
+thread_local! {
+    /// Text services waiting for the delayed button update (see `button_changed_later`).
+    static LATER: RefCell<Vec<std::rc::Weak<RefCell<State>>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Delay of the second button update after the focus arrives.
+const LATER_MS: u32 = 150;
+
+/// Announce the button again shortly. When the focus moves to this
+/// application the taskbar may still be busy with the move and miss an
+/// update sent at once.
+fn button_changed_later(state: &Shared) {
+    LATER.with(|later| later.borrow_mut().push(Rc::downgrade(state)));
+    unsafe {
+        SetTimer(None, 0, LATER_MS, Some(later_timer));
+    }
+}
+
+unsafe extern "system" fn later_timer(_window: HWND, _message: u32, id: usize, _time: u32) {
+    guard((), || unsafe {
+        let _ = KillTimer(None, id);
+        let waiting: Vec<_> = LATER.with(|later| later.borrow_mut().drain(..).collect());
+        for state in waiting.iter().filter_map(std::rc::Weak::upgrade) {
+            button_changed(&state);
+        }
+    })
 }
 
 pub(crate) fn is_formal(state: &Shared) -> bool {
@@ -753,6 +794,7 @@ fn focus_gained(state: &Shared) {
     }
     adopt_shared_mode(state);
     button_changed(state);
+    button_changed_later(state);
 }
 
 impl ITfKeyEventSink_Impl for TextService_Impl {

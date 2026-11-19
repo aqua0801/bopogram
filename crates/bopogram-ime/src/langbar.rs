@@ -272,11 +272,11 @@ impl ITfLangBarItemButton_Impl for ModeButton_Impl {
     }
 
     fn GetIcon(&self) -> Result<HICON> {
-        guard(Err(E_FAIL.into()), || draw_icon(service::is_chinese(&self.state)))
+        guard(Err(E_FAIL.into()), || draw_icon(service::current_mode(&self.state)))
     }
 
     fn GetText(&self) -> Result<BSTR> {
-        Ok(BSTR::from(if service::is_chinese(&self.state) { "中" } else { "英" }))
+        Ok(BSTR::from(if service::current_mode(&self.state) { "中" } else { "英" }))
     }
 }
 
