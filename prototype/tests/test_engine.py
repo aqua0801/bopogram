@@ -156,6 +156,16 @@ class SessionTest(unittest.TestCase):
         type_keys(s, "d04")                  # later typing must not undo the choice
         self.assertEqual(s.preedit()[:2], "我再")
 
+    def test_candidates_start_at_the_cursor_inside_a_word(self):
+        s = make_session()
+        type_keys(s, "ji3d04d04")            # 我看看; 看看 is one word
+        self.assertEqual(s._items()[2][1:], (1, 3))
+        s.move(-1)                           # cursor before the second 看: the list is for it
+        cands = s.candidates()
+        self.assertEqual([(c["word"], c["start"]) for c in cands], [("看", 2)])
+        s.move_to(True)                      # at the end: the last word, from its start
+        self.assertEqual(s.candidates()[0], {"word": "看看", "start": 1, "length": 2})
+
     def test_editing_in_the_middle(self):
         s = make_session()
         type_keys(s, "ji3ru8 ")              # 我家
