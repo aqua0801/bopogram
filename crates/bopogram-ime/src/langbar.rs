@@ -11,7 +11,7 @@
 
 use windows::core::{implement, w, Interface, Ref, Result, BOOL, BSTR, GUID, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{
-    COLORREF, E_FAIL, E_INVALIDARG, E_NOTIMPL, HWND, POINT, RECT,
+    COLORREF, E_FAIL, E_INVALIDARG, HWND, POINT, RECT,
 };
 use windows::Win32::Graphics::Gdi::{
     CreateBitmap, CreateCompatibleDC, CreateDIBSection, CreateFontW, CreateSolidBrush,
@@ -217,8 +217,10 @@ impl ITfLangBarItem_Impl for ModeButton_Impl {
         Ok(0)
     }
 
+    /// The input indicator decides where the button appears; there is
+    /// nothing to hide on our side, and refusing could keep it hidden.
     fn Show(&self, _show: BOOL) -> Result<()> {
-        Err(E_NOTIMPL.into())
+        Ok(())
     }
 
     fn GetTooltipString(&self) -> Result<BSTR> {

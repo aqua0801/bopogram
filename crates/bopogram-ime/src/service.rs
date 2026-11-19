@@ -639,24 +639,29 @@ impl ITfTextInputProcessorEx_Impl for TextService_Impl {
                 }
                 controller
             });
-            // The mode button. The input method works without it.
-            let button: ITfLangBarItemButton = ModeButton::new(Rc::clone(&self.state)).into();
-            let button = thread_mgr
-                .cast::<ITfLangBarItemMgr>()
-                .and_then(|bar| bar.AddItem(&button))
-                .is_ok()
-                .then_some(button);
+            // The state must be complete before the mode button is added:
+            // adding it makes TSF ask for its icon and hand it the sink
+            // through which every later change is announced, and both land
+            // in this state. (Overwriting the state afterwards lost the sink,
+            // so the taskbar never heard that the mode changed.)
             with(&self.state, |s| {
                 *s = State {
-                    thread_mgr: Some(thread_mgr),
+                    thread_mgr: Some(thread_mgr.clone()),
                     client,
                     controller,
                     attribute,
-                    button,
                     sink: Some(self.to_interface()),
                     ..State::default()
                 };
             });
+            // The mode button. The input method works without it.
+            let button: ITfLangBarItemButton = ModeButton::new(Rc::clone(&self.state)).into();
+            if let Ok(bar) = thread_mgr.cast::<ITfLangBarItemMgr>() {
+                if bar.AddItem(&button).is_ok() {
+                    with(&self.state, |s| s.button = Some(button));
+                }
+            }
+            button_changed(&self.state);
             Ok(())
         })
     }
@@ -669,6 +674,9 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             if let Some(style) = settings::load_style() {
                 with_controller(&self.state, |c| c.want_style(&style));
             }
+            // Each application has its own Chinese/English mode: the
+            // taskbar must show this one's.
+            button_changed(&self.state);
         } else {
             with(&self.state, |s| {
                 if let Some(popup) = &s.popup {
