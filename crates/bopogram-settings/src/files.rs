@@ -28,6 +28,17 @@ pub struct Settings {
     pub learning: bool,
     /// The engine records committed compositions (`typing_log`).
     pub typing_log: bool,
+    /// The input method logs how long each key takes (never what was typed).
+    pub timing: bool,
+}
+
+/// How long the timing log stays on once turned on.
+const TIMING_HOURS: u64 = 24;
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 pub struct Files {
@@ -39,6 +50,19 @@ pub struct Files {
     pub review_tool: Option<PathBuf>,
     /// The style chosen by the user, shared with the input method.
     pub style: Option<PathBuf>,
+}
+
+impl Files {
+    /// Holds the time (Unix seconds) until which the input method logs timings.
+    fn timing_switch(&self) -> Option<PathBuf> {
+        Some(self.style.as_ref()?.with_file_name("timing-until.txt"))
+    }
+
+    /// Until when the timing log is on, if it is.
+    pub fn timing_until(&self) -> Option<u64> {
+        let text = std::fs::read_to_string(self.timing_switch()?).ok()?;
+        text.trim().parse::<u64>().ok().filter(|&until| until > now_secs())
+    }
 }
 
 fn read_json(path: &Path) -> Option<Value> {
@@ -95,6 +119,7 @@ impl Files {
             formal: style.as_deref() == Some(FORMAL),
             learning: set("user_model"),
             typing_log: set("typing_log"),
+            timing: self.timing_until().is_some(),
         }
     }
 
@@ -106,6 +131,16 @@ impl Files {
         }
         std::fs::write(style, if settings.formal { FORMAL } else { CASUAL })
             .map_err(|e| format!("{}: {e}", style.display()))?;
+        if let Some(switch) = self.timing_switch() {
+            let on = self.timing_until().is_some();
+            if settings.timing && !on {
+                let until = now_secs() + TIMING_HOURS * 3600;
+                std::fs::write(&switch, until.to_string())
+                    .map_err(|e| format!("{}: {e}", switch.display()))?;
+            } else if !settings.timing && switch.exists() {
+                std::fs::remove_file(&switch).map_err(|e| format!("{}: {e}", switch.display()))?;
+            }
+        }
         if !engine {
             return Ok(());
         }
@@ -219,7 +254,7 @@ mod tests {
         let files = files(&folder);
         // No style file yet: the config's default counts.
         let loaded = files.load();
-        assert_eq!(loaded, Settings { formal: true, learning: true, typing_log: false });
+        assert_eq!(loaded, Settings { formal: true, learning: true, typing_log: false, timing: false });
 
         // Style alone does not touch the config.
         let before = std::fs::read_to_string(folder.join("config.json")).unwrap();
@@ -227,9 +262,14 @@ mod tests {
         assert_eq!(std::fs::read_to_string(folder.join("config.json")).unwrap(), before);
         assert!(!files.load().formal);
 
-        let wanted = Settings { formal: false, learning: false, typing_log: true };
+        let wanted = Settings { formal: false, learning: false, typing_log: true, timing: true };
         files.save(&wanted, true).unwrap();
         assert_eq!(files.load(), wanted);
+        let until = files.timing_until().unwrap();
+        assert!(until > now_secs() + 23 * 3600 && until <= now_secs() + 24 * 3600);
+        files.save(&Settings { timing: false, ..wanted.clone() }, false).unwrap();
+        assert!(!files.load().timing);
+        files.save(&wanted, false).unwrap();
         let config = read_json(&folder.join("config.json")).unwrap();
         assert!(config["user_model"].is_null());
         assert_eq!(config["typing_log"], DEFAULT_TYPING_LOG);

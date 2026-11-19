@@ -1,7 +1,30 @@
 //! Requests and responses of the engine protocol: one JSON object per line.
 //! The full description is in `prototype/bopogram/server.py`.
+//!
+//! Shared by the input method (`bopogram-ime`) and the host (`bopogram-host`),
+//! so that the two cannot disagree about the pipe or the host's own replies.
+//! Whatever engine sits behind the host (the Python prototype today, a Rust
+//! engine later), this is the contract.
 
 use serde_json::{json, Value};
+
+/// The named pipe of a user's host, from the user's SID.
+pub fn pipe_name(sid: &str) -> String {
+    format!(r"\\.\pipe\bopogram-{sid}")
+}
+
+/// Field present (true) in replies made by the host itself rather than the
+/// engine: the engine cannot be reached, so the session is gone.
+pub const HOST_ERROR: &str = "host";
+
+/// A reply of the host's own, answering the request with this `id` (if any).
+pub fn host_error(id: Option<&Value>, message: &str) -> String {
+    let mut reply = json!({"ok": false, "error": message, HOST_ERROR: true});
+    if let Some(id) = id {
+        reply["id"] = id.clone();
+    }
+    reply.to_string()
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op {
@@ -33,6 +56,32 @@ pub enum Op {
 }
 
 impl Op {
+    /// The operation's name, without its arguments. A tone key is told apart
+    /// from the other layout keys, because it is the one that decodes.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Op::Key(c) if matches!(c, ' ' | '3' | '4' | '6' | '7') => "tone",
+            Op::Key(_) => "key",
+            Op::Symbol(_) => "symbol",
+            Op::Text(_) => "text",
+            Op::Backspace => "backspace",
+            Op::Delete => "delete",
+            Op::Left => "left",
+            Op::Right => "right",
+            Op::Home => "home",
+            Op::End => "end",
+            Op::Candidates => "candidates",
+            Op::Select(_) => "select",
+            Op::Cycle(_) => "cycle",
+            Op::Commit => "commit",
+            Op::Escape => "escape",
+            Op::Context(_) => "context",
+            Op::Learning(_) => "learning",
+            Op::Style(_) => "style",
+            Op::State => "state",
+        }
+    }
+
     pub fn to_json(&self, id: u64) -> String {
         let mut request = match self {
             Op::Key(key) => json!({"op": "key", "key": key.to_string()}),
@@ -186,6 +235,23 @@ mod tests {
         assert_eq!((response.cursor, response.caret), (1, 2));
         assert_eq!(response.style.as_deref(), Some("casual"));
         assert_eq!(response.commit.as_deref(), Some("前面"));
+    }
+
+    #[test]
+    fn host_errors_are_marked() {
+        let reply: Value = serde_json::from_str(&host_error(Some(&json!(7)), "engine timeout")).unwrap();
+        assert_eq!(reply["id"], 7);
+        assert_eq!(reply[HOST_ERROR], true);
+        assert_eq!(Response::from_value(&reply), None);
+        assert_eq!(pipe_name("S-1-5-21-1"), r"\\.\pipe\bopogram-S-1-5-21-1");
+    }
+
+    #[test]
+    fn names_carry_no_content() {
+        assert_eq!(Op::Key('j').name(), "key");
+        assert_eq!(Op::Key('3').name(), "tone");
+        assert_eq!(Op::Text("secret".into()).name(), "text");
+        assert_eq!(Op::Context("secret".into()).name(), "context");
     }
 
     #[test]

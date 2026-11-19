@@ -28,6 +28,9 @@ Push-Location $crates
 try {
     & cargo build --release
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+    # The 32-bit DLL, for 32-bit applications.
+    & cargo build --release -p bopogram-ime --target i686-pc-windows-msvc
+    if ($LASTEXITCODE -ne 0) { throw "cargo build (x86) failed" }
 } finally {
     Pop-Location
 }
@@ -39,6 +42,8 @@ New-Item -ItemType Directory -Force $stage, $out | Out-Null
 foreach ($file in "bopogram_ime.dll", "bopogram-host.exe", "bopogram-settings.exe") {
     Copy-Item (Join-Path $release $file) $stage -Force
 }
+New-Item -ItemType Directory -Force (Join-Path $stage "x86") | Out-Null
+Copy-Item (Join-Path $crates "target\i686-pc-windows-msvc\release\bopogram_ime.dll") (Join-Path $stage "x86") -Force
 foreach ($file in "setup.ps1", "testform.ps1", "test.html") {
     Copy-Item (Join-Path $PSScriptRoot $file) $stage -Force
 }
@@ -50,9 +55,17 @@ Remove-Item (Join-Path $out "*") -Force -ErrorAction SilentlyContinue
 $kenlm = Join-Path $stage "kenlm"
 New-Item -ItemType Directory -Force $kenlm | Out-Null
 Copy-Item (Join-Path $prototype ".venv\Lib\site-packages\kenlm*.pyd") $kenlm -Force
-foreach ($dll in "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll") {
+foreach ($dll in "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll", "vcruntime140.dll", "vcruntime140_1.dll") {
     Copy-Item (Join-Path $env:SystemRoot "System32\$dll") $kenlm -Force
 }
+# The other packages the engine imports (the character model needs NumPy
+# and ONNX Runtime), copied as installed.
+$packages = Join-Path $stage "packages"
+New-Item -ItemType Directory -Force $packages | Out-Null
+$sitePackages = Join-Path $prototype ".venv\Lib\site-packages"
+Get-ChildItem $sitePackages -Directory |
+    Where-Object { $_.Name -notmatch '^(pip|bopogram|kenlm|__pycache__)' } |
+    ForEach-Object { Copy-Item $_.FullName $packages -Recurse -Force }
 
 # The sandbox gets its own copy of the runtime bundle, so that what is typed
 # there never reaches the real personal data (userdata\user.json).

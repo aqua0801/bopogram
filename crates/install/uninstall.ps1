@@ -34,13 +34,20 @@ if ($changed) {
     Write-Output "Keyboard removed from the language list."
 }
 
-# 2. Unregister the text service.
+# 2. Unregister the text service: the 32-bit DLL first, then the 64-bit one
+#    (each removes the language profile; the second finds it already gone).
+$dll32 = Join-Path $Install "x86\bopogram_ime.dll"
+if (Test-Path $dll32) {
+    $registration = Start-Process "$env:SystemRoot\SysWOW64\regsvr32.exe" -ArgumentList "/u", "/s", "`"$dll32`"" -Wait -PassThru
+    Write-Output "regsvr32 /u (x86) exit code: $($registration.ExitCode)"
+}
 $dll = Join-Path $Install "bopogram_ime.dll"
 if (Test-Path $dll) {
     $registration = Start-Process regsvr32.exe -ArgumentList "/u", "/s", "`"$dll`"" -Wait -PassThru
     Write-Output "regsvr32 /u exit code: $($registration.ExitCode)"
 }
-foreach ($key in "HKLM:\SOFTWARE\Classes\CLSID\$clsid", "HKLM:\SOFTWARE\Microsoft\CTF\TIP\$clsid") {
+foreach ($key in "HKLM:\SOFTWARE\Classes\CLSID\$clsid", "HKLM:\SOFTWARE\WOW6432Node\Classes\CLSID\$clsid",
+        "HKLM:\SOFTWARE\Microsoft\CTF\TIP\$clsid") {
     Write-Output "$key still present: $(Test-Path $key)"
 }
 

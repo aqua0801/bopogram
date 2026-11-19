@@ -155,6 +155,9 @@ pub struct Controller<E: Engine> {
     /// A request failed, so the engine may still hold a composition that
     /// the front end has given up on. Discard it before the next request.
     stale: bool,
+    /// Names of the requests made since `take_sent` was last called (for
+    /// the timing log).
+    sent: Vec<&'static str>,
     /// Requests in a row that were sent but not answered in time. While
     /// this is not zero the engine's session is ahead of the state below.
     behind: u32,
@@ -187,6 +190,7 @@ impl<E: Engine> Controller<E> {
             prefix: false,
             stale: false,
             behind: 0,
+            sent: Vec::new(),
             learning_unsent: false,
             wanted_style: None,
             style: None,
@@ -414,6 +418,16 @@ impl<E: Engine> Controller<E> {
         }
     }
 
+    fn ask(&mut self, op: &Op) -> Result<Response, Failure> {
+        self.sent.push(op.name());
+        self.engine.request(op)
+    }
+
+    /// The requests made since the last call, e.g. `["key"]` or `["state", "tone"]`.
+    pub fn take_sent(&mut self) -> Vec<&'static str> {
+        std::mem::take(&mut self.sent)
+    }
+
     /// One request, with the bookkeeping that keeps both sides in step.
     fn exchange(&mut self, op: &Op) -> Result<Response, Failure> {
         let result = self.exchange_inner(op);
@@ -429,21 +443,21 @@ impl<E: Engine> Controller<E> {
     fn exchange_inner(&mut self, op: &Op) -> Result<Response, Failure> {
         if self.stale {
             // The first Escape only drops an unfinished syllable.
-            self.engine.request(&Op::Escape)?;
-            self.engine.request(&Op::Escape)?;
+            self.ask(&Op::Escape)?;
+            self.ask(&Op::Escape)?;
             self.stale = false;
         }
         if self.learning_unsent {
-            self.engine.request(&Op::Learning(self.enabled))?;
+            self.ask(&Op::Learning(self.enabled))?;
             self.learning_unsent = false;
         }
         if let Some(wanted) = self.wanted_style.clone().filter(|w| self.style.as_ref() != Some(w)) {
-            let response = self.engine.request(&Op::Style(wanted.clone()))?;
+            let response = self.ask(&Op::Style(wanted.clone()))?;
             self.absorb(&response);
             // An engine that does not report its style is not asked again.
             self.style.get_or_insert(wanted);
         }
-        let response = self.engine.request(op)?;
+        let response = self.ask(op)?;
         self.absorb(&response);
         Ok(response)
     }
@@ -458,7 +472,7 @@ impl<E: Engine> Controller<E> {
         if self.behind == 0 {
             return false;
         }
-        match self.engine.request(&Op::State) {
+        match self.ask(&Op::State) {
             Ok(response) => {
                 self.absorb(&response);
                 self.behind = 0;

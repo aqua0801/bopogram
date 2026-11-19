@@ -81,7 +81,7 @@ impl Popup {
             .ok()?
         };
         let content = Box::into_raw(Box::<Content>::default());
-        unsafe { SetWindowLongPtrW(window, GWLP_USERDATA, content as isize) };
+        unsafe { SetWindowLongPtrW(window, GWLP_USERDATA, content as _) };
         Some(Popup { window })
     }
 

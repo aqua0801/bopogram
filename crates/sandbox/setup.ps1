@@ -31,6 +31,8 @@ $profile = "{79EFFB1B-3CE8-41DB-9CA2-3318EC0AED82}"
 $install = "C:\Bopogram"
 New-Item -ItemType Directory -Force $install | Out-Null
 Copy-Item "C:\stage\bopogram_ime.dll", "C:\stage\bopogram-host.exe", "C:\stage\bopogram-settings.exe" $install -Force
+New-Item -ItemType Directory -Force (Join-Path $install "x86") | Out-Null
+Copy-Item "C:\stage\x86\bopogram_ime.dll" (Join-Path $install "x86") -Force
 
 # A virtual environment on top of the read-only Python, pointed at the
 # read-only engine source.
@@ -40,6 +42,9 @@ $venv = Join-Path $install "venv"
 # beside it (extension modules find their dependencies in their own folder).
 $sitePackages = Join-Path $venv "Lib\site-packages"
 Copy-Item "C:\stage\kenlm\*" $sitePackages -Force
+Copy-Item "C:\stage\packages\*" $sitePackages -Recurse -Force
+# ONNX Runtime needs the same VC++ runtime; extension modules find it in their own folder.
+Copy-Item "C:\stage\kenlm\*.dll" (Join-Path $sitePackages "onnxruntime\capi") -Force
 Set-Content -Path (Join-Path $sitePackages "bopogram.pth") -Encoding ASCII -Value "C:\bopogram-prototype"
 $python = Join-Path $venv "Scripts\python.exe"
 $config = "C:\bopogram-runtime\config.json"
@@ -58,6 +63,13 @@ $registration = Start-Process regsvr32.exe -ArgumentList "/s", (Join-Path $insta
 Log "regsvr32 exit code: $($registration.ExitCode)"
 Log "CLSID key present: $(Test-Path "HKLM:\SOFTWARE\Classes\CLSID\$clsid\InprocServer32")"
 Log "TSF profile key present: $(Test-Path "HKLM:\SOFTWARE\Microsoft\CTF\TIP\$clsid")"
+
+# 2b. The 32-bit DLL, registered by the 32-bit regsvr32 (its COM class goes
+#     to the 32-bit view of the registry).
+$registration = Start-Process "$env:SystemRoot\SysWOW64\regsvr32.exe" -ArgumentList "/s", (Join-Path $install "x86\bopogram_ime.dll") -Wait -PassThru
+Log "regsvr32 (x86) exit code: $($registration.ExitCode)"
+Log "CLSID key present (32-bit view): $(Test-Path "HKLM:\SOFTWARE\WOW6432Node\Classes\CLSID\$clsid\InprocServer32")"
+Log "TSF profile key present (32-bit view): $(Test-Path "HKLM:\SOFTWARE\WOW6432Node\Microsoft\CTF\TIP\$clsid")"
 
 # 3. Add Traditional Chinese (Taiwan) with this input method to the user's languages.
 try {
@@ -90,4 +102,6 @@ try {
 # 4. Things to type into.
 Start-Process powershell.exe -ArgumentList "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", "C:\stage\testform.ps1"
 Start-Process "C:\stage\test.html"
+# A 32-bit application.
+Start-Process "$env:SystemRoot\SysWOW64\notepad.exe"
 Log "setup finished $(Get-Date -Format s)"

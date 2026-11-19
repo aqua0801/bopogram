@@ -32,7 +32,7 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
 
-use crate::protocol::{Engine, Failure, Op, Response};
+use crate::protocol::{self, Engine, Failure, Op, Response, HOST_ERROR};
 
 /// Longest wait for one request, from the handoff notes.
 const REQUEST_TIMEOUT: Duration = Duration::from_millis(200);
@@ -318,7 +318,7 @@ impl Connection {
             let answered = value.get("id").and_then(Value::as_u64);
             if answered != Some(id) {
                 // The host gave up waiting for the engine: it is gone.
-                if value.get("host").is_some() {
+                if value.get(HOST_ERROR).is_some() {
                     return Err(Failure::Unreachable);
                 }
                 if answered.is_some_and(|late| late <= self.ignore_through) {
@@ -342,7 +342,7 @@ impl Connection {
                     Ok(response)
                 }
                 // The host's own errors mean the engine (and the session) is gone.
-                None if value.get("host").is_some() => Err(Failure::Unreachable),
+                None if value.get(HOST_ERROR).is_some() => Err(Failure::Unreachable),
                 None => Err(Failure::Rejected),
             };
         }
@@ -377,7 +377,7 @@ impl PipeEngine {
             return None;
         }
         Some(PipeEngine {
-            pipe_name: wide(&format!(r"\\.\pipe\bopogram-{sid}")),
+            pipe_name: wide(&protocol::pipe_name(&sid)),
             host_exe,
             may_launch: token.may_launch_host(),
             connection: None,

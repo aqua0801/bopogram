@@ -6,7 +6,8 @@
 ## 安裝前的條件
 
 - 64 位元 Windows，Smart App Control 為關閉（開啟時會擋下未簽章的 DLL）。
-- 已在 `crates\` 執行過 `cargo build --release`。
+- 已在 `crates\` 執行過 `cargo build --release` 與
+  `cargo build --release -p bopogram-ime --target i686-pc-windows-msvc`（32 位元版）。
 - 引擎可在本機執行：`prototype\.venv` 已建立，執行包在 `D:\bopogram-data\bopogram-runtime`。
 - 已在 Windows Sandbox 測過同一版（`crates\sandbox\prepare.ps1`）。
 
@@ -27,8 +28,8 @@ Python 或執行包不在預設位置時，加上 `-Python <python.exe>`、`-Con
 | 步驟 | 動到的地方 |
 |---|---|
 | 1. 先單獨執行引擎確認可用 | 無 |
-| 2. 複製 `bopogram_ime.dll`、`bopogram-host.exe`、`bopogram-settings.exe`，寫入 `bopogram-host.json` | `C:\Program Files\Bopogram\` |
-| 3. `regsvr32` 註冊文字服務 | `HKLM\SOFTWARE\Classes\CLSID\{B6B6D901-0BBF-4287-A302-F265DBE9A46C}`、`HKLM\SOFTWARE\Microsoft\CTF\TIP\{B6B6D901-0BBF-4287-A302-F265DBE9A46C}` |
+| 2. 複製 `bopogram_ime.dll`、`bopogram-host.exe`、`bopogram-settings.exe`，32 位元 DLL 放進 `x86\`，寫入 `bopogram-host.json` | `C:\Program Files\Bopogram\` |
+| 3. `regsvr32` 註冊文字服務（64 與 32 位元各一次） | `HKLM\SOFTWARE\Classes\CLSID\{B6B6D901-0BBF-4287-A302-F265DBE9A46C}`、其 32 位元版 `HKLM\SOFTWARE\WOW6432Node\Classes\CLSID\{…}`、`HKLM\SOFTWARE\Microsoft\CTF\TIP\{B6B6D901-0BBF-4287-A302-F265DBE9A46C}` |
 | 4. 把輸入法加進目前使用者的「中文（繁體，台灣）」鍵盤 | 目前使用者的語言清單（`Set-WinUserLanguageList`，存在 `HKCU`） |
 
 安裝在 `Program Files` 是因為 DLL 會被載入到所有程式（包含以系統管理員執行的程式），
@@ -56,7 +57,8 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 不會被刪除的東西（要清乾淨請手動刪）：
 
 - `D:\bopogram-data\bopogram-runtime\userdata\`：個人化資料 `user.json`、打字紀錄 `typing_log.jsonl`。
-- `%LOCALAPPDATA%\Bopogram\`：`host.log`（只記啟動與錯誤，不記打字內容）、`style.txt`（口語／正式）。
+- `%LOCALAPPDATA%\Bopogram\`：`host.log`（只記啟動與錯誤，不記打字內容）、`style.txt`（口語／正式）、
+  `timing.log` 與 `timing-until.txt`（計時紀錄，有開過才會有）。
 
 ## 程式與資料在哪裡
 
@@ -84,6 +86,7 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 | 選字風格：口語／正式 | `%LOCALAPPDATA%\Bopogram\style.txt` | 切換到任一程式時 |
 | 個人化學習 | 執行包 `config.json` 的 `user_model` | 套用時重新啟動引擎 |
 | 打字紀錄 | 執行包 `config.json` 的 `typing_log` | 套用時重新啟動引擎 |
+| 計時紀錄 | `%LOCALAPPDATA%\Bopogram\timing-until.txt`（到期時間） | 約 10 秒內；24 小時後自動關閉 |
 
 另有「審核打字紀錄…」（開啟 `review_log.py`）、「開啟資料夾」（`userdata\`）、「重新啟動引擎」。
 關閉個人化學習或打字紀錄不會刪除已存的資料。
@@ -101,7 +104,6 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 
 ## 已知限制
 
-- 只支援 64 位元程式；32 位元程式裡切到本輸入法會沒有作用。
 - AppContainer 程式（Windows 搜尋、開始功能表、市集 App）連不到引擎，在裡面只能打英文，請切回微軟注音。
 - 以系統管理員身分執行的程式不會自己啟動引擎；引擎已在執行時可正常使用。
 - 引擎啟動要載入模型約 1 至 2 秒，這段時間的按鍵會直接變成英文。
@@ -128,6 +130,11 @@ python D:\bopogram\prototype\tools\review_log.py D:\bopogram-data\bopogram-runti
 2. 按了哪些鍵，預期看到什麼，實際看到什麼。
 3. `%LOCALAPPDATA%\Bopogram\host.log` 最後幾行。
 4. 重開該程式後是否還會發生。
+
+**按鍵反應慢**：在設定視窗勾選「計時紀錄」，照常打字到感覺慢的情況出現，
+再把 `%LOCALAPPDATA%\Bopogram\timing.log` 交回來。每行是時間、程式名稱、請求種類與各步驟的耗時
+（`password` 檢查密碼欄位、`context` 讀上文、`engine` 等引擎、`write` 寫入文件、`popup` 候選視窗），
+不含任何打的字。24 小時後自動停止。
 
 **文字被吞、莫名送出**：開啟引擎的追蹤記錄後重現問題，再把檔案交回來。
 追蹤檔會記下**所有打的字**（密碼欄位除外），查完務必關掉並刪除檔案。

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 
 use crate::engine::Router;
 use crate::log::log;
@@ -74,14 +74,10 @@ fn read_request(reader: &mut impl BufRead) -> io::Result<Option<String>> {
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
-/// An error of the host's own. `host` tells the client that this is not
-/// the engine refusing one request: the engine cannot be reached at all.
+/// An error of the host's own: not the engine refusing one request, but
+/// the engine (or the request) not getting through at all.
 fn error(request: Option<&Map<String, Value>>, message: &str) -> String {
-    let mut reply = json!({"ok": false, "error": message, "host": true});
-    if let Some(id) = request.and_then(|r| r.get("id")) {
-        reply["id"] = id.clone();
-    }
-    reply.to_string()
+    bopogram_protocol::host_error(request.and_then(|r| r.get("id")), message)
 }
 
 /// Forward one request to the engine under this connection's session id

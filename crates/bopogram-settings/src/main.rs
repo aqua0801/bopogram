@@ -61,11 +61,12 @@ const ID_REVIEW: i32 = 110;
 const ID_FOLDER: i32 = 111;
 const ID_RESTART: i32 = 112;
 const ID_STATUS: i32 = 120;
+const ID_TIMING: i32 = 121;
 const STATUS_TIMER: usize = 1;
 
 /// Client area in pixels at 96 DPI.
 const WIDTH: i32 = 460;
-const HEIGHT: i32 = 392;
+const HEIGHT: i32 = 420;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -169,17 +170,18 @@ fn build(window: HWND, app: &App) {
     b.button("審核打字紀錄…", ID_REVIEW, 26, 180, 140);
     b.button("開啟資料夾", ID_FOLDER, 176, 180, 110);
 
-    b.group("引擎", 226, 86);
+    b.group("引擎", 226, 114);
     let bundle = app.files.config.as_deref().and_then(Path::parent);
     let bundle = bundle.map_or("找不到（bopogram-host.json）".to_owned(), |p| p.display().to_string());
     b.label(&format!("執行包：{bundle}"), -1, 26, 248, WIDTH - 52);
     b.label("", ID_STATUS, 26, 276, 270);
     b.button("重新啟動引擎", ID_RESTART, WIDTH - 26 - 126, 270, 126);
+    b.option("計時紀錄（只記耗時，24 小時後自動關閉）", BS_AUTOCHECKBOX, WS_GROUP.0, ID_TIMING, 304);
 
-    b.label("學習與紀錄的變更會在套用時重新啟動引擎。", -1, 14, 322, WIDTH - 28);
-    b.button("確定", ID_OK, WIDTH - 12 - 80 * 3 - 16, 352, 80);
-    b.button("取消", ID_CANCEL, WIDTH - 12 - 80 * 2 - 8, 352, 80);
-    b.button("套用", ID_APPLY, WIDTH - 12 - 80, 352, 80);
+    b.label("學習與紀錄的變更會在套用時重新啟動引擎。", -1, 14, 350, WIDTH - 28);
+    b.button("確定", ID_OK, WIDTH - 12 - 80 * 3 - 16, 380, 80);
+    b.button("取消", ID_CANCEL, WIDTH - 12 - 80 * 2 - 8, 380, 80);
+    b.button("套用", ID_APPLY, WIDTH - 12 - 80, 380, 80);
 }
 
 fn item(window: HWND, id: i32) -> Option<HWND> {
@@ -202,6 +204,7 @@ fn show(window: HWND, settings: &Settings) {
     set_checked(window, ID_FORMAL, settings.formal);
     set_checked(window, ID_LEARNING, settings.learning);
     set_checked(window, ID_TYPING_LOG, settings.typing_log);
+    set_checked(window, ID_TIMING, settings.timing);
 }
 
 fn read(window: HWND) -> Settings {
@@ -209,6 +212,7 @@ fn read(window: HWND) -> Settings {
         formal: checked(window, ID_FORMAL),
         learning: checked(window, ID_LEARNING),
         typing_log: checked(window, ID_TYPING_LOG),
+        timing: checked(window, ID_TIMING),
     }
 }
 

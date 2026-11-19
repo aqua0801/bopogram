@@ -59,9 +59,7 @@ pub fn user_sid() -> io::Result<String> {
     }
 }
 
-pub fn pipe_name(sid: &str) -> String {
-    format!(r"\\.\pipe\bopogram-{sid}")
-}
+pub use bopogram_protocol::pipe_name;
 
 /// Take the per-user single-instance mutex. `None` means another host
 /// already holds it. The handle is kept for the life of the process.

@@ -1,0 +1,9 @@
+[package]
+name = "bopogram-protocol"
+description = "What the input method and the engine host agree on: the request and response lines, and the pipe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde_json.workspace = true

@@ -38,7 +38,7 @@ use crate::dll::{host_path, settings_path, GUID_DISPLAY_ATTRIBUTE};
 use crate::langbar::ModeButton;
 use crate::pipe::PipeEngine;
 use crate::popup::Popup;
-use crate::{edit, guard, settings, wide};
+use crate::{edit, guard, settings, timing, wide};
 
 /// Edit control style: the control shows dots instead of the text.
 const ES_PASSWORD: i32 = 0x0020;
@@ -136,6 +136,27 @@ pub(crate) fn open_settings() {
     if let Some(exe) = settings_path().filter(|exe| exe.exists() && crate::pipe::may_launch()) {
         crate::pipe::spawn(&exe);
     }
+}
+
+/// The request names joined for the timing log, e.g. "state+tone". The few
+/// combinations that occur are kept for the life of the process.
+fn leak_join(names: &[&'static str]) -> &'static str {
+    if let [one] = names {
+        return one;
+    }
+    thread_local! {
+        static JOINED: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
+    }
+    let joined = names.join("+");
+    JOINED.with(|known| {
+        let mut known = known.borrow_mut();
+        if let Some(found) = known.iter().find(|k| **k == joined) {
+            return *found;
+        }
+        let leaked: &'static str = Box::leak(joined.into_boxed_str());
+        known.push(leaked);
+        leaked
+    })
 }
 
 fn with<R>(state: &Shared, f: impl FnOnce(&mut State) -> R) -> Option<R> {
@@ -306,6 +327,15 @@ impl TextService_Impl {
     /// Write the controller's composition (and any committed text) to the
     /// document, then update the candidate window.
     fn update(&self, context: &ITfContext, commit: Option<String>) {
+        self.update_timed(context, commit, None);
+    }
+
+    fn update_timed(
+        &self,
+        context: &ITfContext,
+        commit: Option<String>,
+        mut timing: Option<&mut timing::Key>,
+    ) {
         let Some((client, preedit, caret, unchanged)) = with(&self.state, |s| {
             let controller = s.controller.as_ref()?;
             let preedit = controller.preedit().to_owned();
@@ -325,8 +355,14 @@ impl TextService_Impl {
             edit::run(context, client, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE, move |cookie| {
                 write(&state, &document, cookie, Some(&sink), commit.as_deref(), &preedit, caret)
             });
+            if let Some(timing) = timing.as_deref_mut() {
+                timing.step("write");
+            }
         }
         self.refresh_popup();
+        if let Some(timing) = timing {
+            timing.step("popup");
+        }
     }
 
     fn refresh_popup(&self) {
@@ -351,8 +387,16 @@ impl TextService_Impl {
     }
 
     fn key_down(&self, context: &ITfContext, wparam: WPARAM) -> bool {
+        let mut timing = timing::Key::start("down");
+        let eaten = self.key_down_timed(context, wparam, &mut timing);
+        timing.finish();
+        eaten
+    }
+
+    fn key_down_timed(&self, context: &ITfContext, wparam: WPARAM, timing: &mut timing::Key) -> bool {
         let key = key_from(wparam);
         self.refresh_enabled(context);
+        timing.step("password");
         let Some((starts, client)) = with(&self.state, |s| {
             Some((s.controller.as_ref()?.starts_composition(key), s.client))
         })
@@ -364,13 +408,22 @@ impl TextService_Impl {
             if let Some(text) = edit::text_before_caret(context, client) {
                 with_controller(&self.state, |c| c.set_context(&text));
             }
+            timing.step("context");
         }
-        let Some((outcome, formal)) =
-            with_controller(&self.state, |c| (c.key_down(key), c.style() == FORMAL))
-        else {
+        let Some((outcome, formal, sent)) = with_controller(&self.state, |c| {
+            c.take_sent(); // the context request is timed above
+            let outcome = c.key_down(key);
+            (outcome, c.style() == FORMAL, c.take_sent())
+        }) else {
             return false;
         };
-        self.update(context, outcome.commit);
+        if sent.is_empty() {
+            timing.step("local");
+        } else {
+            timing.request(Some(leak_join(&sent)));
+            timing.step("engine");
+        }
+        self.update_timed(context, outcome.commit, Some(timing));
         if outcome.style_changed {
             // Remembered for the other applications and for the next session.
             settings::save_style(if formal { FORMAL } else { CASUAL });
@@ -509,13 +562,20 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             let Some(context) = context.as_ref() else {
                 return Ok(false.into());
             };
+            let mut timing = timing::Key::start("test");
             let key = key_from(wparam);
             self.refresh_enabled(context);
+            timing.step("password");
             let eaten = with_controller(&self.state, |c| {
                 c.note_key_down(key);
                 c.test_key(key)
             });
-            Ok(eaten.unwrap_or(false).into())
+            let eaten = eaten.unwrap_or(false);
+            // Keys the input method leaves alone are not worth a line.
+            if eaten {
+                timing.finish();
+            }
+            Ok(eaten.into())
         })
     }
 

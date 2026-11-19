@@ -51,13 +51,21 @@ pub fn module_path() -> Option<PathBuf> {
     (len > 0 && len < buf.len()).then(|| PathBuf::from(String::from_utf16_lossy(&buf[..len])))
 }
 
-/// The settings window, a program of its own in the same folder.
+/// The folder of the programs that come with the input method. The 32-bit
+/// DLL sits in an `x86` folder below it; there is only one (64-bit) host.
+fn install_folder() -> Option<PathBuf> {
+    let dll = module_path()?;
+    let folder = dll.parent()?;
+    Some(if cfg!(target_pointer_width = "32") { folder.parent()? } else { folder }.to_path_buf())
+}
+
+/// The settings window, a program of its own.
 pub fn settings_path() -> Option<PathBuf> {
-    Some(module_path()?.with_file_name("bopogram-settings.exe"))
+    Some(install_folder()?.join("bopogram-settings.exe"))
 }
 
 pub fn host_path() -> Option<PathBuf> {
-    Some(module_path()?.with_file_name(HOST_EXE))
+    Some(install_folder()?.join(HOST_EXE))
 }
 
 #[implement(IClassFactory)]

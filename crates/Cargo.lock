@@ -6,6 +6,7 @@ version = 4
 name = "bopogram-host"
 version = "0.0.0"
 dependencies = [
+ "bopogram-protocol",
  "serde_json",
  "windows",
 ]
@@ -14,9 +15,17 @@ dependencies = [
 name = "bopogram-ime"
 version = "0.0.0"
 dependencies = [
+ "bopogram-protocol",
  "serde_json",
  "windows",
  "windows-core",
+]
+
+[[package]]
+name = "bopogram-protocol"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

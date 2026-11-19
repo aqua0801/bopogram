@@ -6,7 +6,8 @@
 //! comes back. No models, no heavy work, no networking.
 //!
 //! Logic, testable without registering anything:
-//! - `protocol`: the line-based JSON requests and responses.
+//! - `protocol`: the line-based JSON requests and responses (the
+//!   `bopogram-protocol` crate, shared with the host).
 //! - `controller`: which key does what. No Windows calls.
 //! - `pipe`: the named pipe client, with timeouts.
 //!
@@ -19,10 +20,11 @@
 //! - `popup`: the candidate window.
 //! - `langbar`: the mode button in the taskbar's input indicator, and its menu.
 //! - `settings`: the style file shared by all applications.
+//! - `timing`: the optional timing log (durations only, never text).
 
 pub mod controller;
 pub mod pipe;
-pub mod protocol;
+pub use bopogram_protocol as protocol;
 
 mod display;
 mod dll;
@@ -32,6 +34,7 @@ mod popup;
 mod register;
 mod service;
 mod settings;
+mod timing;
 
 pub use dll::{CLSID_TEXT_SERVICE, GUID_DISPLAY_ATTRIBUTE};
 

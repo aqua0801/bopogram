@@ -5,10 +5,10 @@
 #
 # What it changes:
 #   - copies bopogram_ime.dll, bopogram-host.exe and bopogram-settings.exe
-#     to $Install and writes
+#     to $Install, the 32-bit bopogram_ime.dll to $Install\x86, and writes
 #     bopogram-host.json there
-#   - regsvr32: HKLM\SOFTWARE\Classes\CLSID\{B6B6D901-...} and
-#     HKLM\SOFTWARE\Microsoft\CTF\TIP\{B6B6D901-...}
+#   - regsvr32 (64- and 32-bit): HKLM\SOFTWARE\Classes\CLSID\{B6B6D901-...},
+#     its 32-bit view under WOW6432Node, and HKLM\SOFTWARE\Microsoft\CTF\TIP\{B6B6D901-...}
 #   - adds the input method to the current user's Traditional Chinese
 #     (Taiwan) keyboards (skip with -NoKeyboard)
 # uninstall.ps1 reverses all of it.
@@ -39,9 +39,13 @@ $release = Join-Path (Split-Path -Parent $PSScriptRoot) "target\release"
 $dll = Join-Path $release "bopogram_ime.dll"
 $hostExe = Join-Path $release "bopogram-host.exe"
 $settingsExe = Join-Path $release "bopogram-settings.exe"
+$dll32 = Join-Path (Split-Path -Parent $PSScriptRoot) "target\i686-pc-windows-msvc\release\bopogram_ime.dll"
 $reviewTool = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "prototype\tools\review_log.py"
 foreach ($path in $Python, $Config, $dll, $hostExe, $settingsExe) {
     if (-not (Test-Path $path)) { throw "missing: $path (build with 'cargo build --release' in crates\)" }
+}
+if (-not (Test-Path $dll32)) {
+    throw "missing: $dll32 (build with 'cargo build --release -p bopogram-ime --target i686-pc-windows-msvc' in crates\)"
 }
 
 # 1. The engine must work before anything is registered.
@@ -52,11 +56,13 @@ Write-Output "Engine check passed."
 # 2. Files. A DLL that applications have loaded cannot be overwritten, but it
 #    can be renamed; the old copy is removed by a later install or uninstall.
 Get-Process bopogram-host, bopogram-settings -ErrorAction SilentlyContinue | Stop-Process -Force
-New-Item -ItemType Directory -Force $Install | Out-Null
-Get-ChildItem $Install -Filter "*.old-*" | Remove-Item -Force -ErrorAction SilentlyContinue
+$install32 = Join-Path $Install "x86"
+New-Item -ItemType Directory -Force $Install, $install32 | Out-Null
+Get-ChildItem $Install, $install32 -Filter "*.old-*" | Remove-Item -Force -ErrorAction SilentlyContinue
 $stamp = Get-Date -Format "yyyyMMddHHmmss"
-foreach ($file in $dll, $hostExe, $settingsExe) {
-    $target = Join-Path $Install (Split-Path -Leaf $file)
+foreach ($pair in @($dll, $Install), @($hostExe, $Install), @($settingsExe, $Install), @($dll32, $install32)) {
+    $file, $folder = $pair
+    $target = Join-Path $folder (Split-Path -Leaf $file)
     if (Test-Path $target) {
         try { Remove-Item $target -Force }
         catch { Rename-Item $target "$(Split-Path -Leaf $file).old-$stamp" }
@@ -72,7 +78,9 @@ if ($Trace) { Write-Output "TRACE IS ON: everything typed is written to $Trace. 
 # 3. Register the text service.
 $registration = Start-Process regsvr32.exe -ArgumentList "/s", "`"$(Join-Path $Install 'bopogram_ime.dll')`"" -Wait -PassThru
 if ($registration.ExitCode -ne 0) { throw "regsvr32 failed with exit code $($registration.ExitCode)" }
-Write-Output "Text service registered."
+$registration = Start-Process "$env:SystemRoot\SysWOW64\regsvr32.exe" -ArgumentList "/s", "`"$(Join-Path $install32 'bopogram_ime.dll')`"" -Wait -PassThru
+if ($registration.ExitCode -ne 0) { throw "regsvr32 (x86) failed with exit code $($registration.ExitCode)" }
+Write-Output "Text service registered (64- and 32-bit)."
 
 # 4. Add it to the user's Traditional Chinese (Taiwan) keyboards.
 if (-not $NoKeyboard) {
