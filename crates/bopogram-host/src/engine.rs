@@ -4,6 +4,10 @@
 //! The engine speaks one JSON object per line on stdin/stdout. Every request
 //! forwarded to it carries the `sid` of the connection it came from; the
 //! engine echoes `sid` back, which is how a response finds its connection.
+//!
+//! The pipe is served from the start; the engine loads in the background
+//! (several seconds) and requests that arrive meanwhile are answered with
+//! "starting", which the input method keeps and sends again.
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Write};
@@ -32,7 +36,7 @@ pub struct EngineConfig {
 }
 
 pub struct Router {
-    /// `None` while the engine is down or restarting.
+    /// `None` while the engine is loading or restarting.
     stdin: Mutex<Option<ChildStdin>>,
     connections: Mutex<HashMap<u64, Sender<String>>>,
     next_sid: AtomicU64,
@@ -53,7 +57,8 @@ impl Router {
         self.send(&format!("{{\"op\":\"close\",\"sid\":{sid}}}"));
     }
 
-    /// Send one request line to the engine. False if the engine is down.
+    /// Send one request line to the engine. False if the engine is not
+    /// running (loading, or restarting after it stopped).
     pub fn send(&self, line: &str) -> bool {
         let mut guard = self.stdin.lock().unwrap();
         let Some(stdin) = guard.as_mut() else {
@@ -141,13 +146,12 @@ fn spawn(cfg: &EngineConfig) -> io::Result<Engine> {
     }
 }
 
-/// Start the engine and the thread that reads its responses. Returns once
-/// the engine is ready. If the engine later exits it is restarted once;
-/// a second exit ends the host.
-pub fn start(cfg: EngineConfig) -> io::Result<Arc<Router>> {
-    let mut engine = spawn(&cfg)?;
+/// Start the engine in the background and return at once. If the engine
+/// stops it is restarted once; failing to start, or stopping again, ends
+/// the host (the input method then lets keys through until it starts a new one).
+pub fn start(cfg: EngineConfig) -> Arc<Router> {
     let router = Arc::new(Router {
-        stdin: Mutex::new(Some(engine.stdin)),
+        stdin: Mutex::new(None),
         connections: Mutex::new(HashMap::new()),
         next_sid: AtomicU64::new(1),
     });
@@ -155,13 +159,23 @@ pub fn start(cfg: EngineConfig) -> io::Result<Arc<Router>> {
     thread::spawn(move || {
         let mut restarted = false;
         loop {
-            while let Some(line) = read_line(&mut engine.stdout) {
+            let engine = match spawn(&cfg) {
+                Ok(engine) => engine,
+                Err(err) => {
+                    log!("engine did not start: {err}; host is stopping");
+                    std::process::exit(1);
+                }
+            };
+            log!("{}", if restarted { "engine restarted" } else { "engine ready" });
+            let Engine { mut child, stdin, mut stdout } = engine;
+            *shared.stdin.lock().unwrap() = Some(stdin);
+            while let Some(line) = read_line(&mut stdout) {
                 if !line.is_empty() {
                     shared.dispatch(&line);
                 }
             }
             *shared.stdin.lock().unwrap() = None;
-            match engine.child.wait() {
+            match child.wait() {
                 Ok(status) => log!("engine exited ({status})"),
                 Err(err) => log!("engine exited (wait failed: {err})"),
             }
@@ -170,19 +184,7 @@ pub fn start(cfg: EngineConfig) -> io::Result<Arc<Router>> {
                 std::process::exit(1);
             }
             restarted = true;
-            match spawn(&cfg) {
-                Ok(fresh) => {
-                    log!("engine restarted");
-                    *shared.stdin.lock().unwrap() = Some(fresh.stdin);
-                    engine.child = fresh.child;
-                    engine.stdout = fresh.stdout;
-                }
-                Err(err) => {
-                    log!("engine restart failed: {err}; host is stopping");
-                    std::process::exit(1);
-                }
-            }
         }
     });
-    Ok(router)
+    router
 }

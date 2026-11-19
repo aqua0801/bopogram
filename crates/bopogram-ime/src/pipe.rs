@@ -32,7 +32,7 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
 
-use crate::protocol::{self, Engine, Failure, Op, Response, HOST_ERROR};
+use crate::protocol::{self, Engine, Failure, Op, Response, HOST_ERROR, STARTING};
 
 /// Longest wait for one request, from the handoff notes.
 const REQUEST_TIMEOUT: Duration = Duration::from_millis(200);
@@ -40,6 +40,9 @@ const REQUEST_TIMEOUT: Duration = Duration::from_millis(200);
 const BUSY_WAIT_MS: u32 = 50;
 /// Do not start the host more often than this.
 const LAUNCH_INTERVAL: Duration = Duration::from_secs(5);
+/// After starting the host, how long its absence counts as "starting"
+/// (keys are kept) rather than "unreachable" (keys go to the application).
+const STARTING_WINDOW: Duration = Duration::from_secs(20);
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -191,7 +194,9 @@ impl Drop for Connection {
 }
 
 impl Connection {
-    fn open(name: &[u16], host_exe: Option<&Path>) -> Option<Self> {
+    /// `unverifiable_ok`: accept a server whose program cannot be looked up.
+    /// Only for app containers, which may not query other processes.
+    fn open(name: &[u16], host_exe: Option<&Path>, unverifiable_ok: bool) -> Option<Self> {
         let open = || unsafe {
             CreateFileW(
                 PCWSTR(name.as_ptr()),
@@ -229,8 +234,14 @@ impl Connection {
         if let Some(expected) = host_exe {
             let mut pid = 0u32;
             unsafe { GetNamedPipeServerProcessId(pipe, &mut pid).ok()? };
-            if !same_path(&process_image(pid)?, expected) {
-                return None;
+            match process_image(pid) {
+                Some(image) if !same_path(&image, expected) => return None,
+                Some(_) => {}
+                // The pipe's name can only be taken once, and the host
+                // takes it at sign-in; the host also treats container
+                // clients as restricted.
+                None if unverifiable_ok => {}
+                None => return None,
             }
         }
         Some(connection)
@@ -342,6 +353,7 @@ impl Connection {
                     Ok(response)
                 }
                 // The host's own errors mean the engine (and the session) is gone.
+                None if value.get(STARTING).is_some() => Err(Failure::Starting),
                 None if value.get(HOST_ERROR).is_some() => Err(Failure::Unreachable),
                 None => Err(Failure::Rejected),
             };
@@ -362,9 +374,14 @@ pub struct PipeEngine {
     host_exe: Option<PathBuf>,
     /// False in processes that must not start the host (see Token::may_launch_host).
     may_launch: bool,
+    /// This process is an app container (see `Connection::open`).
+    in_container: bool,
     connection: Option<Connection>,
     next_id: u64,
     last_launch: Option<Instant>,
+    /// The first launch since the host was last reached: the host counts
+    /// as starting for a while after it.
+    starting_since: Option<Instant>,
 }
 
 impl PipeEngine {
@@ -380,9 +397,11 @@ impl PipeEngine {
             pipe_name: wide(&protocol::pipe_name(&sid)),
             host_exe,
             may_launch: token.may_launch_host(),
+            in_container: token.dword(TokenIsAppContainer).is_some_and(|value| value != 0),
             connection: None,
             next_id: 1,
             last_launch: None,
+            starting_since: None,
         })
     }
 
@@ -391,9 +410,12 @@ impl PipeEngine {
     /// activated) so the host is ready by the first key.
     pub fn connect(&mut self) -> bool {
         if self.connection.is_none() {
-            self.connection = Connection::open(&self.pipe_name, self.host_exe.as_deref());
+            self.connection =
+                Connection::open(&self.pipe_name, self.host_exe.as_deref(), self.in_container);
             if self.connection.is_none() {
                 self.launch_host();
+            } else {
+                self.starting_since = None;
             }
         }
         self.connection.is_some()
@@ -407,6 +429,7 @@ impl PipeEngine {
             return;
         }
         self.last_launch = Some(Instant::now());
+        self.starting_since.get_or_insert_with(Instant::now);
         spawn(exe);
     }
 }
@@ -414,7 +437,9 @@ impl PipeEngine {
 impl Engine for PipeEngine {
     fn request(&mut self, op: &Op) -> Result<Response, Failure> {
         if !self.connect() {
-            return Err(Failure::Unreachable);
+            // A host we just started is not listening yet.
+            let starting = self.starting_since.is_some_and(|at| at.elapsed() < STARTING_WINDOW);
+            return Err(if starting { Failure::Starting } else { Failure::Unreachable });
         }
         let id = self.next_id;
         self.next_id += 1;

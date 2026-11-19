@@ -83,14 +83,80 @@ pub struct PipeListener {
     next: HANDLE,
 }
 
+/// Is the process at the other end of this pipe connection restricted:
+/// an app container, or below medium integrity (a sandboxed process)? Such
+/// clients may type, but nothing they type is learned or logged. When it
+/// cannot be determined, the answer is yes.
+pub fn client_restricted(pipe: &File) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Security::{
+        GetSidSubAuthority, GetSidSubAuthorityCount, TokenIntegrityLevel, TokenIsAppContainer,
+        TOKEN_MANDATORY_LABEL,
+    };
+    use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    /// SECURITY_MANDATORY_MEDIUM_RID
+    const MEDIUM: u32 = 0x2000;
+
+    unsafe {
+        let mut pid = 0u32;
+        if GetNamedPipeClientProcessId(HANDLE(pipe.as_raw_handle()), &mut pid).is_err() {
+            return true;
+        }
+        let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return true;
+        };
+        let mut token = HANDLE::default();
+        let opened = OpenProcessToken(process, TOKEN_QUERY, &mut token);
+        let _ = CloseHandle(process);
+        if opened.is_err() {
+            return true;
+        }
+        let mut container = 0u32;
+        let mut len = 0u32;
+        let is_container = GetTokenInformation(
+            token,
+            TokenIsAppContainer,
+            Some(&mut container as *mut u32 as *mut c_void),
+            4,
+            &mut len,
+        )
+        .map_or(true, |_| container != 0);
+        let _ = GetTokenInformation(token, TokenIntegrityLevel, None, 0, &mut len);
+        let mut buf = vec![0u64; (len as usize).div_ceil(8).max(1)];
+        let low = GetTokenInformation(
+            token,
+            TokenIntegrityLevel,
+            Some(buf.as_mut_ptr() as *mut c_void),
+            len,
+            &mut len,
+        )
+        .map_or(true, |_| {
+            let label = &*(buf.as_ptr() as *const TOKEN_MANDATORY_LABEL);
+            let sid = label.Label.Sid;
+            let count = *GetSidSubAuthorityCount(sid);
+            count == 0 || *GetSidSubAuthority(sid, count as u32 - 1) < MEDIUM
+        });
+        let _ = CloseHandle(token);
+        is_container || low
+    }
+}
+
 // The descriptor is immutable after creation and the handle is only used
 // from the accepting thread.
 unsafe impl Send for PipeListener {}
 
 impl PipeListener {
     pub fn bind(sid: &str) -> io::Result<Self> {
-        // Protected DACL: full access for SYSTEM and for this user, nobody else.
-        let sddl = wide(&format!("D:P(A;;GA;;;SY)(A;;GA;;;{sid})"));
+        // Protected DACL: full access for SYSTEM and for this user; read and
+        // write for app containers (Store apps, the Start menu search), whose
+        // input methods run inside them, both kinds (AC and the "less
+        // privileged" S-1-15-2-2). The low integrity label lets them write;
+        // the DACL still admits only this user's processes and containers.
+        // The server treats such clients as restricted (see server.rs).
+        let sddl = wide(&format!(
+            "D:P(A;;GA;;;SY)(A;;GA;;;{sid})(A;;GRGW;;;AC)(A;;GRGW;;;S-1-15-2-2)S:(ML;;NW;;;LW)"
+        ));
         let mut security = PSECURITY_DESCRIPTOR::default();
         unsafe {
             ConvertStringSecurityDescriptorToSecurityDescriptorW(

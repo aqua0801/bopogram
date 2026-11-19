@@ -73,6 +73,86 @@ pub(crate) struct State {
     sink: Option<ITfCompositionSink>,
     /// The candidate list announced to TSF while the window is open.
     candidate_ui: Option<CandidateUi>,
+    /// What we committed lately, per document (most recent last), for
+    /// documents whose text cannot be read: the engine gets it as context.
+    recent: Vec<(usize, String)>,
+}
+
+/// Documents remembered in `State::recent`, and characters kept for each.
+const RECENT_DOCUMENTS: usize = 8;
+const RECENT_CHARS: usize = 40;
+
+/// Identifies a document while it exists.
+fn document_key(context: &ITfContext) -> usize {
+    unsafe { context.GetDocumentMgr() }.map_or(0, |document| document.as_raw() as usize)
+}
+
+fn remember_commit(state: &Shared, context: &ITfContext, text: &str) {
+    let key = document_key(context);
+    with(state, |s| {
+        let mut kept = s
+            .recent
+            .iter()
+            .position(|(k, _)| *k == key)
+            .map(|i| s.recent.remove(i).1)
+            .unwrap_or_default();
+        kept.push_str(text);
+        let skip = kept.chars().count().saturating_sub(RECENT_CHARS);
+        let kept: String = kept.chars().skip(skip).collect();
+        s.recent.push((key, kept));
+        if s.recent.len() > RECENT_DOCUMENTS {
+            s.recent.remove(0);
+        }
+    });
+}
+
+fn recent_text(state: &Shared, context: &ITfContext) -> String {
+    let key = document_key(context);
+    with(state, |s| s.recent.iter().find(|(k, _)| *k == key).map(|(_, t)| t.clone()))
+        .flatten()
+        .unwrap_or_default()
+}
+
+thread_local! {
+    /// Text services with keys waiting for a starting engine.
+    static RETRY: RefCell<Vec<std::rc::Weak<RefCell<State>>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// How often kept keys are offered to a starting engine.
+const RETRY_MS: u32 = 250;
+
+/// Offer the kept keys again shortly, if there are any.
+fn retry_later(state: &Shared) {
+    if !with_controller(state, |c| c.waiting()).unwrap_or(false) {
+        return;
+    }
+    let first = RETRY.with(|retry| {
+        let mut retry = retry.borrow_mut();
+        let first = retry.is_empty();
+        if !retry.iter().any(|w| w.ptr_eq(&Rc::downgrade(state))) {
+            retry.push(Rc::downgrade(state));
+        }
+        first
+    });
+    if first {
+        unsafe {
+            SetTimer(None, 0, RETRY_MS, Some(retry_timer));
+        }
+    }
+}
+
+unsafe extern "system" fn retry_timer(_window: HWND, _message: u32, id: usize, _time: u32) {
+    guard((), || unsafe {
+        let _ = KillTimer(None, id);
+        let waiting: Vec<_> = RETRY.with(|retry| retry.borrow_mut().drain(..).collect());
+        for state in waiting.iter().filter_map(std::rc::Weak::upgrade) {
+            let Some(commit) = with_controller(&state, |c| c.flush()) else { continue };
+            if let Some(context) = document_context(&state) {
+                refresh(&state, &context, commit, None);
+            }
+            retry_later(&state);
+        }
+    })
 }
 
 struct CandidateUi {
@@ -368,6 +448,9 @@ fn refresh(
     .flatten() else {
         return;
     };
+    if let Some(text) = &commit {
+        remember_commit(state, context, text);
+    }
     if !unchanged {
         let shared = Rc::clone(state);
         let document = context.clone();
@@ -619,9 +702,11 @@ impl TextService_Impl {
         };
         if starts {
             // Not readable in every application; the engine copes without.
-            if let Some(text) = edit::text_before_caret(context, client) {
-                with_controller(&self.state, |c| c.set_context(&text));
-            }
+            // Not readable in every application: then what we committed
+            // in this document lately, and nothing in a new one.
+            let text = edit::text_before_caret(context, client)
+                .unwrap_or_else(|| recent_text(&self.state, context));
+            with_controller(&self.state, |c| c.set_context(&text));
             timing.step("context");
         }
         let Some((outcome, formal, sent)) = with_controller(&self.state, |c| {
@@ -638,6 +723,7 @@ impl TextService_Impl {
             timing.step("engine");
         }
         refresh(&self.state, context, outcome.commit, Some(timing));
+        retry_later(&self.state);
         if outcome.style_changed {
             // Remembered for the other applications and for the next session.
             settings::save_style(if formal { FORMAL } else { CASUAL });

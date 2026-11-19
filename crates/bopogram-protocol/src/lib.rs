@@ -17,6 +17,20 @@ pub fn pipe_name(sid: &str) -> String {
 /// engine: the engine cannot be reached, so the session is gone.
 pub const HOST_ERROR: &str = "host";
 
+/// Field present (true), besides `HOST_ERROR`, while the engine is still
+/// loading: the request was not handled, but it will be once the engine is
+/// ready, so the client should keep it and send it again.
+pub const STARTING: &str = "starting";
+
+/// The host's answer while the engine is loading.
+pub fn host_starting(id: Option<&Value>) -> String {
+    let mut reply = json!({"ok": false, "error": "engine starting", HOST_ERROR: true, STARTING: true});
+    if let Some(id) = id {
+        reply["id"] = id.clone();
+    }
+    reply.to_string()
+}
+
 /// A reply of the host's own, answering the request with this `id` (if any).
 pub fn host_error(id: Option<&Value>, message: &str) -> String {
     let mut reply = json!({"ok": false, "error": message, HOST_ERROR: true});
@@ -181,6 +195,9 @@ pub enum Failure {
     /// The engine answered that it could not do this (an internal error).
     /// The session is alive and the composition is as it was.
     Rejected,
+    /// The engine is loading (or the host was just started). The request
+    /// was not handled; send it again later.
+    Starting,
 }
 
 /// Something that answers requests. A request never blocks for long, and
@@ -244,6 +261,14 @@ mod tests {
         assert_eq!(reply[HOST_ERROR], true);
         assert_eq!(Response::from_value(&reply), None);
         assert_eq!(pipe_name("S-1-5-21-1"), r"\\.\pipe\bopogram-S-1-5-21-1");
+    }
+
+    #[test]
+    fn starting_is_marked() {
+        let reply: Value = serde_json::from_str(&host_starting(Some(&json!(3)))).unwrap();
+        assert_eq!(reply["id"], 3);
+        assert_eq!(reply[STARTING], true);
+        assert_eq!(reply[HOST_ERROR], true);
     }
 
     #[test]

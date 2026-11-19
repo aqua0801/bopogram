@@ -5,13 +5,14 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use bopogram_protocol::{host_error, host_starting};
 use serde_json::{Map, Value};
 
 use crate::engine::Router;
 use crate::log::log;
-use crate::win::PipeListener;
+use crate::win::{self, PipeListener};
 
 /// Longest request line accepted from a client.
 const MAX_LINE_BYTES: usize = 64 * 1024;
@@ -39,15 +40,32 @@ pub fn run(mut listener: PipeListener, router: Arc<Router>) -> ! {
     }
 }
 
+/// One client connection.
+struct Connection<'a> {
+    router: &'a Router,
+    sid: u64,
+    responses: Receiver<String>,
+    /// An app container or a sandboxed process: learning stays off.
+    restricted: bool,
+    /// The engine session has been told that learning is off.
+    learning_off_sent: bool,
+}
+
 fn serve(pipe: File, router: &Router) {
     let (sid, responses) = router.register();
+    let restricted = win::client_restricted(&pipe);
+    if restricted {
+        log!("restricted client (app container or low integrity): learning off");
+    }
+    let mut connection =
+        Connection { router, sid, responses, restricted, learning_off_sent: false };
     let mut reader = BufReader::new(&pipe);
     while let Ok(Some(line)) = read_request(&mut reader) {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
-        let mut reply = handle(router, sid, &responses, line);
+        let mut reply = connection.handle(line);
         reply.push('\n');
         if (&pipe).write_all(reply.as_bytes()).is_err() {
             break;
@@ -77,30 +95,64 @@ fn read_request(reader: &mut impl BufRead) -> io::Result<Option<String>> {
 /// An error of the host's own: not the engine refusing one request, but
 /// the engine (or the request) not getting through at all.
 fn error(request: Option<&Map<String, Value>>, message: &str) -> String {
-    bopogram_protocol::host_error(request.and_then(|r| r.get("id")), message)
+    host_error(request.and_then(|r| r.get("id")), message)
 }
 
-/// Forward one request to the engine under this connection's session id
-/// and wait for the matching response.
-fn handle(router: &Router, sid: u64, responses: &Receiver<String>, line: &str) -> String {
-    let Ok(Value::Object(mut request)) = serde_json::from_str::<Value>(line) else {
-        return error(None, "request is not a JSON object");
-    };
-    // `quit` would stop the engine for every connection.
-    if request.get("op").and_then(Value::as_str) == Some("quit") {
-        return error(Some(&request), "quit is not allowed");
+impl Connection<'_> {
+    /// Forward one request to the engine under this connection's session id
+    /// and wait for the matching response.
+    fn handle(&mut self, line: &str) -> String {
+        let Ok(Value::Object(mut request)) = serde_json::from_str::<Value>(line) else {
+            return error(None, "request is not a JSON object");
+        };
+        // `quit` would stop the engine for every connection.
+        if request.get("op").and_then(Value::as_str) == Some("quit") {
+            return error(Some(&request), "quit is not allowed");
+        }
+        if self.restricted {
+            // Whatever the client asks, nothing it types is learned.
+            if request.get("op").and_then(Value::as_str) == Some("learning") {
+                request.insert("enabled".into(), false.into());
+            }
+            if !self.learning_off_sent {
+                let off = serde_json::json!({"op": "learning", "enabled": false, "id": "host"});
+                if self.forward(off.as_object().cloned().unwrap_or_default()).is_none() {
+                    return host_starting(request.get("id"));
+                }
+                self.learning_off_sent = true;
+            }
+        }
+        let id = request.get("id").cloned();
+        self.forward(request).unwrap_or_else(|| host_starting(id.as_ref()))
     }
-    // Whatever the client put in `sid` is replaced: a connection can only
-    // ever reach its own session.
-    request.insert("sid".into(), sid.into());
-    // Responses that arrived after an earlier timeout are stale.
-    while responses.try_recv().is_ok() {}
-    let forwarded = Value::Object(request);
-    if !router.send(&forwarded.to_string()) {
-        return error(forwarded.as_object(), "engine unavailable");
-    }
-    match responses.recv_timeout(ENGINE_TIMEOUT) {
-        Ok(reply) => reply,
-        Err(_) => error(forwarded.as_object(), "engine timeout"),
+
+    /// Send a request and wait for the response with the same `id`. `None`
+    /// if the engine is not running (loading or restarting).
+    fn forward(&self, mut request: Map<String, Value>) -> Option<String> {
+        // Whatever the client put in `sid` is replaced: a connection can
+        // only ever reach its own session.
+        request.insert("sid".into(), self.sid.into());
+        // Responses that arrived after an earlier timeout are stale.
+        while self.responses.try_recv().is_ok() {}
+        let id = request.get("id").cloned();
+        let forwarded = Value::Object(request);
+        if !self.router.send(&forwarded.to_string()) {
+            return None;
+        }
+        let deadline = Instant::now() + ENGINE_TIMEOUT;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.responses.recv_timeout(left) {
+                Ok(reply) => {
+                    let answered = serde_json::from_str::<Value>(&reply)
+                        .ok()
+                        .and_then(|v| v.get("id").cloned());
+                    if answered == id {
+                        return Some(reply);
+                    }
+                }
+                Err(_) => return Some(error(forwarded.as_object(), "engine timeout")),
+            }
+        }
     }
 }

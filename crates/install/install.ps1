@@ -11,6 +11,8 @@
 #     its 32-bit view under WOW6432Node, and HKLM\SOFTWARE\Microsoft\CTF\TIP\{B6B6D901-...}
 #   - adds the input method to the current user's Traditional Chinese
 #     (Taiwan) keyboards (skip with -NoKeyboard)
+#   - starts the host at sign-in: HKCU\Software\Microsoft\Windows\CurrentVersion\Run,
+#     value "Bopogram" (skip with -NoAutostart)
 # uninstall.ps1 reverses all of it.
 param(
     # The Python that runs the engine (the prototype's virtual environment).
@@ -23,7 +25,8 @@ param(
     # Debugging only: the engine writes every request and response (so,
     # everything typed) to this file. Install again without it to turn it off.
     [string]$Trace = "",
-    [switch]$NoKeyboard
+    [switch]$NoKeyboard,
+    [switch]$NoAutostart
 )
 $ErrorActionPreference = "Stop"
 
@@ -96,5 +99,16 @@ if (-not $NoKeyboard) {
     } else {
         Write-Output "Keyboard already in the list."
     }
+}
+# 5. Start the host at sign-in, so that the engine is ready before the first
+#    key, and so that applications that may not start it themselves
+#    (elevated ones, Store apps) find it running.
+$run = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+if (-not $NoAutostart) {
+    Set-ItemProperty $run -Name "Bopogram" -Value "`"$(Join-Path $Install 'bopogram-host.exe')`""
+    Write-Output "The engine host starts at sign-in."
+} elseif (Get-ItemProperty $run -Name "Bopogram" -ErrorAction SilentlyContinue) {
+    Remove-ItemProperty $run -Name "Bopogram"
+    Write-Output "The engine host no longer starts at sign-in."
 }
 Write-Output "Done. Applications that were already running use the new version after a restart."

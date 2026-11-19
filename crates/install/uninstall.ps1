@@ -34,6 +34,13 @@ if ($changed) {
     Write-Output "Keyboard removed from the language list."
 }
 
+# 1b. No more starting the host at sign-in.
+$run = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+if (Get-ItemProperty $run -Name "Bopogram" -ErrorAction SilentlyContinue) {
+    Remove-ItemProperty $run -Name "Bopogram"
+    Write-Output "Sign-in start removed."
+}
+
 # 2. Unregister the text service: the 32-bit DLL first, then the 64-bit one
 #    (each removes the language profile; the second finds it already gone).
 $dll32 = Join-Path $Install "x86\bopogram_ime.dll"

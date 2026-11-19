@@ -11,6 +11,8 @@
 //!
 //! No Windows calls here, so this is tested with plain `cargo test`.
 
+use std::time::{Duration, Instant};
+
 use crate::protocol::{Engine, Failure, Op, Response};
 
 /// Candidates per page; the digit keys 1-9 pick from the page.
@@ -142,6 +144,21 @@ fn is_tone(key: char) -> bool {
     matches!(key, ' ' | '3' | '4' | '6' | '7')
 }
 
+/// The bopomofo symbol (or tone mark) of a Dachen layout key, for showing
+/// keys while the engine is starting. The first tone (Space) has no mark.
+fn dachen_symbol(key: char) -> Option<char> {
+    const KEYS: &str = "1qaz2wsxedcrfv5tgbyhnujm8ik,9ol.0p;/-6347";
+    const SYMBOLS: &str = "ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙㄧㄨㄩㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦˊˇˋ˙";
+    KEYS.chars().position(|k| k == key).and_then(|i| SYMBOLS.chars().nth(i))
+}
+
+/// How long keys are kept for an engine that is starting, before the
+/// composition is given up (and shown text committed as it is).
+const STARTING_LIMIT: Duration = Duration::from_secs(20);
+/// After giving up on a starting engine, how long "starting" counts as
+/// "unreachable", so that keys reach the application.
+const STARTING_COOLDOWN: Duration = Duration::from_secs(30);
+
 pub struct Controller<E: Engine> {
     engine: E,
     /// Chinese mode. In English mode every key goes to the application.
@@ -158,6 +175,14 @@ pub struct Controller<E: Engine> {
     /// Names of the requests made since `take_sent` was last called (for
     /// the timing log).
     sent: Vec<&'static str>,
+    /// Requests kept while the engine starts, sent in order once it answers.
+    /// While there are any, the preedit is drawn here from the keys.
+    queued: Vec<Op>,
+    /// When the first of them was kept.
+    queued_since: Option<Instant>,
+    /// Until then, an engine that says it is starting is treated as absent.
+    starting_refused_until: Option<Instant>,
+    starting_limit: Duration,
     /// Requests in a row that were sent but not answered in time. While
     /// this is not zero the engine's session is ahead of the state below.
     behind: u32,
@@ -190,6 +215,10 @@ impl<E: Engine> Controller<E> {
             prefix: false,
             stale: false,
             behind: 0,
+            queued: Vec::new(),
+            queued_since: None,
+            starting_refused_until: None,
+            starting_limit: STARTING_LIMIT,
             sent: Vec::new(),
             learning_unsent: false,
             wanted_style: None,
@@ -226,7 +255,13 @@ impl<E: Engine> Controller<E> {
     /// Also true while the engine has not answered: it may be composing
     /// something this side has not seen yet.
     pub fn composing(&self) -> bool {
-        !self.preedit.is_empty() || self.behind > 0
+        !self.preedit.is_empty() || self.behind > 0 || !self.queued.is_empty()
+    }
+
+    /// Keys are waiting for the engine to finish starting: call `flush`
+    /// again shortly.
+    pub fn waiting(&self) -> bool {
+        !self.queued.is_empty()
     }
 
     /// "casual" or "formal".
@@ -298,7 +333,7 @@ impl<E: Engine> Controller<E> {
         }
         self.window_open = false;
         match self.exchange(&Op::Select(index)) {
-            Ok(_) | Err(Failure::Rejected) => {}
+            Ok(_) | Err(Failure::Rejected | Failure::Starting) => {}
             Err(Failure::TimedOut) => {
                 self.catch_up();
             }
@@ -479,14 +514,109 @@ impl<E: Engine> Controller<E> {
 
     /// One request, with the bookkeeping that keeps both sides in step.
     fn exchange(&mut self, op: &Op) -> Result<Response, Failure> {
-        let result = self.exchange_inner(op);
-        match result {
+        let mut result = self.replay();
+        if result.is_ok() {
+            result = self.exchange_inner(op).map(Some);
+        }
+        if result == Err(Failure::Starting) {
+            if self.starting_refused_until.is_some_and(|until| Instant::now() < until) {
+                // We gave up waiting for this engine a moment ago.
+                result = Err(Failure::Unreachable);
+            } else if !self.keep(op) {
+                // Waited too long: what is shown goes to the document.
+                self.lost();
+                self.starting_refused_until = Some(Instant::now() + STARTING_COOLDOWN);
+            }
+        }
+        match &result {
             // Every response carries the whole state: back in step.
             Ok(_) => self.behind = 0,
             Err(Failure::TimedOut) => self.behind += 1,
             Err(_) => {}
         }
-        result
+        result.map(|response| response.unwrap_or_default())
+    }
+
+    /// Send what was kept while the engine was starting. `Ok(None)` when
+    /// there is nothing (left) to send.
+    fn replay(&mut self) -> Result<Option<Response>, Failure> {
+        while let Some(op) = self.queued.first().cloned() {
+            match self.exchange_inner(&op) {
+                Ok(_) => {
+                    self.queued.remove(0);
+                }
+                Err(Failure::Starting) => return Err(Failure::Starting),
+                // The engine answered, but not this; the rest still counts.
+                Err(Failure::Rejected) => {
+                    self.queued.remove(0);
+                }
+                Err(failure) => {
+                    self.queued.clear();
+                    self.queued_since = None;
+                    return Err(failure);
+                }
+            }
+        }
+        self.queued_since = None;
+        Ok(None)
+    }
+
+    /// Keep a request for when the engine is ready, and show its effect
+    /// meanwhile. False if the engine has kept us waiting too long.
+    fn keep(&mut self, op: &Op) -> bool {
+        let since = *self.queued_since.get_or_insert_with(Instant::now);
+        if since.elapsed() > self.starting_limit {
+            return false;
+        }
+        match op {
+            Op::Key(c) => {
+                if is_tone(*c) && !self.pending.is_empty() {
+                    self.pending.clear();
+                    self.preedit.extend(dachen_symbol(*c));
+                } else if *c == ' ' {
+                    self.preedit.push(' ');
+                } else if let Some(symbol) = dachen_symbol(*c) {
+                    self.pending.push(*c);
+                    self.preedit.push(symbol);
+                }
+            }
+            Op::Symbol(c) => self.preedit.push(*c),
+            Op::Text(text) => self.preedit.push_str(text),
+            Op::Backspace => {
+                self.pending.pop();
+                self.preedit.pop();
+            }
+            Op::Escape => {
+                // Nothing kept is wanted any more.
+                self.queued.clear();
+                self.preedit.clear();
+                self.pending.clear();
+                self.queued_since = None;
+                self.caret = 0;
+                return true;
+            }
+            // The text before the cursor matters only before anything else.
+            Op::Context(_) if self.queued.is_empty() => {}
+            Op::Commit => {}
+            // Moving, choosing and asking need the engine's state: dropped.
+            _ => return true,
+        }
+        self.queued.push(op.clone());
+        self.caret = self.preedit.chars().count();
+        true
+    }
+
+    /// Try again to send what was kept while the engine was starting.
+    /// Returns text the engine committed meanwhile.
+    pub fn flush(&mut self) -> Option<String> {
+        if self.queued.is_empty() {
+            return None;
+        }
+        if self.exchange(&Op::State).is_err() && self.queued_since.is_some_and(|t| t.elapsed() > self.starting_limit) {
+            self.lost();
+            self.starting_refused_until = Some(Instant::now() + STARTING_COOLDOWN);
+        }
+        self.take_committed()
     }
 
     fn exchange_inner(&mut self, op: &Op) -> Result<Response, Failure> {
@@ -533,13 +663,15 @@ impl<E: Engine> Controller<E> {
                 self.lost();
                 return true;
             }
-            // It answers, so nothing is outstanding any more.
-            Err(Failure::Rejected) => self.behind = 0,
+            // It answers (or restarts), so nothing is outstanding any more.
+            Err(Failure::Rejected | Failure::Starting) => self.behind = 0,
         }
         false
     }
 
     fn clear(&mut self) {
+        self.queued.clear();
+        self.queued_since = None;
         self.preedit.clear();
         self.pending.clear();
         self.caret = 0;
@@ -689,6 +821,9 @@ impl<E: Engine> Controller<E> {
             }
             // The engine refused this one key; the composition is intact.
             Err(Failure::Rejected) => {}
+            // Kept for when the engine is ready (or given up, with the
+            // shown text committed). Either way the key was ours.
+            Err(Failure::Starting) => outcome.eaten = was_busy || self.composing() || outcome.eaten,
             Err(Failure::Unreachable) => {
                 // With nothing composed the key simply goes to the
                 // application; otherwise it is dropped, because it was
@@ -749,6 +884,8 @@ mod tests {
         slow: usize,
         /// Requests fail with an internal error and change nothing.
         broken: bool,
+        /// The host answers that the engine is still loading.
+        starting: bool,
         /// Text committed by responses nobody waited for.
         late: String,
         abandoned: bool,
@@ -762,6 +899,9 @@ mod tests {
             }
             if self.broken {
                 return Err(Failure::Rejected);
+            }
+            if self.starting {
+                return Err(Failure::Starting);
             }
             let mut response = self.handle(op);
             if self.slow > 0 {
@@ -1217,6 +1357,52 @@ mod tests {
         c.key_down(key('i'));
         assert_eq!(c.preedit(), "字ji");
         assert_eq!(c.engine_mut().log.last(), Some(&Op::Key('i')), "no reset in between");
+    }
+
+    #[test]
+    fn keys_wait_for_a_starting_engine() {
+        let mut c = Controller::new(Fake { starting: true, ..Fake::default() });
+        assert!(c.key_down(key('j')).eaten, "kept, not given to the application");
+        c.key_down(key('i'));
+        c.key_down(key('3'));
+        c.key_down(key('j'));
+        assert_eq!(c.preedit(), "ㄨㄛˇㄨ");
+        c.key_down(code(vk::BACK));
+        assert_eq!(c.preedit(), "ㄨㄛˇ");
+        assert!(c.waiting());
+        assert!(c.engine_mut().log.is_empty(), "nothing reached the engine");
+
+        // Ready: everything is sent in order, and the engine's state shows.
+        c.engine_mut().starting = false;
+        assert_eq!(c.flush(), None);
+        assert!(!c.waiting());
+        assert_eq!(c.preedit(), "字");
+        assert_eq!(
+            c.engine_mut().log,
+            [Op::Key('j'), Op::Key('i'), Op::Key('3'), Op::Key('j'), Op::Backspace, Op::State]
+        );
+
+        // Enter while starting: the commit comes once the engine is ready.
+        let mut c = Controller::new(Fake { starting: true, ..Fake::default() });
+        for k in "ji3".chars() {
+            c.key_down(key(k));
+        }
+        assert_eq!(c.key_down(code(vk::RETURN)), eaten(None));
+        c.engine_mut().starting = false;
+        assert_eq!(c.flush().as_deref(), Some("字"));
+        assert!(!c.composing());
+    }
+
+    #[test]
+    fn a_starting_engine_is_not_waited_for_forever() {
+        let mut c = Controller::new(Fake { starting: true, ..Fake::default() });
+        c.starting_limit = Duration::from_millis(2);
+        c.key_down(key('j'));
+        std::thread::sleep(Duration::from_millis(5));
+        // Shown text goes to the document; later keys go to the application.
+        assert_eq!(c.key_down(key('i')), eaten(Some("ㄨ")));
+        assert!(!c.composing());
+        assert_eq!(c.key_down(key('j')), Outcome::default());
     }
 
     #[test]

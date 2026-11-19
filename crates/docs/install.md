@@ -31,6 +31,7 @@ Python 或執行包不在預設位置時，加上 `-Python <python.exe>`、`-Con
 | 2. 複製 `bopogram_ime.dll`、`bopogram-host.exe`、`bopogram-settings.exe`，32 位元 DLL 放進 `x86\`，寫入 `bopogram-host.json` | `C:\Program Files\Bopogram\` |
 | 3. `regsvr32` 註冊文字服務（64 與 32 位元各一次） | `HKLM\SOFTWARE\Classes\CLSID\{B6B6D901-0BBF-4287-A302-F265DBE9A46C}`、其 32 位元版 `HKLM\SOFTWARE\WOW6432Node\Classes\CLSID\{…}`、`HKLM\SOFTWARE\Microsoft\CTF\TIP\{B6B6D901-0BBF-4287-A302-F265DBE9A46C}` |
 | 4. 把輸入法加進目前使用者的「中文（繁體，台灣）」鍵盤 | 目前使用者的語言清單（`Set-WinUserLanguageList`，存在 `HKCU`） |
+| 5. 登入時啟動引擎 host（`-NoAutostart` 可略過） | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 的 `Bopogram` 值 |
 
 安裝在 `Program Files` 是因為 DLL 會被載入到所有程式（包含以系統管理員執行的程式），
 所在資料夾必須只有系統管理員能寫入。
@@ -69,7 +70,7 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 | 字典、模型、設定 | `D:\bopogram-data\bopogram-runtime\` |
 | 個人化資料、打字紀錄 | 同上的 `userdata\` |
 
-全部在本機，沒有任何網路連線。引擎由 `bopogram-host.exe` 在第一次打字時啟動，常駐約 360 MB 記憶體；
+全部在本機，沒有任何網路連線。引擎由 `bopogram-host.exe` 在登入時啟動（沒有設定時則在第一次打字時），常駐約 470 MB 記憶體；
 要重新啟動引擎，在工作管理員結束 `bopogram-host.exe` 即可，下次打字會自動再起來。
 
 ## 工具列圖示與設定
@@ -115,9 +116,10 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 
 ## 已知限制
 
-- AppContainer 程式（Windows 搜尋、開始功能表、市集 App）連不到引擎，在裡面只能打英文，請切回微軟注音。
-- 以系統管理員身分執行的程式不會自己啟動引擎；引擎已在執行時可正常使用。
-- 引擎啟動要載入模型約 1 至 2 秒，這段時間的按鍵會直接變成英文。
+- AppContainer 程式（Windows 搜尋、開始功能表、市集 App）可以打字，但在裡面打的字一律不學習、不記錄。
+- 以系統管理員身分執行的程式不會自己啟動引擎；登入時已啟動 host 就能正常使用。
+- 引擎啟動要載入模型數秒，這段時間打的字先以注音符號顯示，引擎就緒後自動換成選字結果；
+  等超過 20 秒仍未就緒時，畫面上的注音符號會原樣送出，之後 30 秒內按鍵直接交給程式。
 - 引擎回應慢（單次超過 200 ms）時組字會保留，畫面最多再等 200 ms 後補上，再不行就等下一次按鍵。
   只有引擎不在了（管線斷線，或 host 等了 5 秒仍沒回應）才放棄，組字區的內容原樣送進文件。
 - 密碼欄位會自動停用（不組字、不學習、不記錄）；判斷依賴程式的宣告，

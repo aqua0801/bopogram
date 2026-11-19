@@ -90,11 +90,11 @@ fn run() -> Result<(), String> {
     };
     log::init();
     log!("host starting");
-    // Take the pipe name first so a second owner is detected before the
-    // models are loaded; clients are only accepted once the engine is ready.
+    // Take the pipe name first, then serve at once: while the engine loads,
+    // requests are answered with "starting" and the input method keeps them.
     let listener = win::PipeListener::bind(&sid).map_err(|e| format!("pipe: {e}"))?;
-    let router = engine::start(cfg).map_err(|e| format!("engine: {e}"))?;
-    log!("engine ready; serving");
+    let router = engine::start(cfg);
+    log!("serving; engine loading");
     server::run(listener, router)
 }
 
