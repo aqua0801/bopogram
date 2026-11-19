@@ -59,6 +59,11 @@ fn install_folder() -> Option<PathBuf> {
     Some(if cfg!(target_pointer_width = "32") { folder.parent()? } else { folder }.to_path_buf())
 }
 
+/// The input method's icon, shown in the list of keyboards.
+pub fn icon_path() -> Option<PathBuf> {
+    Some(install_folder()?.join("bopogram.ico"))
+}
+
 /// The settings window, a program of its own.
 pub fn settings_path() -> Option<PathBuf> {
     Some(install_folder()?.join("bopogram-settings.exe"))

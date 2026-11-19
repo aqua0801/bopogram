@@ -10,15 +10,7 @@
 //! it builds the menu itself (`InitMenu` / `OnMenuSelect`). Both are served.
 
 use windows::core::{implement, w, Interface, Ref, Result, BOOL, BSTR, GUID, HRESULT, PCWSTR};
-use windows::Win32::Foundation::{
-    COLORREF, E_FAIL, E_INVALIDARG, HWND, POINT, RECT,
-};
-use windows::Win32::Graphics::Gdi::{
-    CreateBitmap, CreateCompatibleDC, CreateDIBSection, CreateFontW, CreateSolidBrush,
-    DeleteDC, DeleteObject, DrawTextW, FillRect, SelectObject, SetBkMode, SetTextColor,
-    BITMAPINFO, BITMAPINFOHEADER, CLEARTYPE_QUALITY, DEFAULT_CHARSET, DIB_RGB_COLORS, DT_CENTER,
-    DT_NOCLIP, DT_SINGLELINE, DT_VCENTER, TRANSPARENT,
-};
+use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, HWND, POINT, RECT};
 use windows::Win32::UI::TextServices::{
     ITfLangBarItem, ITfLangBarItemButton, ITfLangBarItemButton_Impl, ITfLangBarItemSink,
     ITfLangBarItem_Impl, ITfMenu, ITfSource, ITfSource_Impl, TfLBIClick, GUID_LBI_INPUTMODE,
@@ -26,10 +18,9 @@ use windows::Win32::UI::TextServices::{
     TF_LBI_STYLE_SHOWNINTRAY, TF_LBMENUF_CHECKED, TF_LBMENUF_SEPARATOR,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreateIconIndirect, CreatePopupMenu, CreateWindowExW, DestroyMenu,
-    DestroyWindow, GetSystemMetrics, SetForegroundWindow, TrackPopupMenu, HICON, ICONINFO,
-    MF_CHECKED, MF_SEPARATOR, MF_STRING, SM_CXSMICON, TPM_NONOTIFY, TPM_RETURNCMD,
-    TPM_RIGHTBUTTON, WS_EX_TOOLWINDOW, WS_POPUP,
+    AppendMenuW, CreatePopupMenu, CreateWindowExW, DestroyMenu, DestroyWindow,
+    SetForegroundWindow, TrackPopupMenu, HICON, MF_CHECKED, MF_SEPARATOR, MF_STRING,
+    TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 use crate::dll::{module, CLSID_TEXT_SERVICE};
@@ -119,81 +110,6 @@ impl ModeButton {
     }
 }
 
-/// A small square icon with one character on it. The caller owns it.
-fn draw_icon(chinese: bool) -> Result<HICON> {
-    let size = unsafe { GetSystemMetrics(SM_CXSMICON) }.max(16);
-    let (background, label) = if chinese { (0x00B0_6C2B, "中") } else { (0x0060_6060, "英") };
-    unsafe {
-        let dc = CreateCompatibleDC(None);
-        let info = BITMAPINFO {
-            bmiHeader: BITMAPINFOHEADER {
-                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: size,
-                biHeight: -size, // top-down
-                biPlanes: 1,
-                biBitCount: 32,
-                ..BITMAPINFOHEADER::default()
-            },
-            ..BITMAPINFO::default()
-        };
-        let mut bits = std::ptr::null_mut();
-        let colour = CreateDIBSection(Some(dc), &info, DIB_RGB_COLORS, &mut bits, None, 0);
-        let Ok(colour) = colour else {
-            let _ = DeleteDC(dc);
-            return Err(E_FAIL.into());
-        };
-        let old_bitmap = SelectObject(dc, colour.into());
-        let mut area = RECT { left: 0, top: 0, right: size, bottom: size };
-        let brush = CreateSolidBrush(COLORREF(background));
-        FillRect(dc, &area, brush);
-        let _ = DeleteObject(brush.into());
-        let font = CreateFontW(
-            -(size * 13 / 16),
-            0,
-            0,
-            0,
-            600,
-            0,
-            0,
-            0,
-            DEFAULT_CHARSET,
-            Default::default(),
-            Default::default(),
-            CLEARTYPE_QUALITY,
-            0,
-            w!("Microsoft JhengHei UI"),
-        );
-        let old_font = SelectObject(dc, font.into());
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, COLORREF(0x00FF_FFFF));
-        let mut text = wide(label);
-        DrawTextW(dc, &mut text, &mut area, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP);
-        SelectObject(dc, old_font);
-        let _ = DeleteObject(font.into());
-        SelectObject(dc, old_bitmap);
-        let _ = DeleteDC(dc);
-
-        // GDI leaves the alpha channel at zero: make every pixel opaque.
-        if !bits.is_null() {
-            let pixels = std::slice::from_raw_parts_mut(bits as *mut u32, (size * size) as usize);
-            for pixel in pixels {
-                *pixel |= 0xFF00_0000;
-            }
-        }
-        let mask = CreateBitmap(size, size, 1, 1, None);
-        let icon = CreateIconIndirect(&ICONINFO {
-            fIcon: true.into(),
-            xHotspot: 0,
-            yHotspot: 0,
-            hbmMask: mask,
-            hbmColor: colour,
-        });
-        let _ = DeleteObject(mask.into());
-        let _ = DeleteObject(colour.into());
-        icon
-    }
-}
-
 impl ITfLangBarItem_Impl for ModeButton_Impl {
     fn GetInfo(&self, info: *mut TF_LANGBARITEMINFO) -> Result<()> {
         let Some(info) = (unsafe { info.as_mut() }) else {
@@ -224,7 +140,7 @@ impl ITfLangBarItem_Impl for ModeButton_Impl {
     }
 
     fn GetTooltipString(&self) -> Result<BSTR> {
-        Ok(BSTR::from("Bopogram 注音：左鍵切換中／英，右鍵開啟選單"))
+        Ok(BSTR::from("Bopogram 注音：左鍵切換中／英，右鍵開啟選單；Shift+空白鍵切換全形／半形"))
     }
 }
 
@@ -272,11 +188,16 @@ impl ITfLangBarItemButton_Impl for ModeButton_Impl {
     }
 
     fn GetIcon(&self) -> Result<HICON> {
-        guard(Err(E_FAIL.into()), || draw_icon(service::current_mode(&self.state)))
+        guard(Err(E_FAIL.into()), || {
+            let chinese = service::current_mode(&self.state);
+            crate::icon::mode_icon(chinese, service::is_full_width(&self.state))
+        })
     }
 
     fn GetText(&self) -> Result<BSTR> {
-        Ok(BSTR::from(if service::current_mode(&self.state) { "中" } else { "英" }))
+        let mode = if service::current_mode(&self.state) { "中" } else { "英" };
+        let width = if service::is_full_width(&self.state) { "（全形）" } else { "" };
+        Ok(BSTR::from(format!("{mode}{width}")))
     }
 }
 

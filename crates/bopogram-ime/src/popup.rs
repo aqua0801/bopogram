@@ -111,13 +111,18 @@ impl Palette {
 
 /// Does the user use the dark theme for applications?
 fn dark_theme() -> bool {
+    is_dark(w!("AppsUseLightTheme"))
+}
+
+/// Is this theme setting (`AppsUseLightTheme`, `SystemUsesLightTheme`) dark?
+pub(crate) fn is_dark(setting: PCWSTR) -> bool {
     let mut value = 1u32;
     let mut size = std::mem::size_of::<u32>() as u32;
     let read = unsafe {
         RegGetValueW(
             HKEY_CURRENT_USER,
             w!(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"),
-            w!("AppsUseLightTheme"),
+            setting,
             RRF_RT_REG_DWORD,
             None,
             Some(&mut value as *mut u32 as *mut _),
@@ -129,7 +134,8 @@ fn dark_theme() -> bool {
 
 enum Mode {
     Tip(Vec<u16>),
-    List { words: Vec<Vec<u16>>, selected: usize, page: usize, pages: usize },
+    /// `labels`: the selection key of each row.
+    List { words: Vec<Vec<u16>>, labels: Vec<Vec<u16>>, selected: usize, page: usize, pages: usize },
 }
 
 /// Where things were drawn, for finding what the mouse is on.
@@ -201,6 +207,11 @@ unsafe fn make_font(px: i32) -> HFONT {
     }
 }
 
+/// Room for the widest selection key.
+fn label_width(dc: HDC, labels: &[Vec<u16>]) -> i32 {
+    labels.iter().map(|label| text_size(dc, label).cx).max().unwrap_or(0)
+}
+
 fn text_size(dc: HDC, text: &[u16]) -> SIZE {
     let mut size = SIZE::default();
     unsafe {
@@ -232,8 +243,8 @@ impl Content {
                 let width = text_size(dc, text).cx + 2 * padding + 2 * gap;
                 SIZE { cx: width, cy: row_height + 2 * padding }
             }
-            Mode::List { words, .. } => {
-                let number = text_size(dc, &wide("9")).cx + scale(NUMBER_GAP_PX, dpi);
+            Mode::List { words, labels, .. } => {
+                let number = label_width(dc, labels) + scale(NUMBER_GAP_PX, dpi);
                 let widest = words.iter().map(|word| text_size(dc, word).cx).max().unwrap_or(0);
                 let mut width = (number + widest + 2 * gap).max(scale(MIN_WIDTH_PX, dpi));
                 let footer = self.footer();
@@ -296,8 +307,8 @@ impl Content {
                         text,
                     );
                 }
-                Mode::List { words, selected, .. } => {
-                    let number_width = text_size(dc, &wide("9")).cx + scale(NUMBER_GAP_PX, dpi);
+                Mode::List { words, labels, selected, .. } => {
+                    let number_width = label_width(dc, labels) + scale(NUMBER_GAP_PX, dpi);
                     for (i, (word, row)) in words.iter().zip(&self.layout.rows).enumerate() {
                         let (number_colour, word_colour) = if i == *selected {
                             fill(dc, *row, palette.selected);
@@ -310,7 +321,9 @@ impl Content {
                         };
                         let y = row.top + gap / 2;
                         SetTextColor(dc, number_colour);
-                        let _ = TextOutW(dc, row.left + gap, y, &wide(&(i + 1).to_string()));
+                        if let Some(label) = labels.get(i) {
+                            let _ = TextOutW(dc, row.left + gap, y, label);
+                        }
                         SetTextColor(dc, word_colour);
                         let _ = TextOutW(dc, row.left + gap + number_width, y, word);
                     }
@@ -410,9 +423,19 @@ impl Popup {
 
     /// Show a page of candidates just below `anchor` (screen coordinates),
     /// or above it when there is no room below.
-    pub fn show(&self, words: &[String], selected: usize, page: usize, pages: usize, anchor: RECT) {
+    /// `labels` are the selection keys, shown upper case.
+    pub fn show(
+        &self,
+        words: &[String],
+        labels: &[char],
+        selected: usize,
+        page: usize,
+        pages: usize,
+        anchor: RECT,
+    ) {
         let words = words.iter().map(|word| wide(word)).collect();
-        self.place(Mode::List { words, selected, page, pages }, anchor);
+        let labels = labels.iter().map(|key| wide(&key.to_ascii_uppercase().to_string())).collect();
+        self.place(Mode::List { words, labels, selected, page, pages }, anchor);
     }
 
     /// Show a short notice (the Chinese/English mode) that hides itself.
@@ -542,6 +565,7 @@ mod tests {
             let mut content = Content {
                 mode: Mode::List {
                     words: ["道", "到", "倒", "導", "盜", "悼", "稻", "蹈", "纛"].iter().map(|w| wide(w)).collect(),
+                    labels: "123456789".chars().map(|c| wide(&c.to_string())).collect(),
                     selected: 2,
                     page: 0,
                     pages: 3,

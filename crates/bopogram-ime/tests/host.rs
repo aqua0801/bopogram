@@ -64,7 +64,7 @@ fn type_a_sentence_through_the_host() {
     let outcome = controller.key_down(Key { vk: vk::RETURN, ..Key::default() });
     assert_eq!(
         outcome,
-        Outcome { eaten: true, commit: Some("我在家，".into()), style_changed: false }
+        Outcome { eaten: true, commit: Some("我在家，".into()), ..Outcome::default() }
     );
     println!("slowest key: {slowest:?}");
 }

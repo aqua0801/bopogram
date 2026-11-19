@@ -44,6 +44,7 @@ foreach ($file in "bopogram_ime.dll", "bopogram-host.exe", "bopogram-settings.ex
 }
 New-Item -ItemType Directory -Force (Join-Path $stage "x86") | Out-Null
 Copy-Item (Join-Path $crates "target\i686-pc-windows-msvc\release\bopogram_ime.dll") (Join-Path $stage "x86") -Force
+Copy-Item (Join-Path $crates "bopogram-ime\res\bopogram.ico") $stage -Force
 foreach ($file in "setup.ps1", "testform.ps1", "test.html") {
     Copy-Item (Join-Path $PSScriptRoot $file) $stage -Force
 }

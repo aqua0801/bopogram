@@ -21,7 +21,7 @@ const FORMAL: &str = "formal";
 const DEFAULT_USER_MODEL: &str = "userdata/user.json";
 const DEFAULT_TYPING_LOG: &str = "userdata/typing_log.jsonl";
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Settings {
     pub formal: bool,
     /// The engine keeps a personal model (`user_model` in config.json).
@@ -34,7 +34,36 @@ pub struct Settings {
     pub font_px: i32,
     /// One Chinese/English mode for all applications, instead of one each.
     pub shared_mode: bool,
+    /// Candidates per page (5 to 10).
+    pub page_size: usize,
+    /// Pick candidates with A S D F ... instead of 1 2 3 ...
+    pub home_row: bool,
+    /// New applications start in Chinese mode.
+    pub start_chinese: bool,
+    /// Shift on its own switches Chinese/English.
+    pub shift_toggles: bool,
 }
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            formal: false,
+            learning: false,
+            typing_log: false,
+            timing: false,
+            font_px: DEFAULT_FONT_PX,
+            shared_mode: false,
+            page_size: DEFAULT_PAGE_SIZE,
+            home_row: false,
+            start_chinese: true,
+            shift_toggles: true,
+        }
+    }
+}
+
+/// Candidates per page offered, and the one used when nothing is set.
+pub const PAGE_SIZES: [usize; 4] = [5, 7, 9, 10];
+pub const DEFAULT_PAGE_SIZE: usize = 9;
 
 /// The text sizes offered, and the one used when nothing is set.
 pub const FONT_SIZES: [i32; 4] = [16, 18, 22, 26];
@@ -74,6 +103,35 @@ impl Files {
     /// `global` when the mode is shared, read by the input method.
     fn mode_scope_file(&self) -> Option<PathBuf> {
         Some(self.style.as_ref()?.with_file_name("mode-scope.txt"))
+    }
+
+    /// Selection keys, page size, start mode and Shift, read by the input method.
+    fn keys_file(&self) -> Option<PathBuf> {
+        Some(self.style.as_ref()?.with_file_name("keys.json"))
+    }
+
+    /// The engine's personal model, whether or not learning is on now.
+    pub fn user_model(&self) -> Option<PathBuf> {
+        let config = self.config.as_deref()?;
+        let named = read_json(config)
+            .and_then(|c| c.get("user_model")?.as_str().map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_USER_MODEL));
+        Some(if named.is_absolute() { named } else { config.parent()?.join(named) })
+    }
+
+    /// Delete the personal model (the host must be stopped first, or it
+    /// writes the model back). True if there was one.
+    pub fn clear_user_model(&self) -> Result<bool, String> {
+        let model = self.user_model().ok_or("找不到引擎的 config.json")?;
+        let mut found = false;
+        // The engine writes a .tmp beside it first, then renames it.
+        for path in [model.clone(), model.with_extension("tmp")] {
+            if path.exists() {
+                std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+                found = true;
+            }
+        }
+        Ok(found)
     }
 
     /// Until when the timing log is on, if it is.
@@ -148,7 +206,25 @@ impl Files {
                 .mode_scope_file()
                 .and_then(|path| std::fs::read_to_string(path).ok())
                 .is_some_and(|text| text.trim() == "global"),
+            ..self.load_keys()
         }
+    }
+
+    /// The fields kept in `keys.json`; the rest are defaults.
+    fn load_keys(&self) -> Settings {
+        let mut settings = Settings::default();
+        let Some(keys) = self.keys_file().as_deref().and_then(read_json) else {
+            return settings;
+        };
+        if let Some(size) = keys.get("page_size").and_then(Value::as_u64) {
+            if (5..=10).contains(&size) {
+                settings.page_size = size as usize;
+            }
+        }
+        settings.home_row = keys.get("select_keys").and_then(Value::as_str) == Some("home_row");
+        settings.start_chinese = keys.get("start_mode").and_then(Value::as_str) != Some("english");
+        settings.shift_toggles = keys.get("shift_toggle").and_then(Value::as_bool) != Some(false);
+        settings
     }
 
     /// Write the settings. The engine's config is only touched when `engine` is true.
@@ -162,6 +238,15 @@ impl Files {
         if let Some(scope) = self.mode_scope_file() {
             std::fs::write(&scope, if settings.shared_mode { "global" } else { "application" })
                 .map_err(|e| format!("{}: {e}", scope.display()))?;
+        }
+        if let Some(keys) = self.keys_file() {
+            let text = serde_json::json!({
+                "page_size": settings.page_size,
+                "select_keys": if settings.home_row { "home_row" } else { "digits" },
+                "start_mode": if settings.start_chinese { "chinese" } else { "english" },
+                "shift_toggle": settings.shift_toggles,
+            });
+            std::fs::write(&keys, text.to_string()).map_err(|e| format!("{}: {e}", keys.display()))?;
         }
         if let Some(font) = self.font_file() {
             std::fs::write(&font, settings.font_px.to_string())
@@ -296,9 +381,7 @@ mod tests {
                 formal: true,
                 learning: true,
                 typing_log: false,
-                timing: false,
-                font_px: DEFAULT_FONT_PX,
-                shared_mode: false,
+                ..Settings::default()
             }
         );
 
@@ -315,6 +398,10 @@ mod tests {
             timing: true,
             font_px: 22,
             shared_mode: true,
+            page_size: 7,
+            home_row: true,
+            start_chinese: false,
+            shift_toggles: false,
         };
         files.save(&wanted, true).unwrap();
         assert_eq!(files.load(), wanted);
@@ -331,6 +418,16 @@ mod tests {
         // Switching back on keeps a path the config still names, else the default.
         files.save(&Settings { learning: true, ..wanted }, true).unwrap();
         assert_eq!(read_json(&folder.join("config.json")).unwrap()["user_model"], DEFAULT_USER_MODEL);
+
+        // Clearing the personal model removes it and its temporary file.
+        let model = files.user_model().unwrap();
+        assert_eq!(model, folder.join(DEFAULT_USER_MODEL));
+        assert!(!files.clear_user_model().unwrap(), "nothing yet");
+        std::fs::create_dir_all(model.parent().unwrap()).unwrap();
+        std::fs::write(&model, "{}").unwrap();
+        std::fs::write(model.with_extension("tmp"), "{}").unwrap();
+        assert!(files.clear_user_model().unwrap());
+        assert!(!model.exists() && !model.with_extension("tmp").exists());
         std::fs::remove_dir_all(&folder).unwrap();
     }
 }

@@ -166,6 +166,10 @@ pub(crate) type Shared = Rc<RefCell<State>>;
 
 // -- what the mode button needs ----------------------------------------------
 
+pub(crate) fn is_full_width(state: &Shared) -> bool {
+    with_controller(state, |c| c.full_width()).unwrap_or(false)
+}
+
 pub(crate) fn is_chinese(state: &Shared) -> bool {
     with_controller(state, |c| c.chinese()).unwrap_or(true)
 }
@@ -301,6 +305,16 @@ pub(crate) fn candidate_list(state: &Shared) -> Option<(Vec<String>, usize)> {
         .flatten()
 }
 
+/// Where each page of the candidate list starts.
+pub(crate) fn page_starts(state: &Shared) -> Vec<usize> {
+    with_controller(state, |c| c.page_starts()).unwrap_or_else(|| vec![0])
+}
+
+/// Where the page with the highlighted candidate starts.
+pub(crate) fn page_start(state: &Shared) -> usize {
+    with_controller(state, |c| c.page_start()).unwrap_or(0)
+}
+
 pub(crate) fn candidate_window_shown(state: &Shared) -> bool {
     with(state, |s| s.candidate_ui.as_ref().is_none_or(|ui| ui.shown)).unwrap_or(true)
 }
@@ -340,10 +354,7 @@ pub(crate) fn close_candidates(state: &Shared) {
 fn mouse(state: &Shared, event: Event) {
     match event {
         Event::Pick(row) => {
-            let start = with_controller(state, |c| {
-                c.candidate_list().map(|(_, selected)| selected / crate::controller::PAGE_SIZE * crate::controller::PAGE_SIZE)
-            })
-            .flatten();
+            let start = with_controller(state, |c| c.candidate_list().is_some().then(|| c.page_start())).flatten();
             if let Some(start) = start {
                 pick_candidate(state, start + row);
             }
@@ -418,12 +429,18 @@ fn draw_candidates(state: &Shared) {
     ensure_popup(state);
     with(state, |s| {
         let shown = s.candidate_ui.as_ref().is_none_or(|ui| ui.shown);
+        let labels = s.controller.as_ref().map(|c| c.labels()).unwrap_or_default();
         let page = s.controller.as_ref().and_then(|c| c.candidate_page());
         let Some(popup) = &s.popup else { return };
         match page {
-            Some((items, selected, page, pages)) if shown => {
-                popup.show(items, selected, page, pages, s.anchor.unwrap_or_else(fallback_anchor))
-            }
+            Some((items, selected, page, pages)) if shown => popup.show(
+                items,
+                &labels,
+                selected,
+                page,
+                pages,
+                s.anchor.unwrap_or_else(fallback_anchor),
+            ),
             _ => popup.hide(),
         }
     });
@@ -724,6 +741,11 @@ impl TextService_Impl {
         }
         refresh(&self.state, context, outcome.commit, Some(timing));
         retry_later(&self.state);
+        if outcome.width_changed {
+            let full = with_controller(&self.state, |c| c.full_width()).unwrap_or(false);
+            tip(&self.state, if full { "全形" } else { "半形" });
+            button_changed(&self.state);
+        }
         if outcome.style_changed {
             // Remembered for the other applications and for the next session.
             settings::save_style(if formal { FORMAL } else { CASUAL });
@@ -812,6 +834,10 @@ impl ITfTextInputProcessorEx_Impl for TextService_Impl {
                 if let Some(style) = settings::load_style() {
                     controller.want_style(&style);
                 }
+                let options = settings::options();
+                controller.set_options(options);
+                // Nothing is composed yet, so nothing is committed.
+                controller.set_chinese(options.start_chinese);
                 controller
             });
             // The state must be complete before the mode button is added:
@@ -899,7 +925,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
 
     fn OnTestKeyDown(&self, context: Ref<ITfContext>, wparam: WPARAM, _: LPARAM) -> Result<BOOL> {
         guard(Ok(false.into()), || {
-            let Some(context) = context.as_ref() else {
+            let Some(context) = context.as_ref().filter(|_| !crate::broken()) else {
                 return Ok(false.into());
             };
             let mut timing = timing::Key::start("test");
@@ -907,7 +933,9 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             let key = key_from(wparam);
             self.refresh_enabled(context);
             timing.step("password");
+            let options = settings::options();
             let eaten = with_controller(&self.state, |c| {
+                c.set_options(options);
                 c.note_key_down(key);
                 c.test_key(key)
             });
@@ -922,7 +950,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
 
     fn OnKeyDown(&self, context: Ref<ITfContext>, wparam: WPARAM, _: LPARAM) -> Result<BOOL> {
         guard(Ok(false.into()), || {
-            let Some(context) = context.as_ref() else {
+            let Some(context) = context.as_ref().filter(|_| !crate::broken()) else {
                 return Ok(false.into());
             };
             Ok(self.key_down(context, wparam).into())
@@ -933,7 +961,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
     // and acting on it here keeps the application's view of Shift intact.
     fn OnTestKeyUp(&self, context: Ref<ITfContext>, wparam: WPARAM, _: LPARAM) -> Result<BOOL> {
         guard(Ok(false.into()), || {
-            if let Some(context) = context.as_ref() {
+            if let Some(context) = context.as_ref().filter(|_| !crate::broken()) {
                 self.key_up(context, wparam);
             }
             Ok(false.into())
@@ -942,7 +970,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
 
     fn OnKeyUp(&self, context: Ref<ITfContext>, wparam: WPARAM, _: LPARAM) -> Result<BOOL> {
         guard(Ok(false.into()), || {
-            if let Some(context) = context.as_ref() {
+            if let Some(context) = context.as_ref().filter(|_| !crate::broken()) {
                 self.key_up(context, wparam);
             }
             Ok(false.into())

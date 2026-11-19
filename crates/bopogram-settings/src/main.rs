@@ -3,8 +3,9 @@
 //! A program of its own, opened from the menu of the mode button; nothing
 //! of it is loaded into other applications. It edits two local files:
 //!
-//! - `%LOCALAPPDATA%\Bopogram\style.txt`: casual or formal, read by the
-//!   input method whenever an application gets the focus.
+//! - `%LOCALAPPDATA%\Bopogram\*`: the input method's own settings (style,
+//!   keys, candidate text size, Chinese/English mode), read by the input
+//!   method in every application within a few seconds.
 //! - the engine's `config.json` (found through `bopogram-host.json` beside
 //!   this program): personal learning and the typing log. The engine reads
 //!   it at start, so applying a change there restarts the host.
@@ -31,12 +32,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowW, GetDlgItem, GetMessageW, GetWindowLongPtrW, IsDialogMessageW, LoadCursorW,
     MessageBoxW, PostQuitMessage, RegisterClassW, SendMessageW, SetForegroundWindow, SetTimer,
     SetWindowLongPtrW, SetWindowTextW, ShowWindow, TranslateMessage, CW_USEDEFAULT,
-    GWLP_USERDATA, HMENU, IDC_ARROW, MB_ICONWARNING, MB_OK, MSG, SW_SHOW, WINDOW_EX_STYLE,
+    GWLP_USERDATA, HMENU, IDC_ARROW, IDYES, MB_DEFBUTTON2, MB_ICONINFORMATION, MB_ICONWARNING,
+    MB_OK, MB_YESNO, MSG, SW_SHOW, WINDOW_EX_STYLE, GetSystemMetrics, LoadImageW, ICON_BIG,
+    ICON_SMALL, IMAGE_ICON, LR_LOADFROMFILE, SM_CXICON, SM_CXSMICON, WM_SETICON,
     WINDOW_STYLE, WM_COMMAND, WM_DESTROY, WM_SETFONT, WM_TIMER, WNDCLASSW, WS_CAPTION,
     WS_CHILD, WS_GROUP, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
 
-use files::{Files, Settings, DEFAULT_FONT_PX, FONT_SIZES};
+use files::{Files, Settings, DEFAULT_FONT_PX, DEFAULT_PAGE_SIZE, FONT_SIZES, PAGE_SIZES};
 
 const CLASS_NAME: PCWSTR = w!("BopogramSettings");
 const TITLE: &str = "Bopogram 注音設定";
@@ -65,11 +68,22 @@ const ID_TIMING: i32 = 121;
 /// One per entry of `FONT_SIZES`.
 const ID_FONT: i32 = 130;
 const ID_SHARED_MODE: i32 = 140;
+const ID_START_CHINESE: i32 = 141;
+const ID_START_ENGLISH: i32 = 142;
+const ID_SHIFT: i32 = 143;
+const ID_DIGIT_KEYS: i32 = 150;
+const ID_HOME_ROW: i32 = 151;
+/// One per entry of `PAGE_SIZES`.
+const ID_PAGE: i32 = 160;
+const ID_CLEAR: i32 = 170;
 const STATUS_TIMER: usize = 1;
 
-/// Client area in pixels at 96 DPI.
-const WIDTH: i32 = 460;
-const HEIGHT: i32 = 544;
+/// Client area in pixels at 96 DPI: two columns.
+const WIDTH: i32 = 780;
+const HEIGHT: i32 = 504;
+const COLUMN: i32 = 372;
+const LEFT: i32 = 12;
+const RIGHT: i32 = LEFT + COLUMN + 12;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -86,6 +100,24 @@ fn wide(s: &str) -> Vec<u16> {
 fn message(owner: HWND, text: &str) {
     unsafe {
         MessageBoxW(Some(owner), PCWSTR(wide(text).as_ptr()), PCWSTR(wide(TITLE).as_ptr()), MB_OK | MB_ICONWARNING);
+    }
+}
+
+fn notice(owner: HWND, text: &str) {
+    unsafe {
+        MessageBoxW(Some(owner), PCWSTR(wide(text).as_ptr()), PCWSTR(wide(TITLE).as_ptr()), MB_OK | MB_ICONINFORMATION);
+    }
+}
+
+/// A question answered Yes or No; No is the default.
+fn ask(owner: HWND, text: &str) -> bool {
+    unsafe {
+        MessageBoxW(
+            Some(owner),
+            PCWSTR(wide(text).as_ptr()),
+            PCWSTR(wide(TITLE).as_ptr()),
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2,
+        ) == IDYES
     }
 }
 
@@ -123,8 +155,9 @@ impl Builder {
         }
     }
 
-    fn group(&self, text: &str, y: i32, h: i32) {
-        self.control(w!("BUTTON"), text, BS_GROUPBOX, -1, 12, y, WIDTH - 24, h);
+    /// A frame around a column's section; `x` is `LEFT` or `RIGHT`.
+    fn group(&self, text: &str, x: i32, y: i32, h: i32) {
+        self.control(w!("BUTTON"), text, BS_GROUPBOX, -1, x, y, COLUMN, h);
     }
 
     fn label(&self, text: &str, id: i32, x: i32, y: i32, w: i32) {
@@ -136,8 +169,17 @@ impl Builder {
         self.control(w!("BUTTON"), text, WS_TABSTOP.0 | default, id, x, y, w, 28);
     }
 
-    fn option(&self, text: &str, kind: u32, extra: u32, id: i32, y: i32) {
-        self.control(w!("BUTTON"), text, WS_TABSTOP.0 | kind | extra, id, 26, y, WIDTH - 52, 24);
+    /// A check box or radio button across the section at `x`.
+    fn option(&self, text: &str, kind: u32, extra: u32, id: i32, x: i32, y: i32) {
+        self.control(w!("BUTTON"), text, WS_TABSTOP.0 | kind | extra, id, x + 14, y, COLUMN - 28, 24);
+    }
+
+    /// Radio buttons side by side; the first starts a group.
+    fn radios(&self, names: &[&str], first_id: i32, x: i32, y: i32, width: i32) {
+        for (i, name) in names.iter().enumerate() {
+            let style = WS_TABSTOP.0 | BS_AUTORADIOBUTTON | if i == 0 { WS_GROUP.0 } else { 0 };
+            self.control(w!("BUTTON"), name, style, first_id + i as i32, x + width * i as i32, y, width - 6, 24);
+        }
     }
 }
 
@@ -162,38 +204,69 @@ fn build(window: HWND, app: &App) {
         )
     };
     let b = Builder { window, font, dpi };
+    let (l, r) = (LEFT, RIGHT);
 
-    b.group("選字風格", 10, 84);
-    b.option("口語：輕聲「ㄉㄜ」一律先選「的」", BS_AUTORADIOBUTTON, WS_GROUP.0, ID_CASUAL, 32);
-    b.option("正式：的／地／得由模型判斷", BS_AUTORADIOBUTTON, 0, ID_FORMAL, 58);
+    // Left column: choosing characters.
+    b.group("選字風格", l, 10, 84);
+    b.option("口語：輕聲「ㄉㄜ」一律先選「的」", BS_AUTORADIOBUTTON, WS_GROUP.0, ID_CASUAL, l, 32);
+    b.option("正式：的／地／得由模型判斷", BS_AUTORADIOBUTTON, 0, ID_FORMAL, l, 58);
 
-    b.group("中／英模式", 104, 56);
-    b.option("所有程式共用同一個中／英模式（關閉時各程式分開）", BS_AUTOCHECKBOX, WS_GROUP.0, ID_SHARED_MODE, 126);
+    b.group("候選視窗", l, 104, 118);
+    b.label("選字鍵", -1, l + 14, 130, 84);
+    b.radios(&["1 2 3 …", "A S D F …"], ID_DIGIT_KEYS, l + 100, 126, 110);
+    b.label("每頁候選數", -1, l + 14, 160, 84);
+    let pages: Vec<String> = PAGE_SIZES.iter().map(usize::to_string).collect();
+    let pages: Vec<&str> = pages.iter().map(String::as_str).collect();
+    b.radios(&pages, ID_PAGE, l + 100, 156, 56);
+    b.label("文字大小", -1, l + 14, 190, 84);
+    b.radios(&["小", "中", "大", "特大"], ID_FONT, l + 100, 186, 56);
 
-    b.group("候選視窗文字大小", 166, 56);
-    for (i, name) in ["小", "中", "大", "特大"].iter().enumerate() {
-        let style = WS_TABSTOP.0 | BS_AUTORADIOBUTTON | if i == 0 { WS_GROUP.0 } else { 0 };
-        b.control(w!("BUTTON"), name, style, ID_FONT + i as i32, 26 + 100 * i as i32, 188, 90, 24);
-    }
+    b.group("學習與紀錄", l, 232, 158);
+    b.option("個人化學習：記住常用與改選過的詞", BS_AUTOCHECKBOX, WS_GROUP.0, ID_LEARNING, l, 254);
+    b.option("打字紀錄：記下首選與修改，審核後才匯出", BS_AUTOCHECKBOX, 0, ID_TYPING_LOG, l, 280);
+    b.button("審核打字紀錄…", ID_REVIEW, l + 14, 312, 140);
+    b.button("開啟資料夾", ID_FOLDER, l + 164, 312, 110);
+    b.button("清除個人化資料…", ID_CLEAR, l + 14, 348, 160);
 
-    b.group("學習與紀錄", 228, 112);
-    b.option("個人化學習：記住我常用與改選過的詞", BS_AUTOCHECKBOX, WS_GROUP.0, ID_LEARNING, 250);
-    b.option("打字紀錄：記下引擎首選與我的修改，審核後才匯出", BS_AUTOCHECKBOX, 0, ID_TYPING_LOG, 276);
-    b.button("審核打字紀錄…", ID_REVIEW, 26, 304, 140);
-    b.button("開啟資料夾", ID_FOLDER, 176, 304, 110);
+    // Right column: modes and the engine.
+    b.group("中／英模式", r, 10, 166);
+    b.option("所有程式共用同一個中／英模式", BS_AUTOCHECKBOX, WS_GROUP.0, ID_SHARED_MODE, r, 32);
+    b.label("新開的程式", -1, r + 14, 66, 84);
+    b.radios(&["中文", "英文"], ID_START_CHINESE, r + 100, 62, 80);
+    b.option("單按 Shift 切換中／英", BS_AUTOCHECKBOX, WS_GROUP.0, ID_SHIFT, r, 92);
+    b.label("中文模式下 Shift+空白鍵切換全形／半形。", -1, r + 14, 122, COLUMN - 28);
+    b.label("共用模式時，新開的程式沿用目前的模式。", -1, r + 14, 146, COLUMN - 28);
 
-    b.group("引擎", 350, 114);
+    b.group("引擎", r, 186, 158);
     let bundle = app.files.config.as_deref().and_then(Path::parent);
     let bundle = bundle.map_or("找不到（bopogram-host.json）".to_owned(), |p| p.display().to_string());
-    b.label(&format!("執行包：{bundle}"), -1, 26, 372, WIDTH - 52);
-    b.label("", ID_STATUS, 26, 400, 270);
-    b.button("重新啟動引擎", ID_RESTART, WIDTH - 26 - 126, 394, 126);
-    b.option("計時紀錄（只記耗時，24 小時後自動關閉）", BS_AUTOCHECKBOX, WS_GROUP.0, ID_TIMING, 428);
+    b.label(&format!("執行包：{bundle}"), -1, r + 14, 208, COLUMN - 28);
+    b.label("", ID_STATUS, r + 14, 234, COLUMN - 28);
+    b.option("計時紀錄（只記耗時，24 小時後自動關閉）", BS_AUTOCHECKBOX, WS_GROUP.0, ID_TIMING, r, 260);
+    b.button("重新啟動引擎", ID_RESTART, r + 14, 300, 126);
 
-    b.label("學習與紀錄的變更會在套用時重新啟動引擎。", -1, 14, 474, WIDTH - 28);
-    b.button("確定", ID_OK, WIDTH - 12 - 80 * 3 - 16, 504, 80);
-    b.button("取消", ID_CANCEL, WIDTH - 12 - 80 * 2 - 8, 504, 80);
-    b.button("套用", ID_APPLY, WIDTH - 12 - 80, 504, 80);
+    b.label("學習與紀錄的變更會在套用時重新啟動引擎；其他設定數秒內生效。", -1, l, 412, WIDTH - 24);
+    b.button("確定", ID_OK, WIDTH - 12 - 80 * 3 - 16, 460, 80);
+    b.button("取消", ID_CANCEL, WIDTH - 12 - 80 * 2 - 8, 460, 80);
+    b.button("套用", ID_APPLY, WIDTH - 12 - 80, 460, 80);
+}
+
+/// The input method's icon (`bopogram.ico` beside this program) on the
+/// window's title bar and taskbar button.
+fn set_icon(window: HWND) {
+    let Some(path) = std::env::current_exe().ok().map(|exe| exe.with_file_name("bopogram.ico")) else {
+        return;
+    };
+    let path = wide(&path.to_string_lossy());
+    for (kind, metric) in [(ICON_SMALL, SM_CXSMICON), (ICON_BIG, SM_CXICON)] {
+        unsafe {
+            let size = GetSystemMetrics(metric);
+            let loaded = LoadImageW(None, PCWSTR(path.as_ptr()), IMAGE_ICON, size, size, LR_LOADFROMFILE);
+            if let Ok(icon) = loaded {
+                SendMessageW(window, WM_SETICON, Some(WPARAM(kind as usize)), Some(LPARAM(icon.0 as isize)));
+            }
+        }
+    }
 }
 
 fn item(window: HWND, id: i32) -> Option<HWND> {
@@ -218,6 +291,14 @@ fn show(window: HWND, settings: &Settings) {
     set_checked(window, ID_TYPING_LOG, settings.typing_log);
     set_checked(window, ID_TIMING, settings.timing);
     set_checked(window, ID_SHARED_MODE, settings.shared_mode);
+    set_checked(window, ID_START_CHINESE, settings.start_chinese);
+    set_checked(window, ID_START_ENGLISH, !settings.start_chinese);
+    set_checked(window, ID_SHIFT, settings.shift_toggles);
+    set_checked(window, ID_DIGIT_KEYS, !settings.home_row);
+    set_checked(window, ID_HOME_ROW, settings.home_row);
+    for (i, size) in PAGE_SIZES.iter().enumerate() {
+        set_checked(window, ID_PAGE + i as i32, *size == settings.page_size);
+    }
     // The offered size nearest to the one set.
     let nearest = FONT_SIZES
         .iter()
@@ -239,6 +320,12 @@ fn read(window: HWND) -> Settings {
         font_px: (0..FONT_SIZES.len())
             .find(|&i| checked(window, ID_FONT + i as i32))
             .map_or(DEFAULT_FONT_PX, |i| FONT_SIZES[i]),
+        page_size: (0..PAGE_SIZES.len())
+            .find(|&i| checked(window, ID_PAGE + i as i32))
+            .map_or(DEFAULT_PAGE_SIZE, |i| PAGE_SIZES[i]),
+        home_row: checked(window, ID_HOME_ROW),
+        start_chinese: !checked(window, ID_START_ENGLISH),
+        shift_toggles: checked(window, ID_SHIFT),
     }
 }
 
@@ -276,6 +363,26 @@ fn apply(window: HWND, app: &mut App) -> bool {
         restart_engine(window, app);
     }
     true
+}
+
+/// Forget everything learned: stop the engine (or it would write the model
+/// back), delete the model, start the engine again.
+fn clear_personal(window: HWND, app: &App) {
+    let question = "要清除個人化學習資料嗎？\n\n引擎記住的常用詞與改選紀錄都會刪除，無法復原。打字紀錄不受影響。";
+    if !ask(window, question) {
+        return;
+    }
+    let running = files::host_running(&app.files.host_exe);
+    files::stop_host(&app.files.host_exe);
+    let cleared = app.files.clear_user_model();
+    if running {
+        restart_engine(window, app);
+    }
+    match cleared {
+        Ok(true) => notice(window, "個人化學習資料已清除。"),
+        Ok(false) => notice(window, "目前沒有個人化學習資料。"),
+        Err(err) => message(window, &format!("無法清除：{err}")),
+    }
 }
 
 fn open_review(window: HWND, app: &App) {
@@ -327,6 +434,7 @@ unsafe extern "system" fn window_proc(
                 ID_REVIEW => open_review(window, app),
                 ID_FOLDER => open_folder(window, app),
                 ID_RESTART => restart_engine(window, app),
+                ID_CLEAR => clear_personal(window, app),
                 _ => {}
             }
             LRESULT(0)
@@ -384,6 +492,7 @@ fn main() {
         let files = Files::locate();
         let saved = files.load();
         let app = Box::into_raw(Box::new(App { files, saved }));
+        set_icon(window);
         build(window, &*app);
         show(window, &(*app).saved);
         show_status(window, &*app);

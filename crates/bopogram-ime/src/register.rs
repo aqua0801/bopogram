@@ -25,7 +25,7 @@ use windows::Win32::UI::TextServices::{
     GUID_TFCAT_TIP_KEYBOARD,
 };
 
-use crate::dll::{module_path, CLSID_TEXT_SERVICE, DISPLAY_NAME, GUID_PROFILE, LANGID_ZH_TW};
+use crate::dll::{icon_path, module_path, CLSID_TEXT_SERVICE, DISPLAY_NAME, GUID_PROFILE, LANGID_ZH_TW};
 use crate::{wide, wide_z};
 
 const CATEGORIES: [GUID; 4] = [
@@ -89,6 +89,8 @@ pub fn register() -> Result<()> {
     set_string(&server, "", &path)?;
     set_string(&server, "ThreadingModel", "Apartment")?;
 
+    // Installed beside the programs; without it Windows shows its generic icon.
+    let icon = icon_path().filter(|icon| icon.exists()).map(|icon| wide(&icon.to_string_lossy()));
     with_com(|| unsafe {
         let profiles: ITfInputProcessorProfileMgr =
             CoCreateInstance(&CLSID_TF_InputProcessorProfiles, None, CLSCTX_INPROC_SERVER)?;
@@ -97,7 +99,7 @@ pub fn register() -> Result<()> {
             LANGID_ZH_TW,
             &GUID_PROFILE,
             &wide(DISPLAY_NAME),
-            &[], // no icon file: Windows shows its generic one
+            icon.as_deref().unwrap_or(&[]),
             0,
             HKL::default(),
             0,

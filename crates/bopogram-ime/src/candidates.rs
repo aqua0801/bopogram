@@ -20,7 +20,6 @@ use windows::Win32::UI::TextServices::{
     TF_CLUIE_PAGEINDEX, TF_CLUIE_SELECTION, TF_CLUIE_STRING,
 };
 
-use crate::controller::PAGE_SIZE;
 use crate::service::{self, Shared};
 use crate::wide;
 
@@ -102,7 +101,7 @@ impl ITfCandidateListUIElement_Impl for CandidateList_Impl {
         if count.is_null() {
             return Err(E_POINTER.into());
         }
-        let pages = page_starts(self.list()?.0.len());
+        let pages = service::page_starts(&self.state()?);
         unsafe {
             *count = pages.len() as u32;
             if !index.is_null() {
@@ -115,13 +114,15 @@ impl ITfCandidateListUIElement_Impl for CandidateList_Impl {
         Ok(())
     }
 
-    /// Our pages are fixed at nine candidates; other paging is declined.
+    /// Our pages have the size set in the settings; other paging is declined.
     fn SetPageIndex(&self, _index: *const u32, _count: u32) -> Result<()> {
         Err(E_FAIL.into())
     }
 
     fn GetCurrentPage(&self) -> Result<u32> {
-        Ok((self.list()?.1 / PAGE_SIZE) as u32)
+        let state = self.state()?;
+        let current = service::page_start(&state);
+        Ok(service::page_starts(&state).iter().position(|&start| start == current).unwrap_or(0) as u32)
     }
 }
 
@@ -144,24 +145,7 @@ impl ITfCandidateListUIElementBehavior_Impl for CandidateList_Impl {
     }
 }
 
-fn page_starts(count: usize) -> Vec<usize> {
-    (0..count.div_ceil(PAGE_SIZE).max(1)).map(|page| page * PAGE_SIZE).collect()
-}
-
 /// The element as TSF wants it for `BeginUIElement`.
 pub(crate) fn element(state: &Shared, document: Option<ITfDocumentMgr>) -> ITfUIElement {
     CandidateList::new(state, document).into()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pages_of_nine() {
-        assert_eq!(page_starts(0), [0]);
-        assert_eq!(page_starts(9), [0]);
-        assert_eq!(page_starts(10), [0, 9]);
-        assert_eq!(page_starts(27), [0, 9, 18]);
-    }
 }

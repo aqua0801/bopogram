@@ -9,6 +9,9 @@
 //!   applications (written by the settings window); otherwise each
 //!   application keeps its own, as Microsoft's input methods do.
 //! - `mode.txt`: the shared mode, `chinese` or `english`.
+//! - `keys.json`: selection keys, candidates per page, the mode a new
+//!   application starts in, and whether Shift alone switches the mode
+//!   (written by the settings window; see `Options`).
 //!
 //! Processes that cannot reach the folder use the defaults.
 
@@ -16,7 +19,7 @@ use std::cell::Cell;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use crate::controller::{CASUAL, FORMAL};
+use crate::controller::{Options, CASUAL, FORMAL};
 
 /// Candidate text size when nothing is set.
 pub const DEFAULT_FONT_PX: i32 = 18;
@@ -83,6 +86,24 @@ pub fn save_mode(chinese: bool) {
         let _ = std::fs::create_dir_all(&folder);
         let _ = std::fs::write(folder.join("mode.txt"), if chinese { "chinese" } else { "english" });
     }
+}
+
+thread_local! {
+    static OPTIONS: Cell<Option<(Instant, Options)>> = const { Cell::new(None) };
+}
+
+/// The key options in `keys.json`, read at most every few seconds.
+pub fn options() -> Options {
+    OPTIONS.with(|cached| match cached.get() {
+        Some((at, options)) if at.elapsed() < RECHECK => options,
+        _ => {
+            let options = folder()
+                .and_then(|f| std::fs::read_to_string(f.join("keys.json")).ok())
+                .map_or_else(Options::default, |text| Options::parse(&text));
+            cached.set(Some((Instant::now(), options)));
+            options
+        }
+    })
 }
 
 thread_local! {

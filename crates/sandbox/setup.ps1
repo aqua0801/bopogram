@@ -30,7 +30,7 @@ $clsid = "{B6B6D901-0BBF-4287-A302-F265DBE9A46C}"
 $profile = "{79EFFB1B-3CE8-41DB-9CA2-3318EC0AED82}"
 $install = "C:\Bopogram"
 New-Item -ItemType Directory -Force $install | Out-Null
-Copy-Item "C:\stage\bopogram_ime.dll", "C:\stage\bopogram-host.exe", "C:\stage\bopogram-settings.exe" $install -Force
+Copy-Item "C:\stage\bopogram_ime.dll", "C:\stage\bopogram-host.exe", "C:\stage\bopogram-settings.exe", "C:\stage\bopogram.ico" $install -Force
 New-Item -ItemType Directory -Force (Join-Path $install "x86") | Out-Null
 Copy-Item "C:\stage\x86\bopogram_ime.dll" (Join-Path $install "x86") -Force
 

@@ -4,8 +4,8 @@
 #   powershell -ExecutionPolicy Bypass -File crates\install\install.ps1
 #
 # What it changes:
-#   - copies bopogram_ime.dll, bopogram-host.exe and bopogram-settings.exe
-#     to $Install, the 32-bit bopogram_ime.dll to $Install\x86, and writes
+#   - copies bopogram_ime.dll, bopogram-host.exe, bopogram-settings.exe and
+#     bopogram.ico to $Install, the 32-bit bopogram_ime.dll to $Install\x86, and writes
 #     bopogram-host.json there
 #   - regsvr32 (64- and 32-bit): HKLM\SOFTWARE\Classes\CLSID\{B6B6D901-...},
 #     its 32-bit view under WOW6432Node, and HKLM\SOFTWARE\Microsoft\CTF\TIP\{B6B6D901-...}
@@ -43,8 +43,9 @@ $dll = Join-Path $release "bopogram_ime.dll"
 $hostExe = Join-Path $release "bopogram-host.exe"
 $settingsExe = Join-Path $release "bopogram-settings.exe"
 $dll32 = Join-Path (Split-Path -Parent $PSScriptRoot) "target\i686-pc-windows-msvc\release\bopogram_ime.dll"
+$icon = Join-Path (Split-Path -Parent $PSScriptRoot) "bopogram-ime\res\bopogram.ico"
 $reviewTool = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "prototype\tools\review_log.py"
-foreach ($path in $Python, $Config, $dll, $hostExe, $settingsExe) {
+foreach ($path in $Python, $Config, $dll, $hostExe, $settingsExe, $icon) {
     if (-not (Test-Path $path)) { throw "missing: $path (build with 'cargo build --release' in crates\)" }
 }
 if (-not (Test-Path $dll32)) {
@@ -63,7 +64,7 @@ $install32 = Join-Path $Install "x86"
 New-Item -ItemType Directory -Force $Install, $install32 | Out-Null
 Get-ChildItem $Install, $install32 -Filter "*.old-*" | Remove-Item -Force -ErrorAction SilentlyContinue
 $stamp = Get-Date -Format "yyyyMMddHHmmss"
-foreach ($pair in @($dll, $Install), @($hostExe, $Install), @($settingsExe, $Install), @($dll32, $install32)) {
+foreach ($pair in @($dll, $Install), @($hostExe, $Install), @($settingsExe, $Install), @($icon, $Install), @($dll32, $install32)) {
     $file, $folder = $pair
     $target = Join-Path $folder (Split-Path -Leaf $file)
     if (Test-Path $target) {

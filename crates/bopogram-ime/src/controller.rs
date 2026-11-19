@@ -15,8 +15,83 @@ use std::time::{Duration, Instant};
 
 use crate::protocol::{Engine, Failure, Op, Response};
 
-/// Candidates per page; the digit keys 1-9 pick from the page.
-pub const PAGE_SIZE: usize = 9;
+/// What the user chose in the settings window (`keys.json`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Options {
+    /// Candidates per page, 5 to 10.
+    pub page_size: usize,
+    /// Pick with A S D F ... instead of 1 2 3 ...
+    pub home_row: bool,
+    /// The mode a new application starts in.
+    pub start_chinese: bool,
+    /// Shift pressed and released on its own switches Chinese/English.
+    pub shift_toggles: bool,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Options { page_size: 9, home_row: false, start_chinese: true, shift_toggles: true }
+    }
+}
+
+impl Options {
+    const DIGITS: &'static str = "1234567890";
+    const HOME_ROW: &'static str = "asdfghjkl;";
+
+    /// Read `keys.json`; anything missing or out of range keeps its default.
+    pub fn parse(text: &str) -> Self {
+        let mut options = Options::default();
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}')) else {
+            return options;
+        };
+        if let Some(size) = value.get("page_size").and_then(serde_json::Value::as_u64) {
+            if (5..=10).contains(&size) {
+                options.page_size = size as usize;
+            }
+        }
+        match value.get("select_keys").and_then(serde_json::Value::as_str) {
+            Some("home_row") => options.home_row = true,
+            Some("digits") => options.home_row = false,
+            _ => {}
+        }
+        match value.get("start_mode").and_then(serde_json::Value::as_str) {
+            Some("english") => options.start_chinese = false,
+            Some("chinese") => options.start_chinese = true,
+            _ => {}
+        }
+        if let Some(on) = value.get("shift_toggle").and_then(serde_json::Value::as_bool) {
+            options.shift_toggles = on;
+        }
+        options
+    }
+
+    /// The keys that pick from a page, in order.
+    pub fn labels(&self) -> Vec<char> {
+        let keys = if self.home_row { Self::HOME_ROW } else { Self::DIGITS };
+        keys.chars().take(self.page_size).collect()
+    }
+}
+
+/// What a key types with Caps Lock taken into account: it swaps the case
+/// of letters, and only of letters.
+fn typed_with_caps(key: Key) -> Option<char> {
+    ascii(key.vk, key.shift).map(|c| {
+        if key.caps && c.is_ascii_alphabetic() {
+            if key.shift { c.to_ascii_lowercase() } else { c.to_ascii_uppercase() }
+        } else {
+            c
+        }
+    })
+}
+
+/// The full-width form of a printable ASCII character.
+fn full_width(c: char) -> char {
+    match c {
+        ' ' => '\u{3000}',
+        '!'..='~' => char::from_u32(c as u32 + 0xFEE0).unwrap_or(c),
+        c => c,
+    }
+}
 
 pub const CASUAL: &str = "casual";
 pub const FORMAL: &str = "formal";
@@ -78,6 +153,8 @@ pub struct Outcome {
     pub commit: Option<String>,
     /// The key switched between the casual and the formal style.
     pub style_changed: bool,
+    /// The key switched between full and half width.
+    pub width_changed: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -95,6 +172,10 @@ enum Action {
     PrevPage,
     CloseWindow,
     ToggleStyle,
+    ToggleWidth,
+    /// Text for the document, not for the engine (full-width characters
+    /// typed with nothing composed).
+    Type(char),
 }
 
 fn is_shift(code: u32) -> bool {
@@ -169,6 +250,11 @@ pub struct Controller<E: Engine> {
     shift_alone: bool,
     /// ` was pressed: the next symbol key gives its full-width form.
     prefix: bool,
+    /// Full-width mode (Shift+Space, Chinese mode only): Latin letters,
+    /// digits, symbols and spaces typed outside a composition come out full
+    /// width.
+    full_width: bool,
+    options: Options,
     /// A request failed, so the engine may still hold a composition that
     /// the front end has given up on. Discard it before the next request.
     stale: bool,
@@ -213,6 +299,8 @@ impl<E: Engine> Controller<E> {
             enabled: true,
             shift_alone: false,
             prefix: false,
+            full_width: false,
+            options: Options::default(),
             stale: false,
             behind: 0,
             queued: Vec::new(),
@@ -252,6 +340,25 @@ impl<E: Engine> Controller<E> {
         self.chinese
     }
 
+    /// Full width is in effect (it applies in Chinese mode only).
+    pub fn full_width(&self) -> bool {
+        self.full_width && self.chinese
+    }
+
+    pub fn set_options(&mut self, options: Options) {
+        self.options = options;
+    }
+
+    /// The keys that pick from a page, shown beside the candidates.
+    pub fn labels(&self) -> Vec<char> {
+        self.options.labels()
+    }
+
+    /// Where the page with the highlighted candidate starts.
+    pub fn page_start(&self) -> usize {
+        self.selected / self.options.page_size * self.options.page_size
+    }
+
     /// Also true while the engine has not answered: it may be composing
     /// something this side has not seen yet.
     pub fn composing(&self) -> bool {
@@ -283,14 +390,15 @@ impl<E: Engine> Controller<E> {
         if !self.window_open {
             return None;
         }
-        let page = self.selected / PAGE_SIZE;
-        let start = page * PAGE_SIZE;
-        let end = (start + PAGE_SIZE).min(self.candidates.len());
+        let size = self.options.page_size;
+        let page = self.selected / size;
+        let start = page * size;
+        let end = (start + size).min(self.candidates.len());
         Some((&self.candidates[start..end], self.selected - start, page, self.pages()))
     }
 
     fn pages(&self) -> usize {
-        self.candidates.len().div_ceil(PAGE_SIZE).max(1)
+        self.candidates.len().div_ceil(self.options.page_size).max(1)
     }
 
     /// The whole candidate list and the highlighted index, while the
@@ -301,7 +409,7 @@ impl<E: Engine> Controller<E> {
 
     /// Where each page starts in the candidate list.
     pub fn page_starts(&self) -> Vec<usize> {
-        (0..self.pages()).map(|page| page * PAGE_SIZE).collect()
+        (0..self.pages()).map(|page| page * self.options.page_size).collect()
     }
 
     /// Highlight candidate `index` of the whole list. Out of range is ignored.
@@ -315,8 +423,9 @@ impl<E: Engine> Controller<E> {
     pub fn turn_page(&mut self, delta: isize) {
         if self.window_open {
             let pages = self.pages();
-            let page = (self.selected / PAGE_SIZE + pages).wrapping_add_signed(delta) % pages;
-            self.selected = page * PAGE_SIZE;
+            let size = self.options.page_size;
+            let page = (self.selected / size + pages).wrapping_add_signed(delta) % pages;
+            self.selected = page * size;
         }
     }
 
@@ -339,14 +448,39 @@ impl<E: Engine> Controller<E> {
             }
             Err(Failure::Unreachable) => self.lost(),
         }
-        Outcome { eaten: true, commit: self.take_committed(), style_changed: false }
+        Outcome { eaten: true, commit: self.take_committed(), ..Outcome::default() }
     }
 
     // -- deciding ----------------------------------------------------------
 
+    /// `c` as typed in the current width.
+    fn width(&self, c: char) -> char {
+        if self.full_width { full_width(c) } else { c }
+    }
+
+    /// A key with nothing composed: the application's, unless full width
+    /// changes what it types.
+    fn idle_key(&self, typed: Option<char>) -> Action {
+        match typed {
+            Some(c) if self.full_width => Action::Type(full_width(c)),
+            _ => Action::Pass,
+        }
+    }
+
+    /// The position on the page that this key picks, if it is a selection key.
+    fn selection_key(&self, key: Key) -> Option<usize> {
+        let c = ascii(key.vk, false)?;
+        self.options.labels().iter().position(|&label| label == c)
+    }
+
     fn classify(&self, key: Key) -> Action {
+        // English mode is the keyboard as it is: Shift+Space included,
+        // which is easily pressed while typing capitals.
         if !self.enabled || !self.chinese || is_modifier(key.vk) || key.alt {
             return Action::Pass;
+        }
+        if key.vk == vk::SPACE && key.shift && !key.ctrl {
+            return Action::ToggleWidth;
         }
         if key.ctrl {
             // Ctrl with these keys types full-width punctuation; every
@@ -369,12 +503,12 @@ impl<E: Engine> Controller<E> {
         }
         let composing = self.composing();
         let busy = composing || self.prefix;
+        let typed = ascii(key.vk, key.shift);
         // Caps Lock means the user wants Latin letters.
         if key.caps && !busy {
-            return Action::Pass;
+            return self.idle_key(typed_with_caps(key));
         }
         let idle = if busy { Action::Swallow } else { Action::Pass };
-        let typed = ascii(key.vk, key.shift);
 
         if self.prefix {
             if let Some(c) = typed.filter(char::is_ascii_punctuation) {
@@ -384,16 +518,15 @@ impl<E: Engine> Controller<E> {
         }
 
         if self.window_open && !key.shift {
-            let page_start = self.selected / PAGE_SIZE * PAGE_SIZE;
+            if let Some(position) = self.selection_key(key) {
+                let index = self.page_start() + position;
+                return if index < self.candidates.len() {
+                    Action::SelectIndex(index)
+                } else {
+                    Action::Swallow
+                };
+            }
             match key.vk {
-                0x31..=0x39 => {
-                    let index = page_start + (key.vk - 0x31) as usize;
-                    return if index < self.candidates.len() {
-                        Action::SelectIndex(index)
-                    } else {
-                        Action::Swallow
-                    };
-                }
                 vk::DOWN => return Action::MoveSelection(1),
                 vk::UP => return Action::MoveSelection(-1),
                 vk::NEXT | vk::SPACE => return Action::NextPage,
@@ -415,7 +548,9 @@ impl<E: Engine> Controller<E> {
                     c.to_ascii_lowercase()
                 };
                 return if composing && self.pending.is_empty() {
-                    Action::Send(Op::Text(c.to_string()))
+                    Action::Send(Op::Text(self.width(c).to_string()))
+                } else if !busy {
+                    self.idle_key(Some(c))
                 } else {
                     idle
                 };
@@ -424,9 +559,10 @@ impl<E: Engine> Controller<E> {
         if key.shift {
             return match typed.filter(char::is_ascii_punctuation) {
                 Some(c) if composing && self.pending.is_empty() => {
-                    Action::Send(Op::Text(c.to_string()))
+                    Action::Send(Op::Text(self.width(c).to_string()))
                 }
-                _ => idle, // Shift+Space (full/half width) is not implemented
+                Some(c) if !busy => self.idle_key(Some(c)),
+                _ => idle,
             };
         }
 
@@ -435,6 +571,7 @@ impl<E: Engine> Controller<E> {
             return match c {
                 // First tone, or a space inside the composition.
                 ' ' if composing => Action::Send(Op::Key(' ')),
+                ' ' if !busy => self.idle_key(Some(' ')),
                 ' ' => idle,
                 // A tone with no syllable to attach to.
                 c if is_tone(c) && !has_pending => idle,
@@ -451,14 +588,16 @@ impl<E: Engine> Controller<E> {
             }
             _ => {}
         }
+        let numpad = (vk::NUMPAD0..=vk::NUMPAD9)
+            .contains(&key.vk)
+            .then(|| char::from_u32(key.vk - vk::NUMPAD0 + 0x30).unwrap_or('0'));
         if !composing {
-            return idle;
+            return if busy { idle } else { self.idle_key(numpad) };
         }
         let settled = self.pending.is_empty();
         match key.vk {
             vk::NUMPAD0..=vk::NUMPAD9 if settled => {
-                let digit = char::from_u32(key.vk - vk::NUMPAD0 + 0x30).unwrap_or('0');
-                Action::Send(Op::Text(digit.to_string()))
+                Action::Send(Op::Text(self.width(numpad.unwrap_or('0')).to_string()))
             }
             vk::BACK => Action::Send(Op::Backspace),
             vk::DELETE => Action::Send(Op::Delete),
@@ -766,6 +905,7 @@ impl<E: Engine> Controller<E> {
                 | Action::MoveSelection(_)
                 | Action::NextPage
                 | Action::PrevPage
+                | Action::ToggleWidth
         ) {
             self.window_open = false;
         }
@@ -773,6 +913,15 @@ impl<E: Engine> Controller<E> {
         let count = self.candidates.len().max(1);
         let sent = match action {
             Action::Pass | Action::Swallow | Action::CloseWindow => Ok(()),
+            Action::ToggleWidth => {
+                self.full_width = !self.full_width;
+                outcome.width_changed = true;
+                Ok(())
+            }
+            Action::Type(c) => {
+                self.committed.push(c);
+                Ok(())
+            }
             Action::StartPrefix => {
                 self.prefix = true;
                 Ok(())
@@ -839,7 +988,8 @@ impl<E: Engine> Controller<E> {
     /// Shift pressed and released on its own switches Chinese/English.
     pub fn key_up(&mut self, key: Key) -> Outcome {
         let mut outcome = Outcome::default();
-        if is_shift(key.vk) && std::mem::take(&mut self.shift_alone) && self.enabled {
+        let alone = std::mem::take(&mut self.shift_alone);
+        if is_shift(key.vk) && alone && self.enabled && self.options.shift_toggles {
             outcome.commit = self.toggle_chinese();
         }
         outcome
@@ -991,7 +1141,7 @@ mod tests {
     }
 
     fn eaten(commit: Option<&str>) -> Outcome {
-        Outcome { eaten: true, commit: commit.map(str::to_owned), style_changed: false }
+        Outcome { eaten: true, commit: commit.map(str::to_owned), ..Outcome::default() }
     }
 
     #[test]
@@ -1221,7 +1371,7 @@ mod tests {
         let toggle = Key { ctrl: true, ..key('`') };
         assert!(c.test_key(toggle));
         let outcome = c.key_down(toggle);
-        assert_eq!(outcome, Outcome { eaten: true, commit: None, style_changed: true });
+        assert_eq!(outcome, Outcome { eaten: true, style_changed: true, ..Outcome::default() });
         assert_eq!(c.style(), FORMAL);
         assert_eq!(c.engine_mut().log, [Op::Style(FORMAL.into()), Op::State]);
 
@@ -1403,6 +1553,85 @@ mod tests {
         assert_eq!(c.key_down(key('i')), eaten(Some("ㄨ")));
         assert!(!c.composing());
         assert_eq!(c.key_down(key('j')), Outcome::default());
+    }
+
+    #[test]
+    fn options_from_the_settings_window() {
+        assert_eq!(Options::parse(""), Options::default());
+        let options = Options::parse(
+            r#"{"page_size": 6, "select_keys": "home_row", "start_mode": "english", "shift_toggle": false}"#,
+        );
+        assert_eq!(
+            options,
+            Options { page_size: 6, home_row: true, start_chinese: false, shift_toggles: false }
+        );
+        assert_eq!(options.labels(), ['a', 's', 'd', 'f', 'g', 'h']);
+        assert_eq!(Options::parse(r#"{"page_size": 40}"#).page_size, 9, "out of range");
+        assert_eq!(Options { page_size: 10, ..Options::default() }.labels().last(), Some(&'0'));
+    }
+
+    #[test]
+    fn selection_keys_and_page_size() {
+        let mut c = Controller::new(Fake::default());
+        c.set_options(Options { page_size: 5, home_row: true, ..Options::default() });
+        for k in "ji3".chars() {
+            c.key_down(key(k));
+        }
+        c.key_down(code(vk::DOWN));
+        let (items, _, page, pages) = c.candidate_page().unwrap();
+        assert_eq!((items.len(), page, pages), (5, 0, 3));
+        assert_eq!(c.labels(), ['a', 's', 'd', 'f', 'g']);
+        c.key_down(key(' '));
+        assert_eq!(c.page_start(), 5);
+        // D picks the third on the second page; a digit is not a selection key.
+        assert!(c.test_key(key('d')));
+        c.key_down(key('d'));
+        assert_eq!(c.engine_mut().log.last(), Some(&Op::Select(7)));
+    }
+
+    #[test]
+    fn shift_alone_can_be_turned_off() {
+        let mut c = Controller::new(Fake::default());
+        c.set_options(Options { shift_toggles: false, ..Options::default() });
+        c.key_down(code(vk::SHIFT));
+        c.key_up(code(vk::SHIFT));
+        assert!(c.chinese());
+    }
+
+    #[test]
+    fn full_width() {
+        let mut c = Controller::new(Fake::default());
+        let shift_space = Key { shift: true, ..key(' ') };
+        assert!(c.test_key(shift_space));
+        let outcome = c.key_down(shift_space);
+        assert!(outcome.eaten && outcome.width_changed);
+        assert!(c.full_width());
+
+        // Chinese mode, nothing composed: space, Shift letters and symbols, Caps Lock.
+        assert_eq!(c.key_down(key(' ')), eaten(Some("\u{3000}")));
+        assert_eq!(c.key_down(Key { shift: true, ..key('a') }), eaten(Some("Ａ")));
+        assert_eq!(c.key_down(Key { shift: true, ..key('1') }), eaten(Some("！")));
+        assert_eq!(c.key_down(Key { caps: true, ..key('b') }), eaten(Some("Ｂ")));
+        assert_eq!(c.key_down(code(vk::NUMPAD0 + 7)), eaten(Some("７")));
+        // Bopomofo keys still compose, and Ctrl shortcuts stay the application's.
+        assert_eq!(c.key_down(key('j')), eaten(None));
+        assert_eq!(c.preedit(), "j");
+        c.key_down(code(vk::ESCAPE));
+        assert!(!c.test_key(Key { ctrl: true, ..key('c') }));
+
+        // English mode is untouched, Shift+Space included.
+        c.toggle_chinese();
+        assert!(!c.full_width());
+        assert!(!c.test_key(key('j')));
+        assert!(!c.test_key(shift_space));
+        c.toggle_chinese();
+        assert!(c.full_width(), "kept for when Chinese mode returns");
+
+        // And back to half width.
+        c.key_down(shift_space);
+        assert!(!c.full_width());
+        assert!(!c.test_key(key(' ')));
+        assert!(c.engine_mut().log.iter().all(|op| !matches!(op, Op::Text(_))), "nothing typed went to the engine");
     }
 
     #[test]

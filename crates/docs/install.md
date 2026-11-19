@@ -75,7 +75,9 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 
 ## 工具列圖示與設定
 
-切到本輸入法時，工作列的輸入指示區會出現「中」或「英」的圖示：
+切到本輸入法時，工作列的輸入指示區會出現「中」或「英」的圖示，顏色跟隨工作列的淺色／深色；
+全形模式時字下方多一條短橫線。輸入法清單（Win+空白鍵）裡的 Bopogram 圖示是藍底的「ㄅ」
+（`bopogram.ico`，由 `bopogram-ime\src\icon.rs` 自行繪製產生）。
 
 - 左鍵：切換中／英（同單按 Shift）。
 - 右鍵：選單，可切換口語／正式，或開啟「設定…」。
@@ -86,13 +88,18 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 |---|---|---|
 | 選字風格：口語／正式 | `%LOCALAPPDATA%\Bopogram\style.txt` | 切換到任一程式時 |
 | 所有程式共用中／英模式 | `%LOCALAPPDATA%\Bopogram\mode-scope.txt`（共用的模式存在 `mode.txt`） | 切換到任一程式時 |
+| 新開的程式以中文或英文開始 | `%LOCALAPPDATA%\Bopogram\keys.json` 的 `start_mode` | 之後開啟的程式 |
+| 單按 Shift 切換中／英 | `keys.json` 的 `shift_toggle` | 約 5 秒內 |
+| 選字鍵：1 2 3… 或 A S D F… | `keys.json` 的 `select_keys` | 約 5 秒內 |
+| 每頁候選數：5、7、9、10 | `keys.json` 的 `page_size` | 約 5 秒內 |
 | 候選視窗文字大小 | `%LOCALAPPDATA%\Bopogram\candidate-font.txt` | 約 5 秒內 |
 | 個人化學習 | 執行包 `config.json` 的 `user_model` | 套用時重新啟動引擎 |
 | 打字紀錄 | 執行包 `config.json` 的 `typing_log` | 套用時重新啟動引擎 |
 | 計時紀錄 | `%LOCALAPPDATA%\Bopogram\timing-until.txt`（到期時間） | 約 10 秒內；24 小時後自動關閉 |
 
 另有「審核打字紀錄…」（開啟 `review_log.py`）、「開啟資料夾」（`userdata\`）、「重新啟動引擎」。
-關閉個人化學習或打字紀錄不會刪除已存的資料。
+關閉個人化學習或打字紀錄不會刪除已存的資料；要刪除個人化學習資料，按「清除個人化資料…」：
+會先停止引擎、刪除 `user_model` 指向的檔案（預設 `userdata\user.json`），再重新啟動引擎。打字紀錄不受影響。
 
 ## 候選視窗
 
@@ -112,7 +119,11 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
   全形標點用 Ctrl 加符號、單按 `=` `[` `]` `\` `'`，或先按 `` ` `` 再按符號鍵。
 - Ctrl 加符號只接 `,` `.` `'` `;` `[` `]`（，。、；【】），以及 Ctrl+Shift 加 `;` `/` `1`（：？！）；
   其他 Ctrl 組合一律交給程式。游標在符號旁時，↓／↑ 可換成相關符號（例如 【 → 「）。
-- 沒有全形／半形切換（Shift+空白鍵）。
+- Shift+空白鍵（中文模式）：全形／半形切換，切換時游標旁會短暫顯示「全形」或「半形」。
+  全形時，沒在組字時打的空白、Shift 或 Caps Lock 的英文字母、數字鍵台與 Shift 符號都會變成全形；
+  注音鍵照常組字，Ctrl 快速鍵照常交給程式。英文模式一律是一般鍵盤（Shift+空白鍵也不攔），
+  以免打大寫字母接空白時誤觸。
+- 選字鍵改成 A S D F… 後，候選視窗開著時這些鍵用來選字，數字鍵則照常是注音。
 
 ## 已知限制
 
