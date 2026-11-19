@@ -30,7 +30,7 @@ class Engine:
      "beam": 16, "max_candidates": 40, "word_penalty": 0.0, "eos_weight": 0.0,
      "style": "casual", "user_model": null, "typing_log": null,
      "neural": {"model": "neural/neural.int8.onnx", "weight": 0.3, "floor": -12.0, "threads": 2},
-     "charlm": {"model": "charlm/charlm.int8.onnx", "weight": 0.8, "top": 5, "threads": 2}}
+     "charlm": {"model": "charlm/charlm.int8.onnx", "weight": 0.5, "top": 5, "threads": 2}}
 
     "style" is "casual" (a lone neutral-tone ㄉㄜ is always 的) or "formal"
     (的 / 地 / 得 are chosen by the model); the default is "casual".
@@ -87,7 +87,7 @@ class Engine:
         self.neural = NeuralScorer(model, threads)
         self.neural_weight, self.neural_floor = weight, floor
 
-    def set_charlm(self, model, weight: float = 0.8, top: int = 5, threads: int = 2) -> None:
+    def set_charlm(self, model, weight: float = 0.5, top: int = 5, threads: int = 2) -> None:
         from .charlm import CharLMScorer  # imported only when used: ONNX Runtime is optional
 
         self.charlm = CharLMScorer(model, threads)

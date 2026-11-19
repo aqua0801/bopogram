@@ -179,7 +179,14 @@ class Session:
         target = self.cursor if self.candidate_side == "after" else self.cursor - 1
         target = max(0, min(self._size - 1, target))
         items = self._items()
-        return (items[target][1], items[target][2]) if target < len(items) else None
+        if target >= len(items):
+            return None
+        _, start, end = items[target]
+        if self.candidate_side == "after" and self.cursor < self._size:
+            # Inside the buffer the list starts at the character after the cursor, even in
+            # the middle of a word: with 跑道 and the cursor before 道 it offers 道, not 跑.
+            start = target
+        return start, end
 
     def candidates(self) -> list[dict]:
         """Words that can start where the word at the cursor starts, longest first."""

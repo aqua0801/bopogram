@@ -8,8 +8,11 @@ Groups (each becomes MODEL_DIR/<group>.binary):
     wiki     Wikipedia
     judicial court judgments
     general  press releases, Wikinews, user prompts
+    fineweb  FineWeb2 web pages (Traditional, filtered; large, so pruned harder)
 
-Order 3, modified Kneser-Ney, singleton trigrams pruned, quantised trie.
+Order 3, modified Kneser-Ney, quantised trie. Pruning per group (PRUNE): by
+default singleton trigrams are dropped; fineweb keeps bigrams seen at least
+twice and trigrams seen at least four times, to stay near 150 MB.
 lmplz memory is capped (-S) and its temporary files go to MODEL_DIR/tmp.
 Resume: a group whose .binary exists is skipped; the ARPA file is kept so
 later tools (interpolation, size experiments) do not need to retrain.
@@ -27,7 +30,10 @@ GROUPS = {
     "wiki": ["zhwiki"],
     "judicial": ["judicial"],
     "general": ["ey", "ey_news", "zhwikinews", "twllm"],
+    "fineweb": ["fineweb2"],
+    "fineweb_small": ["fineweb2"],
 }
+PRUNE = {"general": [], "fineweb": ["0", "1", "3"], "fineweb_small": ["0", "2", "6"]}  # others: ["0", "0", "1"]
 HERE = Path(__file__).resolve().parent
 
 
@@ -53,7 +59,8 @@ def main() -> None:
             continue
         arpa = args.model_dir / f"{group}.arpa"
         dirs = [str(args.segmented_dir / s) for s in sources]
-        prune = ["--prune", "0", "0", "1"] if group != "general" else []
+        levels = PRUNE.get(group, ["0", "0", "1"])
+        prune = ["--prune", *levels] if levels else []
         prep = subprocess.Popen([sys.executable, str(HERE / "prepare.py"), str(args.dict_tsv), *dirs],
                                 stdout=subprocess.PIPE)
         with open(arpa.with_suffix(".tmp"), "wb") as out, open(args.model_dir / f"{group}.lmplz.log", "wb") as log:
