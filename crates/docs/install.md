@@ -84,6 +84,7 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 | 選項 | 存在哪裡 | 何時生效 |
 |---|---|---|
 | 選字風格：口語／正式 | `%LOCALAPPDATA%\Bopogram\style.txt` | 切換到任一程式時 |
+| 所有程式共用中／英模式 | `%LOCALAPPDATA%\Bopogram\mode-scope.txt`（共用的模式存在 `mode.txt`） | 切換到任一程式時 |
 | 候選視窗文字大小 | `%LOCALAPPDATA%\Bopogram\candidate-font.txt` | 約 5 秒內 |
 | 個人化學習 | 執行包 `config.json` 的 `user_model` | 套用時重新啟動引擎 |
 | 打字紀錄 | 執行包 `config.json` 的 `typing_log` | 套用時重新啟動引擎 |
@@ -104,6 +105,8 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 與微軟新注音相同的部分見 `prototype\docs\frontend-handoff.md` 的按鍵表。與它不同或需要知道的：
 
 - Shift 單按：中／英切換。Ctrl+`` ` ``：口語／正式切換。
+- 中／英模式預設每個程式各自記住（同微軟注音）。設定裡勾選「所有程式共用」後，
+  在任一程式切換，其他程式在下次切到它時跟著變。
 - Shift 加符號鍵輸入半形符號（`:` `"` `<` `>` `?` `!` 等）：組字中插入組字區，沒在組字時直接交給程式。
   全形標點用 Ctrl 加符號、單按 `=` `[` `]` `\` `'`，或先按 `` ` `` 再按符號鍵。
 - Ctrl 加符號只接 `,` `.` `'` `;` `[` `]`（，。、；【】），以及 Ctrl+Shift 加 `;` `/` `1`（：？！）；

@@ -32,6 +32,8 @@ pub struct Settings {
     pub timing: bool,
     /// Candidate window text size, in pixels at 96 DPI.
     pub font_px: i32,
+    /// One Chinese/English mode for all applications, instead of one each.
+    pub shared_mode: bool,
 }
 
 /// The text sizes offered, and the one used when nothing is set.
@@ -67,6 +69,11 @@ impl Files {
     /// The candidate window's text size, read by the input method.
     fn font_file(&self) -> Option<PathBuf> {
         Some(self.style.as_ref()?.with_file_name("candidate-font.txt"))
+    }
+
+    /// `global` when the mode is shared, read by the input method.
+    fn mode_scope_file(&self) -> Option<PathBuf> {
+        Some(self.style.as_ref()?.with_file_name("mode-scope.txt"))
     }
 
     /// Until when the timing log is on, if it is.
@@ -137,6 +144,10 @@ impl Files {
                 .and_then(|text| text.trim().parse().ok())
                 .filter(|px| (12..=40).contains(px))
                 .unwrap_or(DEFAULT_FONT_PX),
+            shared_mode: self
+                .mode_scope_file()
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .is_some_and(|text| text.trim() == "global"),
         }
     }
 
@@ -148,6 +159,10 @@ impl Files {
         }
         std::fs::write(style, if settings.formal { FORMAL } else { CASUAL })
             .map_err(|e| format!("{}: {e}", style.display()))?;
+        if let Some(scope) = self.mode_scope_file() {
+            std::fs::write(&scope, if settings.shared_mode { "global" } else { "application" })
+                .map_err(|e| format!("{}: {e}", scope.display()))?;
+        }
         if let Some(font) = self.font_file() {
             std::fs::write(&font, settings.font_px.to_string())
                 .map_err(|e| format!("{}: {e}", font.display()))?;
@@ -277,7 +292,14 @@ mod tests {
         let loaded = files.load();
         assert_eq!(
             loaded,
-            Settings { formal: true, learning: true, typing_log: false, timing: false, font_px: DEFAULT_FONT_PX }
+            Settings {
+                formal: true,
+                learning: true,
+                typing_log: false,
+                timing: false,
+                font_px: DEFAULT_FONT_PX,
+                shared_mode: false,
+            }
         );
 
         // Style alone does not touch the config.
@@ -286,7 +308,14 @@ mod tests {
         assert_eq!(std::fs::read_to_string(folder.join("config.json")).unwrap(), before);
         assert!(!files.load().formal);
 
-        let wanted = Settings { formal: false, learning: false, typing_log: true, timing: true, font_px: 22 };
+        let wanted = Settings {
+            formal: false,
+            learning: false,
+            typing_log: true,
+            timing: true,
+            font_px: 22,
+            shared_mode: true,
+        };
         files.save(&wanted, true).unwrap();
         assert_eq!(files.load(), wanted);
         let until = files.timing_until().unwrap();

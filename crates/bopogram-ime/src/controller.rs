@@ -719,6 +719,16 @@ impl<E: Engine> Controller<E> {
         self.chinese = !self.chinese;
         self.finish()
     }
+
+    /// Take on a mode chosen elsewhere (another application, when the mode
+    /// is shared). Like a switch, it ends a composition in progress.
+    pub fn set_chinese(&mut self, chinese: bool) -> Option<String> {
+        if chinese == self.chinese {
+            return None;
+        }
+        self.chinese = chinese;
+        self.finish()
+    }
 }
 
 #[cfg(test)]
@@ -964,6 +974,17 @@ mod tests {
         c.close_candidates();
         assert!(c.candidate_page().is_none());
         assert!(c.composing());
+    }
+
+    #[test]
+    fn mode_from_elsewhere() {
+        let mut c = typed("ji3");
+        assert_eq!(c.set_chinese(true), None);
+        assert_eq!(c.set_chinese(false).as_deref(), Some("字"));
+        assert!(!c.chinese());
+        assert!(!c.test_key(key('j')));
+        assert_eq!(c.set_chinese(true), None);
+        assert!(c.test_key(key('j')));
     }
 
     #[test]

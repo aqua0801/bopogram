@@ -5,6 +5,10 @@
 //!   holds in the others and after a restart.
 //! - `candidate-font.txt`: the text size of the candidate window, in pixels
 //!   at 96 DPI (written by the settings window).
+//! - `mode-scope.txt`: `global` if the Chinese/English mode is shared by all
+//!   applications (written by the settings window); otherwise each
+//!   application keeps its own, as Microsoft's input methods do.
+//! - `mode.txt`: the shared mode, `chinese` or `english`.
 //!
 //! Processes that cannot reach the folder use the defaults.
 
@@ -39,6 +43,29 @@ pub fn save_style(style: &str) {
             let _ = std::fs::create_dir_all(folder);
         }
         let _ = std::fs::write(path, style);
+    }
+}
+
+/// Is the Chinese/English mode shared by all applications?
+pub fn shared_mode() -> bool {
+    folder()
+        .and_then(|f| std::fs::read_to_string(f.join("mode-scope.txt")).ok())
+        .is_some_and(|text| text.trim() == "global")
+}
+
+/// The shared mode: true for Chinese. `None` if never saved.
+pub fn load_mode() -> Option<bool> {
+    match std::fs::read_to_string(folder()?.join("mode.txt")).ok()?.trim() {
+        "chinese" => Some(true),
+        "english" => Some(false),
+        _ => None,
+    }
+}
+
+pub fn save_mode(chinese: bool) {
+    if let Some(folder) = folder() {
+        let _ = std::fs::create_dir_all(&folder);
+        let _ = std::fs::write(folder.join("mode.txt"), if chinese { "chinese" } else { "english" });
     }
 }
 

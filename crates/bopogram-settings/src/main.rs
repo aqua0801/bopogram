@@ -64,11 +64,12 @@ const ID_STATUS: i32 = 120;
 const ID_TIMING: i32 = 121;
 /// One per entry of `FONT_SIZES`.
 const ID_FONT: i32 = 130;
+const ID_SHARED_MODE: i32 = 140;
 const STATUS_TIMER: usize = 1;
 
 /// Client area in pixels at 96 DPI.
 const WIDTH: i32 = 460;
-const HEIGHT: i32 = 482;
+const HEIGHT: i32 = 544;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -166,30 +167,33 @@ fn build(window: HWND, app: &App) {
     b.option("口語：輕聲「ㄉㄜ」一律先選「的」", BS_AUTORADIOBUTTON, WS_GROUP.0, ID_CASUAL, 32);
     b.option("正式：的／地／得由模型判斷", BS_AUTORADIOBUTTON, 0, ID_FORMAL, 58);
 
-    b.group("候選視窗文字大小", 104, 56);
+    b.group("中／英模式", 104, 56);
+    b.option("所有程式共用同一個中／英模式（關閉時各程式分開）", BS_AUTOCHECKBOX, WS_GROUP.0, ID_SHARED_MODE, 126);
+
+    b.group("候選視窗文字大小", 166, 56);
     for (i, name) in ["小", "中", "大", "特大"].iter().enumerate() {
         let style = WS_TABSTOP.0 | BS_AUTORADIOBUTTON | if i == 0 { WS_GROUP.0 } else { 0 };
-        b.control(w!("BUTTON"), name, style, ID_FONT + i as i32, 26 + 100 * i as i32, 126, 90, 24);
+        b.control(w!("BUTTON"), name, style, ID_FONT + i as i32, 26 + 100 * i as i32, 188, 90, 24);
     }
 
-    b.group("學習與紀錄", 166, 112);
-    b.option("個人化學習：記住我常用與改選過的詞", BS_AUTOCHECKBOX, WS_GROUP.0, ID_LEARNING, 188);
-    b.option("打字紀錄：記下引擎首選與我的修改，審核後才匯出", BS_AUTOCHECKBOX, 0, ID_TYPING_LOG, 214);
-    b.button("審核打字紀錄…", ID_REVIEW, 26, 242, 140);
-    b.button("開啟資料夾", ID_FOLDER, 176, 242, 110);
+    b.group("學習與紀錄", 228, 112);
+    b.option("個人化學習：記住我常用與改選過的詞", BS_AUTOCHECKBOX, WS_GROUP.0, ID_LEARNING, 250);
+    b.option("打字紀錄：記下引擎首選與我的修改，審核後才匯出", BS_AUTOCHECKBOX, 0, ID_TYPING_LOG, 276);
+    b.button("審核打字紀錄…", ID_REVIEW, 26, 304, 140);
+    b.button("開啟資料夾", ID_FOLDER, 176, 304, 110);
 
-    b.group("引擎", 288, 114);
+    b.group("引擎", 350, 114);
     let bundle = app.files.config.as_deref().and_then(Path::parent);
     let bundle = bundle.map_or("找不到（bopogram-host.json）".to_owned(), |p| p.display().to_string());
-    b.label(&format!("執行包：{bundle}"), -1, 26, 310, WIDTH - 52);
-    b.label("", ID_STATUS, 26, 338, 270);
-    b.button("重新啟動引擎", ID_RESTART, WIDTH - 26 - 126, 332, 126);
-    b.option("計時紀錄（只記耗時，24 小時後自動關閉）", BS_AUTOCHECKBOX, WS_GROUP.0, ID_TIMING, 366);
+    b.label(&format!("執行包：{bundle}"), -1, 26, 372, WIDTH - 52);
+    b.label("", ID_STATUS, 26, 400, 270);
+    b.button("重新啟動引擎", ID_RESTART, WIDTH - 26 - 126, 394, 126);
+    b.option("計時紀錄（只記耗時，24 小時後自動關閉）", BS_AUTOCHECKBOX, WS_GROUP.0, ID_TIMING, 428);
 
-    b.label("學習與紀錄的變更會在套用時重新啟動引擎。", -1, 14, 412, WIDTH - 28);
-    b.button("確定", ID_OK, WIDTH - 12 - 80 * 3 - 16, 442, 80);
-    b.button("取消", ID_CANCEL, WIDTH - 12 - 80 * 2 - 8, 442, 80);
-    b.button("套用", ID_APPLY, WIDTH - 12 - 80, 442, 80);
+    b.label("學習與紀錄的變更會在套用時重新啟動引擎。", -1, 14, 474, WIDTH - 28);
+    b.button("確定", ID_OK, WIDTH - 12 - 80 * 3 - 16, 504, 80);
+    b.button("取消", ID_CANCEL, WIDTH - 12 - 80 * 2 - 8, 504, 80);
+    b.button("套用", ID_APPLY, WIDTH - 12 - 80, 504, 80);
 }
 
 fn item(window: HWND, id: i32) -> Option<HWND> {
@@ -213,6 +217,7 @@ fn show(window: HWND, settings: &Settings) {
     set_checked(window, ID_LEARNING, settings.learning);
     set_checked(window, ID_TYPING_LOG, settings.typing_log);
     set_checked(window, ID_TIMING, settings.timing);
+    set_checked(window, ID_SHARED_MODE, settings.shared_mode);
     // The offered size nearest to the one set.
     let nearest = FONT_SIZES
         .iter()
@@ -230,6 +235,7 @@ fn read(window: HWND) -> Settings {
         learning: checked(window, ID_LEARNING),
         typing_log: checked(window, ID_TYPING_LOG),
         timing: checked(window, ID_TIMING),
+        shared_mode: checked(window, ID_SHARED_MODE),
         font_px: (0..FONT_SIZES.len())
             .find(|&i| checked(window, ID_FONT + i as i32))
             .map_or(DEFAULT_FONT_PX, |i| FONT_SIZES[i]),

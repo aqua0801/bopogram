@@ -110,13 +110,40 @@ fn button_changed(state: &Shared) {
 /// Switch Chinese/English from the button. A composition in progress is
 /// committed to the focused document.
 pub(crate) fn toggle_mode(state: &Shared) {
-    let Some(commit) = with_controller(state, |c| c.toggle_chinese()) else {
+    let Some((commit, chinese)) = with_controller(state, |c| (c.toggle_chinese(), c.chinese())) else {
         return;
     };
+    mode_switched(chinese);
     if let Some(context) = document_context(state) {
         refresh(state, &context, commit, None);
     }
     button_changed(state);
+}
+
+/// The user switched Chinese/English here. When the mode is shared, the
+/// other applications take it on when they next get the focus.
+fn mode_switched(chinese: bool) {
+    if settings::shared_mode() {
+        settings::save_mode(chinese);
+    }
+}
+
+/// Take on the shared mode, if the mode is shared and differs from ours.
+fn adopt_shared_mode(state: &Shared) {
+    if !settings::shared_mode() {
+        return;
+    }
+    let Some(chinese) = settings::load_mode() else {
+        return;
+    };
+    let Some(commit) = with_controller(state, |c| c.set_chinese(chinese)) else {
+        return;
+    };
+    if let Some(text) = commit {
+        if let Some(context) = document_context(state) {
+            refresh(state, &context, Some(text), None);
+        }
+    }
 }
 
 /// The document being composed into, or else the focused one.
@@ -575,6 +602,7 @@ impl TextService_Impl {
         if !toggled {
             return;
         }
+        mode_switched(chinese);
         refresh(&self.state, context, outcome.commit, None);
         tip(&self.state, if chinese { "中" } else { "英" });
         button_changed(&self.state);
@@ -661,6 +689,7 @@ impl ITfTextInputProcessorEx_Impl for TextService_Impl {
                     with(&self.state, |s| s.button = Some(button));
                 }
             }
+            adopt_shared_mode(&self.state);
             button_changed(&self.state);
             Ok(())
         })
@@ -674,8 +703,9 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             if let Some(style) = settings::load_style() {
                 with_controller(&self.state, |c| c.want_style(&style));
             }
-            // Each application has its own Chinese/English mode: the
-            // taskbar must show this one's.
+            // The mode may have been switched in another application; and
+            // whether shared or not, the taskbar must show this one's.
+            adopt_shared_mode(&self.state);
             button_changed(&self.state);
         } else {
             with(&self.state, |s| {
