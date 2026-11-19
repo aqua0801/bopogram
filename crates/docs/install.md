@@ -84,12 +84,20 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 | 選項 | 存在哪裡 | 何時生效 |
 |---|---|---|
 | 選字風格：口語／正式 | `%LOCALAPPDATA%\Bopogram\style.txt` | 切換到任一程式時 |
+| 候選視窗文字大小 | `%LOCALAPPDATA%\Bopogram\candidate-font.txt` | 約 5 秒內 |
 | 個人化學習 | 執行包 `config.json` 的 `user_model` | 套用時重新啟動引擎 |
 | 打字紀錄 | 執行包 `config.json` 的 `typing_log` | 套用時重新啟動引擎 |
 | 計時紀錄 | `%LOCALAPPDATA%\Bopogram\timing-until.txt`（到期時間） | 約 10 秒內；24 小時後自動關閉 |
 
 另有「審核打字紀錄…」（開啟 `review_log.py`）、「開啟資料夾」（`userdata\`）、「重新啟動引擎」。
 關閉個人化學習或打字紀錄不會刪除已存的資料。
+
+## 候選視窗
+
+- 按 ↓ 開啟。滑鼠可直接點選候選字；滾輪或底下的 ‹ › 換頁。
+- 跟隨 Windows 的淺色／深色模式（「設定 → 個人化 → 色彩 → 選擇應用程式模式」），換了之後下次開啟生效。
+- 出現在游標所在那個字的下方，下方空間不夠時改到上方。
+- 自己繪製輸入法介面的程式（例如部分全螢幕遊戲）會改用它們自己的候選清單，本輸入法的視窗不會出現。
 
 ## 按鍵
 
@@ -109,7 +117,6 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 - 引擎啟動要載入模型約 1 至 2 秒，這段時間的按鍵會直接變成英文。
 - 引擎回應慢（單次超過 200 ms）時組字會保留，畫面最多再等 200 ms 後補上，再不行就等下一次按鍵。
   只有引擎不在了（管線斷線，或 host 等了 5 秒仍沒回應）才放棄，組字區的內容原樣送進文件。
-- 候選字只能用鍵盤選，不能用滑鼠點。
 - 密碼欄位會自動停用（不組字、不學習、不記錄）；判斷依賴程式的宣告，
   遇到沒被認出的密碼欄位請先切到英文模式，並回報是哪個程式。
 - 候選視窗位置在少數程式可能不準（程式不回報游標位置時改用系統游標或滑鼠位置）。

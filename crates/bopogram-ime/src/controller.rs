@@ -258,6 +258,55 @@ impl<E: Engine> Controller<E> {
         self.candidates.len().div_ceil(PAGE_SIZE).max(1)
     }
 
+    /// The whole candidate list and the highlighted index, while the
+    /// window is open (for applications that draw the list themselves).
+    pub fn candidate_list(&self) -> Option<(&[String], usize)> {
+        self.window_open.then_some((&self.candidates[..], self.selected))
+    }
+
+    /// Where each page starts in the candidate list.
+    pub fn page_starts(&self) -> Vec<usize> {
+        (0..self.pages()).map(|page| page * PAGE_SIZE).collect()
+    }
+
+    /// Highlight candidate `index` of the whole list. Out of range is ignored.
+    pub fn highlight(&mut self, index: usize) {
+        if self.window_open && index < self.candidates.len() {
+            self.selected = index;
+        }
+    }
+
+    /// Show the next (1) or previous (-1) page, wrapping around.
+    pub fn turn_page(&mut self, delta: isize) {
+        if self.window_open {
+            let pages = self.pages();
+            let page = (self.selected / PAGE_SIZE + pages).wrapping_add_signed(delta) % pages;
+            self.selected = page * PAGE_SIZE;
+        }
+    }
+
+    /// Close the candidate window without choosing anything.
+    pub fn close_candidates(&mut self) {
+        self.window_open = false;
+    }
+
+    /// Choose candidate `index` of the whole list, as its digit key would
+    /// (the mouse, or an application that draws the list itself).
+    pub fn pick(&mut self, index: usize) -> Outcome {
+        if !self.window_open || index >= self.candidates.len() {
+            return Outcome::default();
+        }
+        self.window_open = false;
+        match self.exchange(&Op::Select(index)) {
+            Ok(_) | Err(Failure::Rejected) => {}
+            Err(Failure::TimedOut) => {
+                self.catch_up();
+            }
+            Err(Failure::Unreachable) => self.lost(),
+        }
+        Outcome { eaten: true, commit: self.take_committed(), style_changed: false }
+    }
+
     // -- deciding ----------------------------------------------------------
 
     fn classify(&self, key: Key) -> Action {
@@ -590,7 +639,6 @@ impl<E: Engine> Controller<E> {
         }
         let mut outcome = Outcome { eaten: action != Action::Pass, ..Outcome::default() };
         let count = self.candidates.len().max(1);
-        let page = self.selected / PAGE_SIZE;
         let sent = match action {
             Action::Pass | Action::Swallow | Action::CloseWindow => Ok(()),
             Action::StartPrefix => {
@@ -602,11 +650,11 @@ impl<E: Engine> Controller<E> {
                 Ok(())
             }
             Action::NextPage => {
-                self.selected = (page + 1) % self.pages() * PAGE_SIZE;
+                self.turn_page(1);
                 Ok(())
             }
             Action::PrevPage => {
-                self.selected = (page + self.pages() - 1) % self.pages() * PAGE_SIZE;
+                self.turn_page(-1);
                 Ok(())
             }
             Action::Send(op) => self.exchange(&op).map(drop),
@@ -894,6 +942,28 @@ mod tests {
         c.key_down(code(vk::ESCAPE));
         assert!(c.candidate_page().is_none());
         assert_eq!(c.preedit(), "字");
+    }
+
+    #[test]
+    fn mouse_and_application_choices() {
+        let mut c = typed("ji3");
+        assert_eq!(c.pick(0), Outcome::default(), "no window, nothing to pick");
+        c.key_down(code(vk::DOWN));
+        assert_eq!(c.page_starts(), [0, 9]);
+        c.turn_page(1);
+        assert_eq!(c.candidate_list().unwrap().1, 9);
+        c.turn_page(1);
+        assert_eq!(c.candidate_list().unwrap().1, 0, "wraps");
+        c.highlight(11);
+        c.highlight(99);
+        assert_eq!(c.candidate_list().unwrap().1, 11);
+        assert_eq!(c.pick(11), eaten(None));
+        assert!(c.candidate_list().is_none());
+        assert_eq!(c.engine_mut().log.last(), Some(&Op::Select(11)));
+        c.key_down(code(vk::DOWN));
+        c.close_candidates();
+        assert!(c.candidate_page().is_none());
+        assert!(c.composing());
     }
 
     #[test]

@@ -124,6 +124,23 @@ pub fn screen_rect(context: &ITfContext, cookie: u32, range: &ITfRange) -> Optio
     }
 }
 
+/// Where the character at `units` into `range` is on the screen (the one
+/// before it when `units` is at the end).
+pub fn screen_rect_at(context: &ITfContext, cookie: u32, range: &ITfRange, units: i32) -> Option<RECT> {
+    unsafe {
+        let character = range.Clone().ok()?;
+        character.Collapse(cookie, TF_ANCHOR_START).ok()?;
+        let mut moved = 0;
+        character.ShiftStart(cookie, units, &mut moved, std::ptr::null()).ok()?;
+        character.Collapse(cookie, TF_ANCHOR_START).ok()?;
+        character.ShiftEnd(cookie, 1, &mut moved, std::ptr::null()).ok()?;
+        if moved == 0 {
+            character.ShiftStart(cookie, -1, &mut moved, std::ptr::null()).ok()?;
+        }
+        screen_rect(context, cookie, &character)
+    }
+}
+
 /// The text just before the caret. `None` if the application does not let
 /// us read it; the engine then falls back on what it committed itself.
 pub fn text_before_caret(context: &ITfContext, client: u32) -> Option<String> {

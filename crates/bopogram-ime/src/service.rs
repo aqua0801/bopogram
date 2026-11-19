@@ -25,8 +25,8 @@ use windows::Win32::UI::TextServices::{
     ITfDisplayAttributeInfo, ITfDisplayAttributeProvider, ITfDisplayAttributeProvider_Impl,
     ITfKeyEventSink, ITfKeyEventSink_Impl, ITfKeystrokeMgr, ITfTextInputProcessor,
     ITfTextInputProcessorEx, ITfTextInputProcessorEx_Impl, ITfTextInputProcessor_Impl,
-    ITfLangBarItemButton, ITfLangBarItemMgr, ITfLangBarItemSink, ITfThreadMgr,
-    TF_ES_ASYNCDONTCARE, TF_ES_READWRITE, TF_LBI_ICON, TF_LBI_TEXT,
+    ITfLangBarItemButton, ITfLangBarItemMgr, ITfLangBarItemSink, ITfThreadMgr, ITfUIElement,
+    ITfUIElementMgr, TF_ES_ASYNCDONTCARE, TF_ES_READWRITE, TF_LBI_ICON, TF_LBI_TEXT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetCursorPos, GetGUIThreadInfo, GetWindowLongW, GUITHREADINFO, GWL_STYLE,
@@ -37,8 +37,8 @@ use crate::display::{AttributeEnumerator, CompositionAttribute};
 use crate::dll::{host_path, settings_path, GUID_DISPLAY_ATTRIBUTE};
 use crate::langbar::ModeButton;
 use crate::pipe::PipeEngine;
-use crate::popup::Popup;
-use crate::{edit, guard, settings, timing, wide};
+use crate::popup::{Event, Handler, Popup};
+use crate::{candidates, edit, guard, settings, timing, wide};
 
 /// Edit control style: the control shows dots instead of the text.
 const ES_PASSWORD: i32 = 0x0020;
@@ -65,6 +65,17 @@ pub(crate) struct State {
     /// that it changed.
     button: Option<ITfLangBarItemButton>,
     button_sink: Option<ITfLangBarItemSink>,
+    /// This text service as the owner of its compositions.
+    sink: Option<ITfCompositionSink>,
+    /// The candidate list announced to TSF while the window is open.
+    candidate_ui: Option<CandidateUi>,
+}
+
+struct CandidateUi {
+    /// `None` if TSF did not take the element; our window is then shown.
+    id: Option<u32>,
+    /// False while the application draws the candidates itself.
+    shown: bool,
 }
 
 pub(crate) type Shared = Rc<RefCell<State>>;
@@ -99,29 +110,205 @@ fn button_changed(state: &Shared) {
 /// Switch Chinese/English from the button. A composition in progress is
 /// committed to the focused document.
 pub(crate) fn toggle_mode(state: &Shared) {
-    let Some((commit, thread_mgr, client)) = with(state, |s| {
-        let commit = s.controller.as_mut()?.toggle_chinese();
-        s.shown.clear();
-        s.shown_caret = 0;
-        if let Some(popup) = &s.popup {
-            popup.hide();
+    let Some(commit) = with_controller(state, |c| c.toggle_chinese()) else {
+        return;
+    };
+    if let Some(context) = document_context(state) {
+        refresh(state, &context, commit, None);
+    }
+    button_changed(state);
+}
+
+/// The document being composed into, or else the focused one.
+fn document_context(state: &Shared) -> Option<ITfContext> {
+    let (composition, thread_mgr) =
+        with(state, |s| (s.composition.clone(), s.thread_mgr.clone()))?;
+    unsafe {
+        if let Some(context) = composition.and_then(|c| c.GetRange().and_then(|r| r.GetContext()).ok()) {
+            return Some(context);
         }
-        Some((commit, s.thread_mgr.clone()?, s.client))
+        thread_mgr?.GetFocus().and_then(|document| document.GetTop()).ok()
+    }
+}
+
+// -- the candidate list, for the mouse and for applications that draw it ---
+
+pub(crate) fn candidate_list(state: &Shared) -> Option<(Vec<String>, usize)> {
+    with_controller(state, |c| c.candidate_list().map(|(words, selected)| (words.to_vec(), selected)))
+        .flatten()
+}
+
+pub(crate) fn candidate_window_shown(state: &Shared) -> bool {
+    with(state, |s| s.candidate_ui.as_ref().is_none_or(|ui| ui.shown)).unwrap_or(true)
+}
+
+/// The application decides whether our candidate window is shown.
+pub(crate) fn show_candidate_window(state: &Shared, show: bool) {
+    with(state, |s| {
+        if let Some(ui) = s.candidate_ui.as_mut() {
+            ui.shown = show;
+        }
+    });
+    draw_candidates(state);
+}
+
+pub(crate) fn highlight_candidate(state: &Shared, index: usize) {
+    with_controller(state, |c| c.highlight(index));
+    draw_candidates(state);
+}
+
+/// Choose a candidate without a key: the composition changes, so the
+/// document is written in an edit session of its own.
+pub(crate) fn pick_candidate(state: &Shared, index: usize) {
+    let Some(outcome) = with_controller(state, |c| c.pick(index)) else {
+        return;
+    };
+    if let Some(context) = document_context(state) {
+        refresh(state, &context, outcome.commit, None);
+    }
+}
+
+pub(crate) fn close_candidates(state: &Shared) {
+    with_controller(state, |c| c.close_candidates());
+    refresh_candidates(state);
+}
+
+/// A click or the wheel in our candidate window.
+fn mouse(state: &Shared, event: Event) {
+    match event {
+        Event::Pick(row) => {
+            let start = with_controller(state, |c| {
+                c.candidate_list().map(|(_, selected)| selected / crate::controller::PAGE_SIZE * crate::controller::PAGE_SIZE)
+            })
+            .flatten();
+            if let Some(start) = start {
+                pick_candidate(state, start + row);
+            }
+        }
+        Event::Page(delta) => {
+            with_controller(state, |c| c.turn_page(delta));
+            refresh_candidates(state);
+        }
+    }
+}
+
+/// The popup, created on first use. It reports the mouse back here.
+fn ensure_popup(state: &Shared) {
+    if with(state, |s| s.popup.is_some()).unwrap_or(true) {
+        return;
+    }
+    let weak = Rc::downgrade(state);
+    let handler: Handler = Rc::new(move |event| {
+        if let Some(state) = weak.upgrade() {
+            mouse(&state, event);
+        }
+    });
+    let popup = Popup::new(Some(handler));
+    with(state, |s| s.popup = popup);
+}
+
+/// Announce, update or withdraw the candidate list, then draw it.
+fn refresh_candidates(state: &Shared) {
+    let Some((open, thread_mgr, announced)) = with(state, |s| {
+        let open = s.controller.as_ref().is_some_and(|c| c.candidate_list().is_some());
+        (open, s.thread_mgr.clone(), s.candidate_ui.as_ref().map(|ui| ui.id))
+    }) else {
+        return;
+    };
+    let manager = thread_mgr.and_then(|t| t.cast::<ITfUIElementMgr>().ok());
+    unsafe {
+        match (open, announced) {
+            (false, Some(id)) => {
+                with(state, |s| s.candidate_ui = None);
+                if let (Some(manager), Some(id)) = (&manager, id) {
+                    let _ = manager.EndUIElement(id);
+                }
+            }
+            (true, None) => {
+                let document = document_context(state).and_then(|c| c.GetDocumentMgr().ok());
+                let element: ITfUIElement = candidates::element(state, document);
+                let mut show = BOOL::from(true);
+                let mut id = 0u32;
+                let begun = manager
+                    .as_ref()
+                    .is_some_and(|m| m.BeginUIElement(&element, &mut show, &mut id).is_ok());
+                let ui = if begun {
+                    CandidateUi { id: Some(id), shown: show.as_bool() }
+                } else {
+                    CandidateUi { id: None, shown: true }
+                };
+                with(state, |s| s.candidate_ui = Some(ui));
+            }
+            (true, Some(Some(id))) => {
+                if let Some(manager) = &manager {
+                    let _ = manager.UpdateUIElement(id);
+                }
+            }
+            _ => {}
+        }
+    }
+    draw_candidates(state);
+}
+
+/// Our window, if the candidates are open and the application lets us show it.
+fn draw_candidates(state: &Shared) {
+    ensure_popup(state);
+    with(state, |s| {
+        let shown = s.candidate_ui.as_ref().is_none_or(|ui| ui.shown);
+        let page = s.controller.as_ref().and_then(|c| c.candidate_page());
+        let Some(popup) = &s.popup else { return };
+        match page {
+            Some((items, selected, page, pages)) if shown => {
+                popup.show(items, selected, page, pages, s.anchor.unwrap_or_else(fallback_anchor))
+            }
+            _ => popup.hide(),
+        }
+    });
+}
+
+/// Bring the document and the candidate window in line with the controller.
+fn refresh(
+    state: &Shared,
+    context: &ITfContext,
+    commit: Option<String>,
+    mut timing: Option<&mut timing::Key>,
+) {
+    let Some((client, sink, preedit, caret, unchanged)) = with(state, |s| {
+        let controller = s.controller.as_ref()?;
+        let preedit = controller.preedit().to_owned();
+        let caret = controller.caret_units();
+        let unchanged = commit.is_none() && preedit == s.shown && caret == s.shown_caret;
+        s.shown.clone_from(&preedit);
+        s.shown_caret = caret;
+        Some((s.client, s.sink.clone(), preedit, caret, unchanged))
     })
     .flatten() else {
         return;
     };
-    if let Some(text) = commit {
-        let context = unsafe { thread_mgr.GetFocus().and_then(|document| document.GetTop()) };
-        if let Ok(context) = context {
-            let state = Rc::clone(state);
-            let document = context.clone();
-            edit::run(&context, client, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE, move |cookie| {
-                write(&state, &document, cookie, None, Some(&text), "", 0)
-            });
+    if !unchanged {
+        let shared = Rc::clone(state);
+        let document = context.clone();
+        edit::run(context, client, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE, move |cookie| {
+            write(&shared, &document, cookie, sink.as_ref(), commit.as_deref(), &preedit, caret)
+        });
+        if let Some(timing) = timing.as_deref_mut() {
+            timing.step("write");
         }
     }
-    button_changed(state);
+    refresh_candidates(state);
+    if let Some(timing) = timing {
+        timing.step("popup");
+    }
+}
+
+/// A short notice near the caret.
+fn tip(state: &Shared, text: &str) {
+    ensure_popup(state);
+    with(state, |s| {
+        if let Some(popup) = &s.popup {
+            popup.show_tip(text, s.anchor.unwrap_or_else(fallback_anchor));
+        }
+    });
 }
 
 /// Choose the casual or the formal style from the menu.
@@ -295,7 +482,12 @@ fn write(
             edit::set_attribute(context, cookie, &range, attribute);
         }
         edit::caret_at(context, cookie, &range, caret as i32)?;
-        if let Some(rect) = edit::screen_rect(context, cookie, &range) {
+        // The candidates belong to the character at the caret: put the
+        // window under it, or under the whole composition if the
+        // application cannot say where that character is.
+        let rect = edit::screen_rect_at(context, cookie, &range, caret as i32)
+            .or_else(|| edit::screen_rect(context, cookie, &range));
+        if let Some(rect) = rect {
             with(state, |s| s.anchor = Some(rect));
         }
     }
@@ -320,68 +512,6 @@ impl TextService_Impl {
             s.password = scope;
             if let Some(controller) = s.controller.as_mut() {
                 controller.set_enabled(!password);
-            }
-        });
-    }
-
-    /// Write the controller's composition (and any committed text) to the
-    /// document, then update the candidate window.
-    fn update(&self, context: &ITfContext, commit: Option<String>) {
-        self.update_timed(context, commit, None);
-    }
-
-    fn update_timed(
-        &self,
-        context: &ITfContext,
-        commit: Option<String>,
-        mut timing: Option<&mut timing::Key>,
-    ) {
-        let Some((client, preedit, caret, unchanged)) = with(&self.state, |s| {
-            let controller = s.controller.as_ref()?;
-            let preedit = controller.preedit().to_owned();
-            let caret = controller.caret_units();
-            let unchanged = commit.is_none() && preedit == s.shown && caret == s.shown_caret;
-            s.shown.clone_from(&preedit);
-            s.shown_caret = caret;
-            Some((s.client, preedit, caret, unchanged))
-        })
-        .flatten() else {
-            return;
-        };
-        if !unchanged {
-            let sink: ITfCompositionSink = self.to_interface();
-            let state = Rc::clone(&self.state);
-            let document = context.clone();
-            edit::run(context, client, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE, move |cookie| {
-                write(&state, &document, cookie, Some(&sink), commit.as_deref(), &preedit, caret)
-            });
-            if let Some(timing) = timing.as_deref_mut() {
-                timing.step("write");
-            }
-        }
-        self.refresh_popup();
-        if let Some(timing) = timing {
-            timing.step("popup");
-        }
-    }
-
-    fn refresh_popup(&self) {
-        with(&self.state, |s| {
-            let Some(controller) = s.controller.as_ref() else { return };
-            let Some((items, selected, page, pages)) = controller.candidate_page() else {
-                if let Some(popup) = &s.popup {
-                    popup.hide();
-                }
-                return;
-            };
-            let lines: Vec<String> =
-                items.iter().enumerate().map(|(i, word)| format!("{} {word}", i + 1)).collect();
-            let footer = (pages > 1).then(|| format!("{}/{pages}", page + 1));
-            if s.popup.is_none() {
-                s.popup = Popup::new();
-            }
-            if let Some(popup) = &s.popup {
-                popup.show(&lines, Some(selected), footer, s.anchor.unwrap_or_else(fallback_anchor));
             }
         });
     }
@@ -423,25 +553,13 @@ impl TextService_Impl {
             timing.request(Some(leak_join(&sent)));
             timing.step("engine");
         }
-        self.update_timed(context, outcome.commit, Some(timing));
+        refresh(&self.state, context, outcome.commit, Some(timing));
         if outcome.style_changed {
             // Remembered for the other applications and for the next session.
             settings::save_style(if formal { FORMAL } else { CASUAL });
-            self.tip(if formal { "正式" } else { "口語" });
+            tip(&self.state, if formal { "正式" } else { "口語" });
         }
         outcome.eaten
-    }
-
-    /// A short notice near the caret.
-    fn tip(&self, text: &str) {
-        with(&self.state, |s| {
-            if s.popup.is_none() {
-                s.popup = Popup::new();
-            }
-            if let Some(popup) = &s.popup {
-                popup.show_tip(text, s.anchor.unwrap_or_else(fallback_anchor));
-            }
-        });
     }
 
     /// Shift on its own switches between Chinese and English.
@@ -457,8 +575,8 @@ impl TextService_Impl {
         if !toggled {
             return;
         }
-        self.update(context, outcome.commit);
-        self.tip(if chinese { "中" } else { "英" });
+        refresh(&self.state, context, outcome.commit, None);
+        tip(&self.state, if chinese { "中" } else { "英" });
         button_changed(&self.state);
     }
 }
@@ -470,6 +588,9 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
 
     fn Deactivate(&self) -> Result<()> {
         guard(Ok(()), || {
+            // The candidate list must not outlive the text service.
+            with_controller(&self.state, |c| c.close_candidates());
+            refresh_candidates(&self.state);
             let (thread_mgr, client, button) =
                 with(&self.state, |s| (s.thread_mgr.take(), s.client, s.button.take()))
                     .unwrap_or_default();
@@ -532,6 +653,7 @@ impl ITfTextInputProcessorEx_Impl for TextService_Impl {
                     controller,
                     attribute,
                     button,
+                    sink: Some(self.to_interface()),
                     ..State::default()
                 };
             });
@@ -636,6 +758,8 @@ impl ITfCompositionSink_Impl for TextService_Impl {
             .flatten() else {
                 return Ok(());
             };
+            // The window closed with the composition.
+            refresh_candidates(&self.state);
             if let Some(range) = composition.as_ref().and_then(|c| unsafe { c.GetRange() }.ok()) {
                 unsafe {
                     if text != shown {

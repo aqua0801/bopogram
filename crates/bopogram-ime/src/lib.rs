@@ -18,6 +18,7 @@
 //! - `edit`: edit sessions and the operations on the document.
 //! - `display`: the display attribute that underlines the composition.
 //! - `popup`: the candidate window.
+//! - `candidates`: the candidate list for applications that draw it themselves (UI-less mode).
 //! - `langbar`: the mode button in the taskbar's input indicator, and its menu.
 //! - `settings`: the style file shared by all applications.
 //! - `timing`: the optional timing log (durations only, never text).
@@ -26,6 +27,7 @@ pub mod controller;
 pub mod pipe;
 pub use bopogram_protocol as protocol;
 
+mod candidates;
 mod display;
 mod dll;
 mod edit;

@@ -30,7 +30,13 @@ pub struct Settings {
     pub typing_log: bool,
     /// The input method logs how long each key takes (never what was typed).
     pub timing: bool,
+    /// Candidate window text size, in pixels at 96 DPI.
+    pub font_px: i32,
 }
+
+/// The text sizes offered, and the one used when nothing is set.
+pub const FONT_SIZES: [i32; 4] = [16, 18, 22, 26];
+pub const DEFAULT_FONT_PX: i32 = 18;
 
 /// How long the timing log stays on once turned on.
 const TIMING_HOURS: u64 = 24;
@@ -56,6 +62,11 @@ impl Files {
     /// Holds the time (Unix seconds) until which the input method logs timings.
     fn timing_switch(&self) -> Option<PathBuf> {
         Some(self.style.as_ref()?.with_file_name("timing-until.txt"))
+    }
+
+    /// The candidate window's text size, read by the input method.
+    fn font_file(&self) -> Option<PathBuf> {
+        Some(self.style.as_ref()?.with_file_name("candidate-font.txt"))
     }
 
     /// Until when the timing log is on, if it is.
@@ -120,6 +131,12 @@ impl Files {
             learning: set("user_model"),
             typing_log: set("typing_log"),
             timing: self.timing_until().is_some(),
+            font_px: self
+                .font_file()
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .and_then(|text| text.trim().parse().ok())
+                .filter(|px| (12..=40).contains(px))
+                .unwrap_or(DEFAULT_FONT_PX),
         }
     }
 
@@ -131,6 +148,10 @@ impl Files {
         }
         std::fs::write(style, if settings.formal { FORMAL } else { CASUAL })
             .map_err(|e| format!("{}: {e}", style.display()))?;
+        if let Some(font) = self.font_file() {
+            std::fs::write(&font, settings.font_px.to_string())
+                .map_err(|e| format!("{}: {e}", font.display()))?;
+        }
         if let Some(switch) = self.timing_switch() {
             let on = self.timing_until().is_some();
             if settings.timing && !on {
@@ -254,7 +275,10 @@ mod tests {
         let files = files(&folder);
         // No style file yet: the config's default counts.
         let loaded = files.load();
-        assert_eq!(loaded, Settings { formal: true, learning: true, typing_log: false, timing: false });
+        assert_eq!(
+            loaded,
+            Settings { formal: true, learning: true, typing_log: false, timing: false, font_px: DEFAULT_FONT_PX }
+        );
 
         // Style alone does not touch the config.
         let before = std::fs::read_to_string(folder.join("config.json")).unwrap();
@@ -262,7 +286,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(folder.join("config.json")).unwrap(), before);
         assert!(!files.load().formal);
 
-        let wanted = Settings { formal: false, learning: false, typing_log: true, timing: true };
+        let wanted = Settings { formal: false, learning: false, typing_log: true, timing: true, font_px: 22 };
         files.save(&wanted, true).unwrap();
         assert_eq!(files.load(), wanted);
         let until = files.timing_until().unwrap();
