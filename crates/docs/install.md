@@ -28,10 +28,11 @@ Python 或執行包不在預設位置時，加上 `-Python <python.exe>`、`-Con
 | 步驟 | 動到的地方 |
 |---|---|
 | 1. 先單獨執行引擎確認可用 | 無 |
-| 2. 複製 `bopogram_ime.dll`、`bopogram-host.exe`、`bopogram-settings.exe`，32 位元 DLL 放進 `x86\`，寫入 `bopogram-host.json` | `C:\Program Files\Bopogram\` |
+| 2. 結束 host（等引擎存好個人化資料），複製 `bopogram_ime.dll`、`bopogram-host.exe`、`bopogram-settings.exe`、`bopogram.ico`、`uninstall.ps1`（含 `common.ps1`），32 位元 DLL 放進 `x86\`，寫入 `bopogram-host.json` | `C:\Program Files\Bopogram\`；使用中的舊檔排入重開機刪除（`HKLM\SYSTEM\CurrentControlSet\Control\Session Manager` 的 `PendingFileRenameOperations`） |
 | 3. `regsvr32` 註冊文字服務（64 與 32 位元各一次） | `HKLM\SOFTWARE\Classes\CLSID\{B6B6D901-0BBF-4287-A302-F265DBE9A46C}`、其 32 位元版 `HKLM\SOFTWARE\WOW6432Node\Classes\CLSID\{…}`、`HKLM\SOFTWARE\Microsoft\CTF\TIP\{B6B6D901-0BBF-4287-A302-F265DBE9A46C}` |
 | 4. 把輸入法加進目前使用者的「中文（繁體，台灣）」鍵盤 | 目前使用者的語言清單（`Set-WinUserLanguageList`，存在 `HKCU`） |
-| 5. 登入時啟動引擎 host（`-NoAutostart` 可略過） | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 的 `Bopogram` 值 |
+| 5. 開始功能表捷徑「Bopogram 設定」 | `C:\ProgramData\Microsoft\Windows\Start Menu\Programs\` |
+| 6. 登入時啟動引擎 host（`-NoAutostart` 可略過），並立即以一般權限啟動一次 | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 的 `Bopogram` 值 |
 
 安裝在 `Program Files` 是因為 DLL 會被載入到所有程式（包含以系統管理員執行的程式），
 所在資料夾必須只有系統管理員能寫入。
@@ -40,8 +41,14 @@ Python 或執行包不在預設位置時，加上 `-Python <python.exe>`、`-Con
 
 ### 更新
 
-重新建置後再執行一次 `install.ps1` 即可。正在使用中的舊 DLL 會被改名為 `*.old-<時間>`，
-下次安裝或移除時清掉；已開著的程式重開後才換成新版。
+重新建置後再執行一次 `install.ps1` 即可，不必登出：
+
+- 正在使用中的舊 DLL 會被改名為 `*.old-<時間>`，並排定在下次重開機時刪除（下次安裝也會清）。
+- 已開著的程式繼續用舊版直到重開，新開的程式用新版；腳本最後會列出還在用舊版的程式。
+  檔案總管與開始功能表搜尋（`SearchHost.exe`）也一樣：在工作管理員重新啟動檔案總管、
+  結束 `SearchHost.exe`（會自動再起來）即換成新版。
+- 引擎 host 會重新啟動；舊版 DLL 與新版 host 使用同一份協定，可以一起運作。
+- 輸入法清單（Win+空白鍵）裡的圖示由 Windows 快取，換圖示時可能要等下次登入才更新。
 
 ## 移除
 
@@ -51,15 +58,23 @@ Python 或執行包不在預設位置時，加上 `-Python <python.exe>`、`-Con
 powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps1
 ```
 
-它會把輸入法從語言清單拿掉、`regsvr32 /u` 解除註冊（刪除上表兩個登錄機碼）、結束 host、
-刪除 `C:\Program Files\Bopogram`。DLL 載入後不會卸載，所以還開著的程式會佔住檔案：
-腳本刪不掉時，請登出再登入後手動刪除該資料夾。
+安裝資料夾裡也有一份：`C:\Program Files\Bopogram\uninstall.ps1`，repo 不在時可用它移除。不必登出。
 
-不會被刪除的東西（要清乾淨請手動刪）：
+它依序：
 
-- `D:\bopogram-data\bopogram-runtime\userdata\`：個人化資料 `user.json`、打字紀錄 `typing_log.jsonl`。
-- `%LOCALAPPDATA%\Bopogram\`：`host.log`（只記啟動與錯誤，不記打字內容）、`style.txt`（口語／正式）、
-  `timing.log` 與 `timing-until.txt`（計時紀錄，有開過才會有）。
+1. 把輸入法從目前使用者所有語言的鍵盤清單拿掉。
+2. 刪除登入時啟動（`Run` 的 `Bopogram`）與開始功能表捷徑。
+3. `regsvr32 /u` 解除註冊（64 與 32 位元），登錄裡若還有殘留的本輸入法機碼則直接刪除。
+4. 結束 host（等引擎存檔）與設定程式，刪除 `C:\Program Files\Bopogram`。
+   還開著的程式會佔住 DLL：這些檔案與資料夾排定在下次重開機時刪除，腳本會列出是哪些程式。
+5. 安裝時若用了 `-Trace`，刪除該紀錄檔（它記錄了所有打的字）。
+6. 刪除 `%LOCALAPPDATA%\Bopogram\`：設定（`keys.json`、`style.txt` 等）、`host.log`（只記啟動與錯誤）、
+   計時紀錄。加 `-KeepSettings` 可保留。
+7. 加 `-RemovePersonalData` 時，刪除引擎 `config.json` 指定的個人化資料（`user.json`）與打字紀錄
+   （`typing_log.jsonl`）。預設保留。
+8. 最後檢查登錄中是否還有本輸入法的 CLSID，有就列出來。
+
+預設不刪的只有執行包（`D:\bopogram-data\bopogram-runtime\`，含個人化資料）與引擎程式（repo）。
 
 ## 程式與資料在哪裡
 

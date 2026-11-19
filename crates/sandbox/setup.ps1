@@ -26,17 +26,11 @@ try {
 }
 Log "Smart App Control state after: $((Get-ItemProperty $ciPolicy -ErrorAction SilentlyContinue).VerifiedAndReputablePolicyState)"
 
-$clsid = "{B6B6D901-0BBF-4287-A302-F265DBE9A46C}"
-$profile = "{79EFFB1B-3CE8-41DB-9CA2-3318EC0AED82}"
-$install = "C:\Bopogram"
-New-Item -ItemType Directory -Force $install | Out-Null
-Copy-Item "C:\stage\bopogram_ime.dll", "C:\stage\bopogram-host.exe", "C:\stage\bopogram-settings.exe", "C:\stage\bopogram.ico" $install -Force
-New-Item -ItemType Directory -Force (Join-Path $install "x86") | Out-Null
-Copy-Item "C:\stage\x86\bopogram_ime.dll" (Join-Path $install "x86") -Force
-
+$install = Join-Path $env:ProgramFiles "Bopogram"
 # A virtual environment on top of the read-only Python, pointed at the
-# read-only engine source.
-$venv = Join-Path $install "venv"
+# read-only engine source. It lives outside the install folder, as the
+# prototype's does on the main system.
+$venv = "C:\bopogram-venv"
 & "C:\Python312\python.exe" -m venv --without-pip $venv
 # KenLM goes into the environment itself, with the VC++ runtime DLLs it needs
 # beside it (extension modules find their dependencies in their own folder).
@@ -48,44 +42,44 @@ Copy-Item "C:\stage\kenlm\*.dll" (Join-Path $sitePackages "onnxruntime\capi") -F
 Set-Content -Path (Join-Path $sitePackages "bopogram.pth") -Encoding ASCII -Value "C:\bopogram-prototype"
 $python = Join-Path $venv "Scripts\python.exe"
 $config = "C:\bopogram-runtime\config.json"
-$hostConfig = @{
-    python = $python; config = $config; review_tool = "C:\bopogram-prototype\tools\review_log.py"
-} | ConvertTo-Json
-[IO.File]::WriteAllText((Join-Path $install "bopogram-host.json"), $hostConfig)
 
 # 1. The engine on its own.
 $converted = & $python -X utf8 -m bopogram.cli --config $config convert --keys "ji3y94ru8 " 2>&1
 [IO.File]::WriteAllLines("C:\out\engine.txt", [string[]]@($converted), (New-Object Text.UTF8Encoding($false)))
 Log "engine exit code: $LASTEXITCODE (output in engine.txt)"
 
-# 2. Register the text service.
-$registration = Start-Process regsvr32.exe -ArgumentList "/s", (Join-Path $install "bopogram_ime.dll") -Wait -PassThru
-Log "regsvr32 exit code: $($registration.ExitCode)"
-Log "CLSID key present: $(Test-Path "HKLM:\SOFTWARE\Classes\CLSID\$clsid\InprocServer32")"
-Log "TSF profile key present: $(Test-Path "HKLM:\SOFTWARE\Microsoft\CTF\TIP\$clsid")"
-
-# 2b. The 32-bit DLL, registered by the 32-bit regsvr32 (its COM class goes
-#     to the 32-bit view of the registry).
-$registration = Start-Process "$env:SystemRoot\SysWOW64\regsvr32.exe" -ArgumentList "/s", (Join-Path $install "x86\bopogram_ime.dll") -Wait -PassThru
-Log "regsvr32 (x86) exit code: $($registration.ExitCode)"
-Log "CLSID key present (32-bit view): $(Test-Path "HKLM:\SOFTWARE\WOW6432Node\Classes\CLSID\$clsid\InprocServer32")"
-Log "TSF profile key present (32-bit view): $(Test-Path "HKLM:\SOFTWARE\WOW6432Node\Microsoft\CTF\TIP\$clsid")"
-
-# 3. Add Traditional Chinese (Taiwan) with this input method to the user's languages.
+# 2. Traditional Chinese (Taiwan) in the language list, as on the main system.
 try {
     $languages = Get-WinUserLanguageList
-    $taiwan = $languages | Where-Object { $_.LanguageTag -eq "zh-Hant-TW" }
-    if (-not $taiwan) {
+    if (-not ($languages | Where-Object { $_.LanguageTag -eq "zh-Hant-TW" })) {
         $languages.Add("zh-Hant-TW")
-        $taiwan = $languages | Where-Object { $_.LanguageTag -eq "zh-Hant-TW" }
+        Set-WinUserLanguageList $languages -Force
     }
-    $tip = "0404:$clsid$profile"
-    if (-not $taiwan.InputMethodTips.Contains($tip)) { $taiwan.InputMethodTips.Add($tip) }
-    Set-WinUserLanguageList $languages -Force
-    Log "input methods for zh-Hant-TW: $($taiwan.InputMethodTips -join ', ')"
 } catch {
     Log "language list failed: $_"
 }
+
+# 3. The real install script, and shortcuts on the desktop to run it again
+#    (an update) and to run the uninstall script. Each writes its output to C:\out.
+$arguments = "-Python `"$python`" -Config `"$config`" -ReviewTool `"C:\bopogram-prototype\tools\review_log.py`""
+$installScript = "C:\stage\crates\install\install.ps1"
+try {
+    & $installScript -Python $python -Config $config -ReviewTool "C:\bopogram-prototype\tools\review_log.py" *>&1 |
+        Tee-Object C:\out\install.log
+    Log "install finished (output in install.log)"
+} catch {
+    Log "install failed: $_"
+}
+foreach ($key in "HKLM:\SOFTWARE\Classes\CLSID\{B6B6D901-0BBF-4287-A302-F265DBE9A46C}\InprocServer32",
+        "HKLM:\SOFTWARE\WOW6432Node\Classes\CLSID\{B6B6D901-0BBF-4287-A302-F265DBE9A46C}\InprocServer32",
+        "HKLM:\SOFTWARE\Microsoft\CTF\TIP\{B6B6D901-0BBF-4287-A302-F265DBE9A46C}") {
+    Log "$key present: $(Test-Path $key)"
+}
+$desktop = [Environment]::GetFolderPath("Desktop")
+$update = "powershell -ExecutionPolicy Bypass -Command `"& '$installScript' $($arguments -replace '"', "'") *>&1 | Tee-Object C:\out\update.log`"`r`npause"
+$remove = "powershell -ExecutionPolicy Bypass -Command `"& '$install\uninstall.ps1' *>&1 | Tee-Object C:\out\uninstall.log`"`r`npause"
+[IO.File]::WriteAllText((Join-Path $desktop "update.cmd"), "@echo off`r`n$update`r`n")
+[IO.File]::WriteAllText((Join-Path $desktop "uninstall.cmd"), "@echo off`r`n$remove`r`n")
 
 # What Code Integrity blocked, if anything.
 try {

@@ -39,12 +39,17 @@ $stage = Join-Path $Work "stage"
 $out = Join-Path $Work "out"
 $runtimeCopy = Join-Path $Work "runtime"
 New-Item -ItemType Directory -Force $stage, $out | Out-Null
-foreach ($file in "bopogram_ime.dll", "bopogram-host.exe", "bopogram-settings.exe") {
-    Copy-Item (Join-Path $release $file) $stage -Force
+# The install scripts and what they install, laid out as in crates\, so that
+# the sandbox runs the real install.ps1 and uninstall.ps1.
+Remove-Item (Join-Path $stage "crates"), (Join-Path $stage "x86") -Recurse -Force -ErrorAction SilentlyContinue
+Get-ChildItem $stage -File | Where-Object { $_.Extension -in ".dll", ".exe", ".ico" } | Remove-Item -Force
+foreach ($file in "target\release\bopogram_ime.dll", "target\release\bopogram-host.exe",
+        "target\release\bopogram-settings.exe", "target\i686-pc-windows-msvc\release\bopogram_ime.dll",
+        "bopogram-ime\res\bopogram.ico", "install\install.ps1", "install\uninstall.ps1", "install\common.ps1") {
+    $target = Join-Path $stage "crates\$file"
+    New-Item -ItemType Directory -Force (Split-Path -Parent $target) | Out-Null
+    Copy-Item (Join-Path $crates $file) $target -Force
 }
-New-Item -ItemType Directory -Force (Join-Path $stage "x86") | Out-Null
-Copy-Item (Join-Path $crates "target\i686-pc-windows-msvc\release\bopogram_ime.dll") (Join-Path $stage "x86") -Force
-Copy-Item (Join-Path $crates "bopogram-ime\res\bopogram.ico") $stage -Force
 foreach ($file in "setup.ps1", "testform.ps1", "test.html") {
     Copy-Item (Join-Path $PSScriptRoot $file) $stage -Force
 }

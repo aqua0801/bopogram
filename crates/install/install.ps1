@@ -1,16 +1,23 @@
-# Installs (or updates) the trial input method on THIS system. Run it yourself,
-# from an elevated PowerShell, only after reading crates\docs\install.md:
+# Installs or updates the input method on THIS system. Run it yourself, from
+# an elevated PowerShell, only after reading crates\docs\install.md:
 #
 #   powershell -ExecutionPolicy Bypass -File crates\install\install.ps1
 #
+# Updating is running it again; no sign-out is needed. Applications that are
+# running keep the version they loaded until they restart (the script lists
+# them); everything started afterwards gets the new one.
+#
 # What it changes:
-#   - copies bopogram_ime.dll, bopogram-host.exe, bopogram-settings.exe and
-#     bopogram.ico to $Install, the 32-bit bopogram_ime.dll to $Install\x86, and writes
-#     bopogram-host.json there
+#   - copies bopogram_ime.dll, bopogram-host.exe, bopogram-settings.exe,
+#     bopogram.ico and uninstall.ps1 (with common.ps1) to $Install, the 32-bit
+#     bopogram_ime.dll to $Install\x86, and writes bopogram-host.json there.
+#     Files in use are renamed (*.old-<time>) and deleted at the next restart
+#     (PendingFileRenameOperations) or by the next install.
 #   - regsvr32 (64- and 32-bit): HKLM\SOFTWARE\Classes\CLSID\{B6B6D901-...},
 #     its 32-bit view under WOW6432Node, and HKLM\SOFTWARE\Microsoft\CTF\TIP\{B6B6D901-...}
 #   - adds the input method to the current user's Traditional Chinese
 #     (Taiwan) keyboards (skip with -NoKeyboard)
+#   - a Start menu shortcut to the settings window, for all users
 #   - starts the host at sign-in: HKCU\Software\Microsoft\Windows\CurrentVersion\Run,
 #     value "Bopogram" (skip with -NoAutostart)
 # uninstall.ps1 reverses all of it.
@@ -22,6 +29,8 @@ param(
     # Must be a folder only administrators can write to: the DLL is loaded
     # into every application, elevated ones included.
     [string]$Install = (Join-Path $env:ProgramFiles "Bopogram"),
+    # The typing log review tool opened by the settings window.
+    [string]$ReviewTool = (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "prototype\tools\review_log.py"),
     # Debugging only: the engine writes every request and response (so,
     # everything typed) to this file. Install again without it to turn it off.
     [string]$Trace = "",
@@ -29,23 +38,18 @@ param(
     [switch]$NoAutostart
 )
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "common.ps1")
+Assert-Elevated
 
-$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-if (-not ([Security.Principal.WindowsPrincipal]$identity).IsInRole(
-        [Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    throw "Run this from an elevated PowerShell (Run as administrator)."
-}
-
-$clsid = "{B6B6D901-0BBF-4287-A302-F265DBE9A46C}"
-$profile = "{79EFFB1B-3CE8-41DB-9CA2-3318EC0AED82}"
-$release = Join-Path (Split-Path -Parent $PSScriptRoot) "target\release"
+$crates = Split-Path -Parent $PSScriptRoot
+$release = Join-Path $crates "target\release"
 $dll = Join-Path $release "bopogram_ime.dll"
 $hostExe = Join-Path $release "bopogram-host.exe"
 $settingsExe = Join-Path $release "bopogram-settings.exe"
-$dll32 = Join-Path (Split-Path -Parent $PSScriptRoot) "target\i686-pc-windows-msvc\release\bopogram_ime.dll"
-$icon = Join-Path (Split-Path -Parent $PSScriptRoot) "bopogram-ime\res\bopogram.ico"
-$reviewTool = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "prototype\tools\review_log.py"
-foreach ($path in $Python, $Config, $dll, $hostExe, $settingsExe, $icon) {
+$dll32 = Join-Path $crates "target\i686-pc-windows-msvc\release\bopogram_ime.dll"
+$icon = Join-Path $crates "bopogram-ime\res\bopogram.ico"
+$scripts = (Join-Path $PSScriptRoot "uninstall.ps1"), (Join-Path $PSScriptRoot "common.ps1")
+foreach ($path in @($Python, $Config, $dll, $hostExe, $settingsExe, $icon) + $scripts) {
     if (-not (Test-Path $path)) { throw "missing: $path (build with 'cargo build --release' in crates\)" }
 }
 if (-not (Test-Path $dll32)) {
@@ -58,22 +62,30 @@ if ($LASTEXITCODE -ne 0) { throw "the engine does not start:`n$($converted | Out
 Write-Output "Engine check passed."
 
 # 2. Files. A DLL that applications have loaded cannot be overwritten, but it
-#    can be renamed; the old copy is removed by a later install or uninstall.
-Get-Process bopogram-host, bopogram-settings -ErrorAction SilentlyContinue | Stop-Process -Force
+#    can be renamed; the renamed copy goes at the next restart.
+$running = Get-ImeUsers
+Stop-Bopogram
 $install32 = Join-Path $Install "x86"
 New-Item -ItemType Directory -Force $Install, $install32 | Out-Null
-Get-ChildItem $Install, $install32 -Filter "*.old-*" | Remove-Item -Force -ErrorAction SilentlyContinue
+Get-ChildItem $Install, $install32 -Filter "*.old-*" | ForEach-Object { [void](Remove-OrSchedule $_.FullName) }
 $stamp = Get-Date -Format "yyyyMMddHHmmss"
-foreach ($pair in @($dll, $Install), @($hostExe, $Install), @($settingsExe, $Install), @($icon, $Install), @($dll32, $install32)) {
+$pairs = @(@($dll, $Install), @($hostExe, $Install), @($settingsExe, $Install), @($icon, $Install),
+    @($dll32, $install32)) + @($scripts | ForEach-Object { , @($_, $Install) })
+foreach ($pair in $pairs) {
     $file, $folder = $pair
-    $target = Join-Path $folder (Split-Path -Leaf $file)
+    $name = Split-Path -Leaf $file
+    $target = Join-Path $folder $name
     if (Test-Path $target) {
         try { Remove-Item $target -Force }
-        catch { Rename-Item $target "$(Split-Path -Leaf $file).old-$stamp" }
+        catch {
+            $old = Join-Path $folder "$name.old-$stamp"
+            Rename-Item $target $old
+            Remove-AtRestart $old
+        }
     }
     Copy-Item $file $target
 }
-$hostConfig = @{ python = $Python; config = $Config; review_tool = $reviewTool }
+$hostConfig = @{ python = $Python; config = $Config; review_tool = $ReviewTool }
 if ($Trace) { $hostConfig.trace = $Trace }
 [IO.File]::WriteAllText((Join-Path $Install "bopogram-host.json"), ($hostConfig | ConvertTo-Json))
 Write-Output "Files installed in $Install."
@@ -90,26 +102,43 @@ Write-Output "Text service registered (64- and 32-bit)."
 if (-not $NoKeyboard) {
     $languages = Get-WinUserLanguageList
     $taiwan = $languages | Where-Object { $_.LanguageTag -eq "zh-Hant-TW" }
-    $tip = "0404:$clsid$profile"
     if (-not $taiwan) {
         Write-Output "Traditional Chinese (Taiwan) is not in your language list; add the keyboard in Settings."
-    } elseif (-not $taiwan.InputMethodTips.Contains($tip)) {
-        $taiwan.InputMethodTips.Add($tip)
+    } elseif (-not $taiwan.InputMethodTips.Contains($Tip)) {
+        $taiwan.InputMethodTips.Add($Tip)
         Set-WinUserLanguageList $languages -Force
         Write-Output "Keyboard added. Switch to it with Win+Space."
     } else {
         Write-Output "Keyboard already in the list."
     }
 }
-# 5. Start the host at sign-in, so that the engine is ready before the first
+
+# 5. The settings window in the Start menu.
+$link = (New-Object -ComObject WScript.Shell).CreateShortcut($Shortcut)
+$link.TargetPath = Join-Path $Install "bopogram-settings.exe"
+$link.WorkingDirectory = $Install
+$link.IconLocation = "$(Join-Path $Install 'bopogram.ico'),0"
+$link.Description = "Bopogram"
+$link.Save()
+Write-Output "Start menu shortcut: $Shortcut"
+
+# 6. Start the host at sign-in, so that the engine is ready before the first
 #    key, and so that applications that may not start it themselves
-#    (elevated ones, Store apps) find it running.
-$run = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+#    (elevated ones, Store apps) find it running. And start it now.
 if (-not $NoAutostart) {
-    Set-ItemProperty $run -Name "Bopogram" -Value "`"$(Join-Path $Install 'bopogram-host.exe')`""
+    Set-ItemProperty $RunKey -Name "Bopogram" -Value "`"$(Join-Path $Install 'bopogram-host.exe')`""
     Write-Output "The engine host starts at sign-in."
-} elseif (Get-ItemProperty $run -Name "Bopogram" -ErrorAction SilentlyContinue) {
-    Remove-ItemProperty $run -Name "Bopogram"
+} elseif (Get-ItemProperty $RunKey -Name "Bopogram" -ErrorAction SilentlyContinue) {
+    Remove-ItemProperty $RunKey -Name "Bopogram"
     Write-Output "The engine host no longer starts at sign-in."
 }
-Write-Output "Done. Applications that were already running use the new version after a restart."
+Start-Unelevated (Join-Path $Install "bopogram-host.exe")
+Write-Output "Engine host started."
+
+if ($running.Count -gt 0) {
+    Write-Output "Done. These programs keep the previous version until they restart:"
+    Write-Output "  $($running -join ', ')"
+    Write-Output "  (explorer: restart Windows Explorer from Task Manager; Start menu search: SearchHost restarts by itself when ended in Task Manager.)"
+} else {
+    Write-Output "Done."
+}
