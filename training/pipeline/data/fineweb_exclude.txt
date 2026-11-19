@@ -1,0 +1,51 @@
+# Domains whose pages are dropped from FineWeb2 (fineweb_extract.py).
+# A host matches when it equals a listed domain or ends with "." + domain.
+# Checked 2026-11-18 on the 40 largest sites of file 000.
+
+# Terms forbid AI training (decided before FineWeb2)
+ptt.cc
+pttweb.cc
+cna.com.tw
+udn.com
+twreporter.org
+
+# robots.txt disallows CCBot / GPTBot / ClaudeBot / Google-Extended from the whole site
+yahoo.com
+chinatimes.com
+epochtimes.com
+mobile01.com
+ltn.com.tw
+tripadvisor.com.tw
+ntdtv.com
+twwiki.com
+books.com.tw
+womany.net
+share4tw.com
+ithome.com.tw
+
+# Hong Kong sites outside .hk (Hong Kong usage)
+hket.com
+hk01.com
+mingpao.com
+stheadline.com
+voacantonese.com
+zkiz.com
+
+# Copied novels and fiction (content likely infringes)
+8book.com
+11book.com
+ck101.com
+eyny.com
+book100.com
+880vs.com
+
+# China state media in Traditional script; content converted from Simplified
+news.cn
+china.com.cn
+rocidea.com
+mmready.com
+itsfun.com.tw
+
+# Already in the corpus
+wikipedia.org
+wikisource.org
