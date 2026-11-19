@@ -46,6 +46,22 @@ pub fn save_style(style: &str) {
     }
 }
 
+thread_local! {
+    static SHARED: Cell<Option<(Instant, bool)>> = const { Cell::new(None) };
+}
+
+/// `shared_mode`, read at most every few seconds (it is asked on every key).
+pub fn shared_mode_cached() -> bool {
+    SHARED.with(|cached| match cached.get() {
+        Some((at, shared)) if at.elapsed() < RECHECK => shared,
+        _ => {
+            let shared = shared_mode();
+            cached.set(Some((Instant::now(), shared)));
+            shared
+        }
+    })
+}
+
 /// Is the Chinese/English mode shared by all applications?
 pub fn shared_mode() -> bool {
     folder()

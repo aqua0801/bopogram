@@ -25,7 +25,8 @@ use windows::Win32::UI::TextServices::{
     ITfDisplayAttributeInfo, ITfDisplayAttributeProvider, ITfDisplayAttributeProvider_Impl,
     ITfKeyEventSink, ITfKeyEventSink_Impl, ITfKeystrokeMgr, ITfTextInputProcessor,
     ITfTextInputProcessorEx, ITfTextInputProcessorEx_Impl, ITfTextInputProcessor_Impl,
-    ITfLangBarItemButton, ITfLangBarItemMgr, ITfLangBarItemSink, ITfThreadMgr, ITfUIElement,
+    ITfLangBarItemButton, ITfLangBarItemMgr, ITfLangBarItemSink, ITfSource, ITfThreadFocusSink,
+    ITfThreadFocusSink_Impl, ITfThreadMgr, ITfUIElement,
     ITfUIElementMgr, TF_ES_ASYNCDONTCARE, TF_ES_READWRITE, TF_LBI_ICON, TF_LBI_TEXT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -64,6 +65,8 @@ pub(crate) struct State {
     /// The mode button in the input indicator, and whoever wants to hear
     /// that it changed.
     button: Option<ITfLangBarItemButton>,
+    /// Our registration for hearing that this thread got the focus.
+    focus_cookie: Option<u32>,
     button_sink: Option<ITfLangBarItemSink>,
     /// This text service as the owner of its compositions.
     sink: Option<ITfCompositionSink>,
@@ -125,6 +128,18 @@ pub(crate) fn toggle_mode(state: &Shared) {
 fn mode_switched(chinese: bool) {
     if settings::shared_mode() {
         settings::save_mode(chinese);
+    }
+}
+
+/// The same, before a key is judged: a safety net in case the focus
+/// notification did not come. Nothing is composed, so nothing is committed.
+fn adopt_shared_mode_if_idle(state: &Shared) {
+    if with_controller(state, |c| !c.composing()).unwrap_or(false) && settings::shared_mode_cached() {
+        let before = with_controller(state, |c| c.chinese());
+        adopt_shared_mode(state);
+        if before != with_controller(state, |c| c.chinese()) {
+            button_changed(state);
+        }
     }
 }
 
@@ -389,7 +404,8 @@ fn with_controller<R>(
     ITfTextInputProcessor,
     ITfKeyEventSink,
     ITfCompositionSink,
-    ITfDisplayAttributeProvider
+    ITfDisplayAttributeProvider,
+    ITfThreadFocusSink
 )]
 pub struct TextService {
     state: Shared,
@@ -619,11 +635,15 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
             // The candidate list must not outlive the text service.
             with_controller(&self.state, |c| c.close_candidates());
             refresh_candidates(&self.state);
-            let (thread_mgr, client, button) =
-                with(&self.state, |s| (s.thread_mgr.take(), s.client, s.button.take()))
-                    .unwrap_or_default();
+            let (thread_mgr, client, button, focus_cookie) = with(&self.state, |s| {
+                (s.thread_mgr.take(), s.client, s.button.take(), s.focus_cookie.take())
+            })
+            .unwrap_or_default();
             if let Some(thread_mgr) = thread_mgr {
                 unsafe {
+                    if let (Some(cookie), Ok(source)) = (focus_cookie, thread_mgr.cast::<ITfSource>()) {
+                        let _ = source.UnadviseSink(cookie);
+                    }
                     if let Ok(keystrokes) = thread_mgr.cast::<ITfKeystrokeMgr>() {
                         let _ = keystrokes.UnadviseKeyEventSink(client);
                     }
@@ -689,6 +709,14 @@ impl ITfTextInputProcessorEx_Impl for TextService_Impl {
                     with(&self.state, |s| s.button = Some(button));
                 }
             }
+            // Told whenever this application's thread gets the focus, which is
+            // when a mode chosen in another application must be taken on.
+            if let Ok(source) = thread_mgr.cast::<ITfSource>() {
+                let sink: ITfThreadFocusSink = self.to_interface();
+                if let Ok(cookie) = source.AdviseSink(&ITfThreadFocusSink::IID, &sink) {
+                    with(&self.state, |s| s.focus_cookie = Some(cookie));
+                }
+            }
             adopt_shared_mode(&self.state);
             button_changed(&self.state);
             Ok(())
@@ -696,17 +724,41 @@ impl ITfTextInputProcessorEx_Impl for TextService_Impl {
     }
 }
 
+impl ITfThreadFocusSink_Impl for TextService_Impl {
+    /// The user switched to this application.
+    fn OnSetThreadFocus(&self) -> Result<()> {
+        guard(Ok(()), || {
+            focus_gained(&self.state);
+            Ok(())
+        })
+    }
+
+    fn OnKillThreadFocus(&self) -> Result<()> {
+        guard(Ok(()), || {
+            with(&self.state, |s| {
+                if let Some(popup) = &s.popup {
+                    popup.hide();
+                }
+            });
+            Ok(())
+        })
+    }
+}
+
+/// This application has the focus again: settings chosen elsewhere in the
+/// meantime apply here now, and the taskbar shows this application's mode.
+fn focus_gained(state: &Shared) {
+    if let Some(style) = settings::load_style() {
+        with_controller(state, |c| c.want_style(&style));
+    }
+    adopt_shared_mode(state);
+    button_changed(state);
+}
+
 impl ITfKeyEventSink_Impl for TextService_Impl {
     fn OnSetFocus(&self, foreground: BOOL) -> Result<()> {
         if foreground.as_bool() {
-            // The style may have been changed in another application.
-            if let Some(style) = settings::load_style() {
-                with_controller(&self.state, |c| c.want_style(&style));
-            }
-            // The mode may have been switched in another application; and
-            // whether shared or not, the taskbar must show this one's.
-            adopt_shared_mode(&self.state);
-            button_changed(&self.state);
+            focus_gained(&self.state);
         } else {
             with(&self.state, |s| {
                 if let Some(popup) = &s.popup {
@@ -723,6 +775,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 return Ok(false.into());
             };
             let mut timing = timing::Key::start("test");
+            adopt_shared_mode_if_idle(&self.state);
             let key = key_from(wparam);
             self.refresh_enabled(context);
             timing.step("password");
