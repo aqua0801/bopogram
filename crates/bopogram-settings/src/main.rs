@@ -26,6 +26,10 @@ use windows::Win32::Graphics::Gdi::{
     CreateFontW, GetSysColorBrush, CLEARTYPE_QUALITY, COLOR_BTNFACE, DEFAULT_CHARSET, HFONT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Controls::{
+    InitCommonControlsEx, ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX, TOOLTIPS_CLASSW, TTF_IDISHWND,
+    TTF_SUBCLASS, TTM_ADDTOOLW, TTM_SETMAXTIPWIDTH, TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW,
+};
 use windows::Win32::UI::HiDpi::GetDpiForSystem;
 use windows::Win32::UI::WindowsAndMessaging::{
     AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
@@ -80,7 +84,7 @@ const STATUS_TIMER: usize = 1;
 
 /// Client area in pixels at 96 DPI: two columns.
 const WIDTH: i32 = 780;
-const HEIGHT: i32 = 504;
+const HEIGHT: i32 = 384;
 const COLUMN: i32 = 372;
 const LEFT: i32 = 12;
 const RIGHT: i32 = LEFT + COLUMN + 12;
@@ -125,6 +129,8 @@ struct Builder {
     window: HWND,
     font: HFONT,
     dpi: i32,
+    /// Shows the longer explanation of a control while the mouse rests on it.
+    tooltip: Option<HWND>,
 }
 
 impl Builder {
@@ -133,7 +139,7 @@ impl Builder {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn control(&self, class: PCWSTR, text: &str, style: u32, id: i32, x: i32, y: i32, w: i32, h: i32) {
+    fn control(&self, class: PCWSTR, text: &str, style: u32, id: i32, x: i32, y: i32, w: i32, h: i32) -> Option<HWND> {
         unsafe {
             let created = CreateWindowExW(
                 WINDOW_EX_STYLE(0),
@@ -149,10 +155,29 @@ impl Builder {
                 None,
                 None,
             );
-            if let Ok(control) = created {
-                SendMessageW(control, WM_SETFONT, Some(WPARAM(self.font.0 as usize)), Some(LPARAM(1)));
-            }
+            let control = created.ok()?;
+            SendMessageW(control, WM_SETFONT, Some(WPARAM(self.font.0 as usize)), Some(LPARAM(1)));
+            Some(control)
         }
+    }
+
+    /// The explanation shown when the mouse rests on control `id`.
+    fn tip(&self, id: i32, text: &str) {
+        let (Some(tooltip), Some(control)) = (self.tooltip, item(self.window, id)) else {
+            return;
+        };
+        let mut text = wide(text);
+        let info = TTTOOLINFOW {
+            // Without the last field: the size every version of the
+            // common controls accepts.
+            cbSize: (std::mem::size_of::<TTTOOLINFOW>() - std::mem::size_of::<*mut c_void>()) as u32,
+            uFlags: TTF_IDISHWND | TTF_SUBCLASS,
+            hwnd: self.window,
+            uId: control.0 as usize,
+            lpszText: windows::core::PWSTR(text.as_mut_ptr()),
+            ..Default::default()
+        };
+        unsafe { SendMessageW(tooltip, TTM_ADDTOOLW, None, Some(LPARAM(&info as *const _ as isize))) };
     }
 
     /// A frame around a column's section; `x` is `LEFT` or `RIGHT`.
@@ -203,52 +228,78 @@ fn build(window: HWND, app: &App) {
             w!("Microsoft JhengHei UI"),
         )
     };
-    let b = Builder { window, font, dpi };
+    let tooltip = unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            TOOLTIPS_CLASSW,
+            PCWSTR::null(),
+            WINDOW_STYLE(TTS_ALWAYSTIP | TTS_NOPREFIX),
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            Some(window),
+            None,
+            None,
+            None,
+        )
+        .ok()
+    };
+    if let Some(tooltip) = tooltip {
+        // Wrap long explanations.
+        unsafe { SendMessageW(tooltip, TTM_SETMAXTIPWIDTH, None, Some(LPARAM((360 * dpi / 96) as isize))) };
+    }
+    let b = Builder { window, font, dpi, tooltip };
     let (l, r) = (LEFT, RIGHT);
 
     // Left column: choosing characters.
-    b.group("選字風格", l, 10, 84);
-    b.option("口語：輕聲「ㄉㄜ」一律先選「的」", BS_AUTORADIOBUTTON, WS_GROUP.0, ID_CASUAL, l, 32);
-    b.option("正式：的／地／得由模型判斷", BS_AUTORADIOBUTTON, 0, ID_FORMAL, l, 58);
+    b.group("選字風格", l, 10, 58);
+    b.radios(&["口語", "正式"], ID_CASUAL, l + 14, 32, 110);
+    b.tip(ID_CASUAL, "輕聲「ㄉㄜ」一律先選「的」。");
+    b.tip(ID_FORMAL, "「的／地／得」由模型依上下文判斷。");
 
-    b.group("候選視窗", l, 104, 118);
-    b.label("選字鍵", -1, l + 14, 130, 84);
-    b.radios(&["1 2 3 …", "A S D F …"], ID_DIGIT_KEYS, l + 100, 126, 110);
-    b.label("每頁候選數", -1, l + 14, 160, 84);
+    b.group("候選視窗", l, 78, 118);
+    b.label("選字鍵", -1, l + 14, 104, 84);
+    b.radios(&["1 2 3 …", "A S D F …"], ID_DIGIT_KEYS, l + 100, 100, 110);
+    b.tip(ID_HOME_ROW, "候選視窗開著時用 A S D F … 選字，數字鍵照常是注音。");
+    b.label("每頁候選數", -1, l + 14, 134, 84);
     let pages: Vec<String> = PAGE_SIZES.iter().map(usize::to_string).collect();
     let pages: Vec<&str> = pages.iter().map(String::as_str).collect();
-    b.radios(&pages, ID_PAGE, l + 100, 156, 56);
-    b.label("文字大小", -1, l + 14, 190, 84);
-    b.radios(&["小", "中", "大", "特大"], ID_FONT, l + 100, 186, 56);
+    b.radios(&pages, ID_PAGE, l + 100, 130, 56);
+    b.label("文字大小", -1, l + 14, 164, 84);
+    b.radios(&["小", "中", "大", "特大"], ID_FONT, l + 100, 160, 56);
 
-    b.group("學習與紀錄", l, 232, 158);
-    b.option("個人化學習：記住常用與改選過的詞", BS_AUTOCHECKBOX, WS_GROUP.0, ID_LEARNING, l, 254);
-    b.option("打字紀錄：記下首選與修改，審核後才匯出", BS_AUTOCHECKBOX, 0, ID_TYPING_LOG, l, 280);
-    b.button("審核打字紀錄…", ID_REVIEW, l + 14, 312, 140);
-    b.button("開啟資料夾", ID_FOLDER, l + 164, 312, 110);
-    b.button("清除個人化資料…", ID_CLEAR, l + 14, 348, 160);
+    b.group("學習與紀錄", l, 206, 128);
+    b.option("個人化學習", BS_AUTOCHECKBOX, WS_GROUP.0, ID_LEARNING, l, 228);
+    b.tip(ID_LEARNING, "記住常用與改選過的詞，只存在本機。變更時會重新啟動引擎。");
+    b.option("打字紀錄", BS_AUTOCHECKBOX, 0, ID_TYPING_LOG, l, 254);
+    b.tip(ID_TYPING_LOG, "記下首選與你的修改，用來改進選字；只存在本機，審核後才匯出。變更時會重新啟動引擎。");
+    b.button("審核紀錄…", ID_REVIEW, l + 14, 288, 110);
+    b.button("開啟資料夾", ID_FOLDER, l + 132, 288, 110);
+    b.button("清除學習…", ID_CLEAR, l + 250, 288, 108);
+    b.tip(ID_CLEAR, "刪除個人化學習資料（無法復原）。打字紀錄不受影響。");
 
     // Right column: modes and the engine.
-    b.group("中／英模式", r, 10, 166);
-    b.option("所有程式共用同一個中／英模式", BS_AUTOCHECKBOX, WS_GROUP.0, ID_SHARED_MODE, r, 32);
+    b.group("中／英模式", r, 10, 118);
+    b.option("所有程式共用", BS_AUTOCHECKBOX, WS_GROUP.0, ID_SHARED_MODE, r, 32);
+    b.tip(ID_SHARED_MODE, "所有程式共用同一個中／英模式；新開的程式沿用目前的模式。");
     b.label("新開的程式", -1, r + 14, 66, 84);
     b.radios(&["中文", "英文"], ID_START_CHINESE, r + 100, 62, 80);
     b.option("單按 Shift 切換中／英", BS_AUTOCHECKBOX, WS_GROUP.0, ID_SHIFT, r, 92);
-    b.label("中文模式下 Shift+空白鍵切換全形／半形。", -1, r + 14, 122, COLUMN - 28);
-    b.label("共用模式時，新開的程式沿用目前的模式。", -1, r + 14, 146, COLUMN - 28);
+    b.tip(ID_SHIFT, "中文模式下 Shift+空白鍵另外切換全形／半形。");
 
-    b.group("引擎", r, 186, 158);
+    b.group("引擎", r, 138, 156);
     let bundle = app.files.config.as_deref().and_then(Path::parent);
     let bundle = bundle.map_or("找不到（bopogram-host.json）".to_owned(), |p| p.display().to_string());
-    b.label(&format!("執行包：{bundle}"), -1, r + 14, 208, COLUMN - 28);
-    b.label("", ID_STATUS, r + 14, 234, COLUMN - 28);
-    b.option("計時紀錄（只記耗時，24 小時後自動關閉）", BS_AUTOCHECKBOX, WS_GROUP.0, ID_TIMING, r, 260);
-    b.button("重新啟動引擎", ID_RESTART, r + 14, 300, 126);
+    b.label(&format!("執行包：{bundle}"), -1, r + 14, 160, COLUMN - 28);
+    b.label("", ID_STATUS, r + 14, 186, COLUMN - 28);
+    b.option("計時紀錄", BS_AUTOCHECKBOX, WS_GROUP.0, ID_TIMING, r, 212);
+    b.tip(ID_TIMING, "只記每個按鍵的耗時，不記內容；24 小時後自動關閉。");
+    b.button("重新啟動引擎", ID_RESTART, r + 14, 250, 126);
 
-    b.label("學習與紀錄的變更會在套用時重新啟動引擎；其他設定數秒內生效。", -1, l, 412, WIDTH - 24);
-    b.button("確定", ID_OK, WIDTH - 12 - 80 * 3 - 16, 460, 80);
-    b.button("取消", ID_CANCEL, WIDTH - 12 - 80 * 2 - 8, 460, 80);
-    b.button("套用", ID_APPLY, WIDTH - 12 - 80, 460, 80);
+    b.button("確定", ID_OK, WIDTH - 12 - 80 * 3 - 16, 344, 80);
+    b.button("取消", ID_CANCEL, WIDTH - 12 - 80 * 2 - 8, 344, 80);
+    b.button("套用", ID_APPLY, WIDTH - 12 - 80, 344, 80);
 }
 
 /// The input method's icon (`bopogram.ico` beside this program) on the
@@ -459,6 +510,9 @@ fn main() {
             return;
         }
         let Ok(instance) = GetModuleHandleW(None) else { return };
+        let controls =
+            INITCOMMONCONTROLSEX { dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32, dwICC: ICC_WIN95_CLASSES };
+        let _ = InitCommonControlsEx(&controls);
         RegisterClassW(&WNDCLASSW {
             lpfnWndProc: Some(window_proc),
             hInstance: instance.into(),

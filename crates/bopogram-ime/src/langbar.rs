@@ -38,8 +38,9 @@ const CONNECT_E_ADVISELIMIT: HRESULT = HRESULT(0x8004_0201_u32 as i32);
 const CONNECT_E_CANNOTCONNECT: HRESULT = HRESULT(0x8004_0202_u32 as i32);
 
 const TEXT_SETTINGS: &str = "設定…";
-const TEXT_CASUAL: &str = "口語（輕聲ㄉㄜ一律「的」）";
-const TEXT_FORMAL: &str = "正式（的／地／得由模型判斷）";
+// Menu items cannot carry tooltips; the settings window explains them.
+const TEXT_CASUAL: &str = "口語";
+const TEXT_FORMAL: &str = "正式";
 
 #[implement(ITfLangBarItemButton, ITfLangBarItem, ITfSource)]
 pub struct ModeButton {
