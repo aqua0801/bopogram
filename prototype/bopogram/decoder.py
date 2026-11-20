@@ -74,7 +74,7 @@ class Hyp:
 class Decoder:
     def __init__(self, lexicon: Lexicon, lm: MixtureLM, beam: int = 16, max_candidates: int = 40,
                  extra_score=None, word_penalty: float = 0.0, eos_weight: float = 0.0,
-                 style: str = "formal"):
+                 style: str = "formal", word_bias: dict[str, float] | None = None):
         self.lexicon = lexicon
         self.lm = lm
         self.beam = beam
@@ -82,6 +82,8 @@ class Decoder:
         self.extra_score = extra_score  # optional callable(prev_word, word) -> added log score
         self.word_penalty = word_penalty  # added per word; negative values favour longer words
         self.eos_weight = eos_weight      # weight of ln P(end of sentence) when ranking results
+        # Fixed log-score added to particular words wherever they are used (see Engine).
+        self.word_bias = word_bias or {}
         # "casual": a lone neutral-tone ㄉㄜ is always 的 unless the user picks otherwise.
         # "formal": the language model chooses between 的 / 地 / 得.
         self.style = style
@@ -279,6 +281,8 @@ class Decoder:
                 bonus = self._position_score(i, word) if self.position_scores is not None else 0.0
                 if lex.user_bonus and lex.is_user(word, key):
                     bonus += lex.user_bonus
+                elif word in self.word_bias:
+                    bonus += self.word_bias[word]
                 # A literal is scored as the token class the model was trained with
                 # (punctuation, Latin, digits); a space does not touch the model.
                 token = word
