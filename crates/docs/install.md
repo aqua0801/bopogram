@@ -109,6 +109,8 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 | 每頁候選數：5、7、9、10 | `keys.json` 的 `page_size` | 約 5 秒內 |
 | 片語選單的組合鍵（預設 Alt+\`，清空則停用） | `keys.json` 的 `phrase_key` | 切換到任一程式時 |
 | 片語（「編輯片語…」） | `%LOCALAPPDATA%\Bopogram\phrases.json` | 下次叫出選單時 |
+| 加入詞庫／刪除候選的組合鍵（預設 Ctrl+= 與 Ctrl+-，清空則停用） | `keys.json` 的 `dict_add_key`、`dict_remove_key` | 約 5 秒內 |
+| 詞庫（「管理詞庫…」） | 執行包 `userdata\userdict.tsv`、`userdata\excluded.tsv`（只由引擎寫入） | 立即，所有程式 |
 | 候選視窗文字大小 | `%LOCALAPPDATA%\Bopogram\candidate-font.txt` | 約 5 秒內 |
 | 個人化學習 | 執行包 `config.json` 的 `user_model` | 套用時重新啟動引擎 |
 | 打字紀錄 | 執行包 `config.json` 的 `typing_log` | 套用時重新啟動引擎 |
@@ -116,7 +118,14 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 
 另有「審核打字紀錄…」（開啟 `review_log.py`）、「開啟資料夾」（`userdata\`）、「重新啟動引擎」。
 關閉個人化學習或打字紀錄不會刪除已存的資料；要刪除個人化學習資料，按「清除個人化資料…」：
-會先停止引擎、刪除 `user_model` 指向的檔案（預設 `userdata\user.json`），再重新啟動引擎。打字紀錄不受影響。
+會先停止引擎、刪除 `user_model` 指向的檔案（預設 `userdata\user.json`），再重新啟動引擎。打字紀錄與詞庫不受影響。
+
+「管理詞庫…」開啟詞庫視窗：列出自訂詞與排除的文字（可搜尋）。
+- 加入：在「詞」輸入後按「查讀音」，從引擎找到的讀音中選一個（破音字會列出全部），再按「加入詞庫」。
+- 排除這段文字：之後引擎不會再自動選出這段文字（不論怎麼斷詞），所有讀音都排除。
+- 刪除自訂詞、取消排除：先在清單中選取。自訂詞若同時在字典裡，刪除時會一併排除。
+- 重新讀取檔案：手動編輯過 `userdict.tsv` 或 `excluded.tsv` 之後使用。
+- 詞庫視窗透過 host 與引擎溝通，引擎沒在執行時會先啟動它。
 
 ## 候選視窗
 
@@ -147,6 +156,14 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
   - 片語只支援單行。`phrases.json` 裡含換行的片語選了只會顯示提示；設定的片語編輯器開啟時會把它們併成一行。
   - 多行曾經試過但暫時放棄：終端機會把換行當 Enter；Discord 會讓最後一行重複並卡在組字狀態，
     直接插入、經組字插入、模擬 Shift+Enter（Chromium 收到按鍵卻不換行）都不行。Edge 用組字插入 `\n` 則正常。
+
+- Ctrl+=（可在設定改）：組字時把整個組字區加入詞庫，讀音取自實際打的注音，
+  所以破音字不會選錯。用法：打出詞、手動選成正確的字，按 Ctrl+=；組字區不變，游標旁顯示結果。
+  注音還沒打完、含符號或英文、超過 8 個字時不會加入，會顯示原因。沒在組字時這個鍵交給程式（例如瀏覽器放大）。
+- Ctrl+-（可在設定改）：候選視窗開著時，刪除選中的候選。第一次按只提示，再按一次才刪除；
+  中間按了其他鍵就取消。自訂詞直接刪除，字典的詞改為排除（之後不會再自動選出）。
+  某個讀音唯一的字不能排除。候選視窗沒開時這個鍵交給程式（例如瀏覽器縮小）。
+- 從 Microsoft Store 程式等受限制的程式不能修改詞庫（與它們不學習的規則相同）。
 
 ## 已知限制
 

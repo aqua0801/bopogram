@@ -13,6 +13,8 @@
 //! No networking, like everything else.
 #![windows_subsystem = "windows"]
 
+mod dictionary;
+mod engine;
 mod files;
 mod phrases;
 
@@ -83,6 +85,9 @@ const ID_PAGE: i32 = 160;
 const ID_CLEAR: i32 = 170;
 const ID_PHRASE_KEY: i32 = 180;
 const ID_PHRASES: i32 = 181;
+const ID_DICT_ADD_KEY: i32 = 182;
+const ID_DICT_REMOVE_KEY: i32 = 183;
+const ID_DICTIONARY: i32 = 184;
 const STATUS_TIMER: usize = 1;
 
 // The hot key control (commctrl.h): a field that shows the key combination pressed in it.
@@ -99,7 +104,9 @@ const WS_BORDER: u32 = 0x0080_0000;
 
 /// Client area in pixels at 96 DPI: two columns.
 const WIDTH: i32 = 780;
-const HEIGHT: i32 = 456;
+const HEIGHT: i32 = 530;
+/// Where the OK, Cancel and Apply buttons sit.
+const BUTTONS_Y: i32 = 490;
 const COLUMN: i32 = 372;
 const LEFT: i32 = 12;
 const RIGHT: i32 = LEFT + COLUMN + 12;
@@ -313,7 +320,7 @@ fn build(window: HWND, app: &App) {
     b.button("審核紀錄…", ID_REVIEW, l + 14, 288, 110);
     b.button("開啟資料夾", ID_FOLDER, l + 132, 288, 110);
     b.button("清除學習…", ID_CLEAR, l + 250, 288, 108);
-    b.tip(ID_CLEAR, "刪除個人化學習資料（無法復原）。打字紀錄不受影響。");
+    b.tip(ID_CLEAR, "刪除個人化學習資料（無法復原）。打字紀錄與詞庫不受影響。");
 
     // Right column: modes and the engine.
     b.group("中／英模式", r, 10, 118);
@@ -324,15 +331,32 @@ fn build(window: HWND, app: &App) {
     b.option("單按 Shift 切換中／英", BS_AUTOCHECKBOX, WS_GROUP.0, ID_SHIFT, r, 92);
     b.tip(ID_SHIFT, "中文模式下 Shift+空白鍵另外切換全形／半形。");
 
+    // A key field. A key without Ctrl or Alt would be taken from typing:
+    // `added` is put with it.
+    let hotkey = |id: i32, x: i32, y: i32, added: u32| {
+        if let Some(key) = b.control(HOTKEY_CLASS, "", WS_TABSTOP.0 | WS_BORDER, id, x, y, 160, 26) {
+            unsafe {
+                SendMessageW(key, HKM_SETRULES, Some(WPARAM(HKCOMB_NONE | HKCOMB_S)), Some(LPARAM(added as isize)))
+            };
+        }
+    };
+
+    b.group("詞庫", l, 344, 136);
+    b.label("加入詞庫", -1, l + 14, 370, 84);
+    hotkey(ID_DICT_ADD_KEY, l + 100, 366, HOTKEYF_CONTROL);
+    b.tip(ID_DICT_ADD_KEY, "組字時按下，把整個組字區加入詞庫，讀音取自你打的注音。按 Backspace 清空則停用。");
+    b.label("刪除候選", -1, l + 14, 404, 84);
+    hotkey(ID_DICT_REMOVE_KEY, l + 100, 400, HOTKEYF_CONTROL);
+    b.tip(
+        ID_DICT_REMOVE_KEY,
+        "候選視窗開著時按兩次，刪除選中的候選：自訂詞直接刪除，字典的詞改為排除。按 Backspace 清空則停用。",
+    );
+    b.button("管理詞庫…", ID_DICTIONARY, l + 14, 438, 126);
+    b.tip(ID_DICTIONARY, "查看自訂詞與排除的詞；加入新詞、排除不想要的詞，或取消排除。");
+
     b.group("快速輸入", r, 138, 100);
     b.label("片語選單", -1, r + 14, 164, 84);
-    let key = b.control(HOTKEY_CLASS, "", WS_TABSTOP.0 | WS_BORDER, ID_PHRASE_KEY, r + 100, 160, 160, 26);
-    if let Some(key) = key {
-        // A key without Ctrl or Alt would be taken from typing: Alt is added.
-        unsafe {
-            SendMessageW(key, HKM_SETRULES, Some(WPARAM(HKCOMB_NONE | HKCOMB_S)), Some(LPARAM(HOTKEYF_ALT as isize)))
-        };
-    }
+    hotkey(ID_PHRASE_KEY, r + 100, 160, HOTKEYF_ALT);
     b.tip(ID_PHRASE_KEY, "按下想用的組合鍵（需含 Ctrl 或 Alt）；按 Backspace 清空則停用片語選單。");
     b.button("編輯片語…", ID_PHRASES, r + 14, 198, 126);
     b.tip(ID_PHRASES, "在任何程式按上面的組合鍵叫出片語選單，選了就插入文字（不經過剪貼簿）。");
@@ -346,9 +370,9 @@ fn build(window: HWND, app: &App) {
     b.tip(ID_TIMING, "只記每個按鍵的耗時，不記內容；24 小時後自動關閉。");
     b.button("重新啟動引擎", ID_RESTART, r + 14, 360, 126);
 
-    b.button("確定", ID_OK, WIDTH - 12 - 80 * 3 - 16, 416, 80);
-    b.button("取消", ID_CANCEL, WIDTH - 12 - 80 * 2 - 8, 416, 80);
-    b.button("套用", ID_APPLY, WIDTH - 12 - 80, 416, 80);
+    b.button("確定", ID_OK, WIDTH - 12 - 80 * 3 - 16, BUTTONS_Y, 80);
+    b.button("取消", ID_CANCEL, WIDTH - 12 - 80 * 2 - 8, BUTTONS_Y, 80);
+    b.button("套用", ID_APPLY, WIDTH - 12 - 80, BUTTONS_Y, 80);
 }
 
 /// The input method's icon (`bopogram.ico` beside this program) on the
@@ -384,8 +408,8 @@ fn set_checked(window: HWND, id: i32, on: bool) {
     }
 }
 
-/// The phrase key into the hot key field (nothing: the menu is off).
-fn show_hotkey(window: HWND, key: Option<Hotkey>) {
+/// A key into hot key field `id` (nothing: that key is off).
+fn show_hotkey(window: HWND, id: i32, key: Option<Hotkey>) {
     let value = key.map_or(0, |key| {
         let mut modifiers = 0;
         if key.shift {
@@ -399,13 +423,13 @@ fn show_hotkey(window: HWND, key: Option<Hotkey>) {
         }
         key.vk | modifiers << 8
     });
-    if let Some(control) = item(window, ID_PHRASE_KEY) {
+    if let Some(control) = item(window, id) {
         unsafe { SendMessageW(control, HKM_SETHOTKEY, Some(WPARAM(value as usize)), None) };
     }
 }
 
-fn read_hotkey(window: HWND) -> Option<Hotkey> {
-    let control = item(window, ID_PHRASE_KEY)?;
+fn read_hotkey(window: HWND, id: i32) -> Option<Hotkey> {
+    let control = item(window, id)?;
     let value = unsafe { SendMessageW(control, HKM_GETHOTKEY, None, None) }.0 as u32;
     let (vk, modifiers) = (value & 0xFF, (value >> 8) & 0xFF);
     let key = Hotkey {
@@ -418,7 +442,9 @@ fn read_hotkey(window: HWND) -> Option<Hotkey> {
 }
 
 fn show(window: HWND, settings: &Settings) {
-    show_hotkey(window, settings.phrase_key);
+    show_hotkey(window, ID_PHRASE_KEY, settings.phrase_key);
+    show_hotkey(window, ID_DICT_ADD_KEY, settings.dict_add_key);
+    show_hotkey(window, ID_DICT_REMOVE_KEY, settings.dict_remove_key);
     set_checked(window, ID_CASUAL, !settings.formal);
     set_checked(window, ID_FORMAL, settings.formal);
     set_checked(window, ID_LEARNING, settings.learning);
@@ -460,7 +486,9 @@ fn read(window: HWND) -> Settings {
         home_row: checked(window, ID_HOME_ROW),
         start_chinese: !checked(window, ID_START_ENGLISH),
         shift_toggles: checked(window, ID_SHIFT),
-        phrase_key: read_hotkey(window),
+        phrase_key: read_hotkey(window, ID_PHRASE_KEY),
+        dict_add_key: read_hotkey(window, ID_DICT_ADD_KEY),
+        dict_remove_key: read_hotkey(window, ID_DICT_REMOVE_KEY),
     }
 }
 
@@ -503,7 +531,7 @@ fn apply(window: HWND, app: &mut App) -> bool {
 /// Forget everything learned: stop the engine (or it would write the model
 /// back), delete the model, start the engine again.
 fn clear_personal(window: HWND, app: &App) {
-    let question = "要清除個人化學習資料嗎？\n\n引擎記住的常用詞與改選紀錄都會刪除，無法復原。打字紀錄不受影響。";
+    let question = "要清除個人化學習資料嗎？\n\n引擎記住的常用詞與改選紀錄都會刪除，無法復原。打字紀錄與詞庫（自訂詞、排除的詞）不受影響。";
     if !ask(window, question) {
         return;
     }
@@ -571,6 +599,7 @@ unsafe extern "system" fn window_proc(
                 ID_RESTART => restart_engine(window, app),
                 ID_CLEAR => clear_personal(window, app),
                 ID_PHRASES => phrases::open(window, &app.files),
+                ID_DICTIONARY => dictionary::open(window, &app.files),
                 _ => {}
             }
             LRESULT(0)

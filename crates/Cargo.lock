@@ -32,6 +32,7 @@ dependencies = [
 name = "bopogram-settings"
 version = "0.0.0"
 dependencies = [
+ "bopogram-protocol",
  "serde_json",
  "windows",
 ]

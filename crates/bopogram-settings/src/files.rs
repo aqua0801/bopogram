@@ -44,6 +44,10 @@ pub struct Settings {
     pub shift_toggles: bool,
     /// Opens the phrase menu; `None` turns the menu off.
     pub phrase_key: Option<Hotkey>,
+    /// While composing: add the composition to the dictionary.
+    pub dict_add_key: Option<Hotkey>,
+    /// In the candidate window: remove the highlighted candidate.
+    pub dict_remove_key: Option<Hotkey>,
 }
 
 /// A key combination, as the input method reads it from `keys.json`.
@@ -57,6 +61,9 @@ pub struct Hotkey {
 
 /// Alt+`.
 pub const DEFAULT_PHRASE_KEY: Hotkey = Hotkey { vk: 0xC0, ctrl: false, alt: true, shift: false };
+/// Ctrl+= and Ctrl+-.
+pub const DEFAULT_DICT_ADD_KEY: Hotkey = Hotkey { vk: 0xBB, ctrl: true, alt: false, shift: false };
+pub const DEFAULT_DICT_REMOVE_KEY: Hotkey = Hotkey { vk: 0xBD, ctrl: true, alt: false, shift: false };
 
 impl Hotkey {
     fn parse(value: &Value) -> Option<Hotkey> {
@@ -92,6 +99,8 @@ impl Default for Settings {
             start_chinese: true,
             shift_toggles: true,
             phrase_key: Some(DEFAULT_PHRASE_KEY),
+            dict_add_key: Some(DEFAULT_DICT_ADD_KEY),
+            dict_remove_key: Some(DEFAULT_DICT_REMOVE_KEY),
         }
     }
 }
@@ -303,11 +312,15 @@ impl Files {
         settings.home_row = keys.get("select_keys").and_then(Value::as_str) == Some("home_row");
         settings.start_chinese = keys.get("start_mode").and_then(Value::as_str) != Some("english");
         settings.shift_toggles = keys.get("shift_toggle").and_then(Value::as_bool) != Some(false);
-        settings.phrase_key = match keys.get("phrase_key") {
+        // Null turns the key off; something unreadable keeps the default.
+        let hotkey = |name: &str, default: Hotkey| match keys.get(name) {
             Some(Value::Null) => None,
-            Some(key) => Hotkey::parse(key).or(Some(DEFAULT_PHRASE_KEY)),
-            None => Some(DEFAULT_PHRASE_KEY),
+            Some(key) => Hotkey::parse(key).or(Some(default)),
+            None => Some(default),
         };
+        settings.phrase_key = hotkey("phrase_key", DEFAULT_PHRASE_KEY);
+        settings.dict_add_key = hotkey("dict_add_key", DEFAULT_DICT_ADD_KEY);
+        settings.dict_remove_key = hotkey("dict_remove_key", DEFAULT_DICT_REMOVE_KEY);
         settings
     }
 
@@ -330,6 +343,8 @@ impl Files {
                 "start_mode": if settings.start_chinese { "chinese" } else { "english" },
                 "shift_toggle": settings.shift_toggles,
                 "phrase_key": settings.phrase_key.map_or(Value::Null, Hotkey::to_json),
+                "dict_add_key": settings.dict_add_key.map_or(Value::Null, Hotkey::to_json),
+                "dict_remove_key": settings.dict_remove_key.map_or(Value::Null, Hotkey::to_json),
             });
             std::fs::write(&keys, text.to_string()).map_err(|e| format!("{}: {e}", keys.display()))?;
         }
@@ -488,6 +503,8 @@ mod tests {
             start_chinese: false,
             shift_toggles: false,
             phrase_key: Some(Hotkey { vk: 0x51, ctrl: true, alt: false, shift: true }),
+            dict_add_key: Some(Hotkey { vk: 0x41, ctrl: true, alt: true, shift: false }),
+            dict_remove_key: None,
         };
         files.save(&wanted, true).unwrap();
         assert_eq!(files.load(), wanted);
