@@ -27,6 +27,9 @@ Requests ({"op": ..., "sid": optional, "id": optional, ...}):
     style      {"style": "formal"}   "casual": lone neutral-tone ㄉㄜ is always 的;
                                      "formal": 的 / 地 / 得 chosen by the model
     state
+    readings / dict_add / dict_remove / dict_exclude / dict_restore / dict_list / dict_reload
+                                     the user's dictionary, for the whole engine (see
+                                     dictops.py); failures carry "reason"
     close                            forget this sid
     quit                             stop the engine process
 
@@ -44,8 +47,10 @@ import json
 import sys
 import time
 
+from . import dictops
 from .engine import Engine
 from .session import Session
+from .userdict import DictError
 
 
 def handle(session: Session, req: dict) -> dict:
@@ -83,6 +88,11 @@ def handle(session: Session, req: dict) -> dict:
         session.learn = bool(req.get("enabled", True))
     elif op == "style":
         res["ok"] = session.set_style(str(req.get("style", "")))
+    elif op in dictops.OPS:
+        try:
+            res.update(dictops.handle(session.engine, session, req))
+        except DictError as err:
+            res.update(ok=False, error=str(err), reason=err.reason)
     elif op != "state":
         return {"ok": False, "error": f"unknown op {op!r}"}
     flushed = session.take_flushed()

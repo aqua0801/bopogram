@@ -14,7 +14,9 @@ from .lexicon import Lexicon
 from .lm import MixtureLM
 from .typing_log import TypingLog
 from .user import UserModel
+from .userdict import UserDict
 
+USER_DICT_BONUS = 6.0
 DEFAULT_CONFIG = Path.home() / "bopogram-data" / "models" / "config.json"
 
 
@@ -29,6 +31,8 @@ class Engine:
      "models": [{"path": "ly.binary", "weight": 0.4}, ...],
      "beam": 16, "max_candidates": 40, "word_penalty": 0.0, "eos_weight": 0.0,
      "style": "casual", "user_model": null, "typing_log": null,
+     "user_dict": "userdata/userdict.tsv", "excluded_words": "userdata/excluded.tsv",
+     "user_dict_bonus": 6.0,
      "neural": {"model": "neural/neural.int8.onnx", "weight": 0.3, "floor": -12.0, "threads": 2},
      "charlm": {"model": "charlm/charlm.int8.onnx", "weight": 0.5, "top": 5, "threads": 2}}
 
@@ -40,6 +44,9 @@ class Engine:
     character less likely under a reading it seldom has; optional.
     "neural" adds the scores of the position-wise model (see neural.py) to the
     lattice; absent or null means the n-gram engine alone.
+    "user_dict" and "excluded_words" are the user's own dictionary (userdict.py);
+    each defaults to the path shown and null turns it off. "user_dict_bonus" is
+    added to the score of every user word.
     "charlm" re-ranks the decoder's `top` best results with the character language
     model (see charlm.py); absent or null means no re-ranking.
     """
@@ -58,6 +65,19 @@ class Engine:
         if use_user_model and cfg.get("user_model"):
             user_path = Path(cfg["user_model"]).expanduser()
             self.user = UserModel(user_path if user_path.is_absolute() else base / user_path)
+        self.userdict = None
+        if use_user_model:
+            def user_file(key: str, default: str):
+                value = cfg.get(key, default)
+                if not value:
+                    return None
+                p = Path(value).expanduser()
+                return p if p.is_absolute() else base / p
+            files = (user_file("user_dict", "userdata/userdict.tsv"),
+                     user_file("excluded_words", "userdata/excluded.tsv"))
+            if any(files):
+                self.userdict = UserDict(*files)
+                self.lexicon.attach(self.userdict, cfg.get("user_dict_bonus", USER_DICT_BONUS))
         self.typing_log = None
         if use_user_model and cfg.get("typing_log"):
             log_path = Path(cfg["typing_log"]).expanduser()
@@ -104,6 +124,12 @@ class Engine:
             decoder.rescore(scores, self.neural_weight, self.neural_floor)
         if self.charlm is not None and decoder.syllables:
             hyps = decoder.nbest(self.charlm_top)
+            # The character model does not know the user's words and must not overrule
+            # them: it only chooses among results that keep those of the best path.
+            if len(hyps) > 1 and self.lexicon.is_user_active:
+                keep = decoder.user_words(hyps[0][0])
+                if keep:
+                    hyps = [h for h in hyps if keep <= decoder.user_words(h[0])]
             if len(hyps) > 1:
                 lm = self.charlm.score(context, ["".join(words) for words, _ in hyps])
                 w = self.charlm_weight

@@ -126,6 +126,7 @@ Windows 端要寫的是 `crates/` 底下的前端。先讀完 `CLAUDE.md`，尤�
 | `learning` | `enabled` | 開關個人化學習 |
 | `style` | `style`：`casual` 或 `formal` | 口語模式（預設）：輕聲「ㄉㄜ」一律先選「的」；正式模式：由模型判斷的／地／得。只影響送出請求的那個 `sid` |
 | `state` | | 只查詢狀態 |
+| `readings`、`dict_add`、`dict_remove`、`dict_exclude`、`dict_restore`、`dict_list`、`dict_reload` | 見 `crates/docs/userdict-handoff.md` | 使用者詞庫（作用在整個引擎）。失敗時另帶 `reason` |
 | `close` | | 釋放這個 `sid` |
 | `quit` | | 結束引擎（只由 host 使用） |
 
@@ -144,6 +145,7 @@ Windows 端要寫的是 `crates/` 底下的前端。先讀完 `CLAUDE.md`，尤�
 | `candidates` | `[{"word": "在家", "start": 1, "length": 2}, ...]`，長詞在前 |
 | `commit` | 要送進文件的文字。任何回應都可能出現 |
 | `error` | `ok` 為 false 時的原因 |
+| `reason` | 詞庫操作失敗時給程式判斷的原因：`userdict-handoff.md` 列出的那些，另加 `write_failed`（檔案寫不進去，詞庫維持原狀） |
 
 範例（輸入「我在家」後送出）：
 

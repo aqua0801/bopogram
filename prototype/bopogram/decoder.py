@@ -66,6 +66,9 @@ class Hyp:
     word: str | None      # last word (None for the start hypothesis)
     start: int            # node where `word` starts
     prev: "Hyp | None"
+    # The end of the path's text that could still grow into excluded text (see
+    # Decoder._extend); always "" while nothing is excluded.
+    tail: str = ""
 
 
 class Decoder:
@@ -94,6 +97,7 @@ class Decoder:
         # whenever the buffer changes, so a stale choice is never shown.
         self.choice: list[str] | None = None
         self._cand_cache: dict[tuple[str, ...], list[str]] = {}
+        self._version = lexicon.version  # the dictionary version the lattice was built with
         # Spans the user has fixed by picking a candidate: (start, end) -> word.
         self.pinned: dict[tuple[int, int], str] = {}
         self.reset()
@@ -107,6 +111,9 @@ class Decoder:
         self.choice = None
 
     def _candidates(self, key: tuple[str, ...]) -> list[str]:
+        if self._version != self.lexicon.version:
+            self._cand_cache.clear()
+            self._version = self.lexicon.version
         cands = self._cand_cache.get(key)
         if cands is None and any(is_literal(item) for item in key):
             return [key[0][len(LITERAL):]] if len(key) == 1 else []
@@ -115,16 +122,62 @@ class Decoder:
             # Words the language model has never seen (rare characters, bopomofo symbols)
             # cannot win on their own; leave them out unless nothing else fits. They stay
             # in the candidate list, and a word picked by hand is always used.
+            # The user's own words always stay.
             floor = self.lm.unigram("<unk>") + 1e-6
-            known = [w for w in cands if self.lm.unigram(w) > floor]
-            cands = known or cands
+            user = [w for w in cands if self.lexicon.is_user(w, key)]
+            known = [w for w in cands if w not in user and self.lm.unigram(w) > floor]
+            cands = user + known or cands
             if len(cands) > self.max_candidates:
                 rank = self.lm.unigram
                 if len(key) == 1:
                     rank = lambda w: self.lm.unigram(w) + self.lexicon.reading_logp(w, key[0])
-                cands = sorted(cands, key=rank, reverse=True)[: self.max_candidates]
+                rest = sorted((w for w in cands if w not in user), key=rank, reverse=True)
+                cands = user + rest[: max(0, self.max_candidates - len(user))]
             self._cand_cache[key] = cands
         return cands
+
+    @property
+    def stale(self) -> bool:
+        """True when the dictionary changed since the lattice was built."""
+        return self._version != self.lexicon.version
+
+    def refresh(self) -> bool:
+        """Decode the buffer again if the dictionary changed; True if it did."""
+        if not self.stale:
+            return False
+        self.repin(self.pinned)
+        return True
+
+    def _pinned_at(self, pos: int) -> bool:
+        return any(a <= pos < b for a, b in self.pinned)
+
+    def _extend(self, tail: str, i: int, word: str) -> str | None:
+        """The tail after appending `word` (starting at item i) to a path ending in
+        `tail`, or None if that forms excluded text somewhere.
+
+        `tail` is the longest end of the path's text that is a proper prefix of some
+        excluded text, so every excluded text that ends inside `word` starts within
+        tail + word. Text the user picked by hand (all of it inside pinned spans) is
+        allowed: exclusion only limits the engine's own choices.
+        """
+        lex = self.lexicon
+        text, base = tail + word, i - len(tail)
+        for end in range(len(tail) + 1, len(text) + 1):
+            for n in lex.excluded_lengths:
+                if n > end:
+                    break
+                readings = lex.excluded.get(text[end - n:end])
+                if not readings:
+                    continue
+                a = base + end - n
+                if None not in readings and tuple(self.syllables[a:a + n]) not in readings:
+                    continue
+                if not all(self._pinned_at(p) for p in range(a, a + n)):
+                    return None
+        for k in range(min(len(text), MAX_WORD_LEN - 1), 0, -1):
+            if text[-k:] in lex.excluded_prefixes:
+                return text[-k:]
+        return ""
 
     def _allowed(self, i: int, j: int, word: str) -> bool:
         """An edge may not cut through a pinned span, and must equal it if it covers it."""
@@ -189,8 +242,10 @@ class Decoder:
         self.syllables.append(syllable)
         self.choice = None
         j = len(self.syllables)
-        merged: dict[State, Hyp] = {}
+        merged: dict = {}
         score_fn, extra = self.lm.score, self.extra_score
+        lex = self.lexicon
+        excluding = bool(lex.excluded)
         for i in range(max(0, j - MAX_WORD_LEN), j):
             hyps = self.nodes[i]
             if not hyps:
@@ -222,6 +277,8 @@ class Decoder:
                     words = [w for w in words if self._allowed(i, j, w)]
             for word in words:
                 bonus = self._position_score(i, word) if self.position_scores is not None else 0.0
+                if lex.user_bonus and lex.is_user(word, key):
+                    bonus += lex.user_bonus
                 # A literal is scored as the token class the model was trained with
                 # (punctuation, Latin, digits); a space does not touch the model.
                 token = word
@@ -235,22 +292,28 @@ class Decoder:
                         # a character is less likely under a reading it seldom has.
                         bonus += self.lexicon.reading_logp(word, key[0])
                 for h in hyps:
+                    tail = ""
+                    if excluding:
+                        tail = self._extend(h.tail, i, word)
+                        if tail is None:
+                            continue
                     logp, state = score_fn(h.state, token) if token is not None else (0.0, h.state)
                     total = h.score + logp + self.word_penalty + bonus
                     if refund:
                         total += refund.get(id(h), 0.0)
                     if extra is not None:
                         total += extra(h.word, word)
-                    slot = state if self.merge else (state, id(h))
+                    # Paths whose tails differ can be cut off differently later on.
+                    slot = (state, tail) if self.merge else (state, tail, id(h))
                     old = merged.get(slot)
                     if old is None or total > old.score:
-                        merged[slot] = Hyp(total, state, word, i, h)
+                        merged[slot] = Hyp(total, state, word, i, h, tail)
         if not merged:
             # No dictionary word ends here (e.g. a syllable the dictionary lacks):
             # keep decoding by passing the raw syllable through as an unknown token.
             for h in self.nodes[j - 1]:
                 logp, state = score_fn(h.state, UNKNOWN_CHAR)
-                merged.setdefault(state, Hyp(h.score + logp, state, syllable, j - 1, h))
+                merged.setdefault((state, ""), Hyp(h.score + logp, state, syllable, j - 1, h))
         best = sorted(merged.values(), key=lambda h: h.score, reverse=True)[: self.beam]
         self.nodes.append(best)
 
@@ -318,8 +381,15 @@ class Decoder:
         seen: set[str] = set()
         final = self.nodes[-1]
         if self.eos_weight and len(final) > 1:
-            w, score_fn = self.eos_weight, self.lm.score
-            final = sorted(final, key=lambda h: h.score + w * score_fn(h.state, "</s>")[0], reverse=True)
+            w, score_fn, n = self.eos_weight, self.lm.score, len(self.syllables)
+
+            def eos(h: Hyp) -> float:
+                # A user word is unknown to the model, which makes ending after it look
+                # unlikely; the user's own word is not to lose on that account.
+                if h.word is not None and self.lexicon.is_user(h.word, tuple(self.syllables[h.start:n])):
+                    return 0.0
+                return w * score_fn(h.state, "</s>")[0]
+            final = sorted(final, key=lambda h: h.score + eos(h), reverse=True)
         for h in final:
             words: list[str] = []
             cur: Hyp | None = h
@@ -334,6 +404,16 @@ class Decoder:
             out.append((words, h.score))
             if len(out) == n:
                 break
+        return out
+
+    def user_words(self, words: list[str]) -> set[tuple[int, str]]:
+        """(start, word) of the user's own words in a segmentation of the buffer."""
+        out, a = set(), 0
+        for word in words:
+            n = 1 if len(word) > 1 and a < len(self.syllables) and word == self.syllables[a] else len(word)
+            if self.lexicon.is_user(word, tuple(self.syllables[a:a + n])):
+                out.add((a, word))
+            a += n
         return out
 
     def best_items(self) -> list[tuple[str, int, int]]:
