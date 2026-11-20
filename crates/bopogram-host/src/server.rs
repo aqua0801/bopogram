@@ -92,6 +92,23 @@ fn read_request(reader: &mut impl BufRead) -> io::Result<Option<String>> {
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
+/// Operations that change the user's dictionary: refused to restricted
+/// clients, like learning (crates/docs/userdict-handoff.md).
+const DICT_CHANGES: &[&str] = &["dict_add", "dict_remove", "dict_exclude", "dict_restore", "dict_reload"];
+
+/// The host refusing one request, as the engine would: the session is fine.
+fn refused(id: Option<&Value>) -> String {
+    let mut reply = serde_json::json!({
+        "ok": false,
+        "error": "this program may not change the dictionary",
+        "reason": "restricted",
+    });
+    if let Some(id) = id {
+        reply["id"] = id.clone();
+    }
+    reply.to_string()
+}
+
 /// An error of the host's own: not the engine refusing one request, but
 /// the engine (or the request) not getting through at all.
 fn error(request: Option<&Map<String, Value>>, message: &str) -> String {
@@ -110,6 +127,11 @@ impl Connection<'_> {
             return error(Some(&request), "quit is not allowed");
         }
         if self.restricted {
+            // Nor may it change the user's dictionary (reading it is fine).
+            let op = request.get("op").and_then(Value::as_str).unwrap_or("");
+            if DICT_CHANGES.contains(&op) {
+                return refused(request.get("id"));
+            }
             // Whatever the client asks, nothing it types is learned.
             if request.get("op").and_then(Value::as_str) == Some("learning") {
                 request.insert("enabled".into(), false.into());

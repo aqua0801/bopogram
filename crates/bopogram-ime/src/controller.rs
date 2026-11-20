@@ -28,6 +28,11 @@ pub struct Options {
     pub shift_toggles: bool,
     /// Opens the phrase menu; `None` when the user turned it off.
     pub phrase_key: Option<Hotkey>,
+    /// While composing: add the composition to the user's dictionary.
+    pub dict_add_key: Option<Hotkey>,
+    /// In the candidate window: remove the highlighted candidate (pressed
+    /// twice, the first press asks).
+    pub dict_remove_key: Option<Hotkey>,
 }
 
 impl Default for Options {
@@ -38,6 +43,8 @@ impl Default for Options {
             start_chinese: true,
             shift_toggles: true,
             phrase_key: Some(Hotkey::PHRASES),
+            dict_add_key: Some(Hotkey::DICT_ADD),
+            dict_remove_key: Some(Hotkey::DICT_REMOVE),
         }
     }
 }
@@ -55,6 +62,14 @@ pub struct Hotkey {
 impl Hotkey {
     /// Alt+`, the default for the phrase menu.
     pub const PHRASES: Hotkey = Hotkey { vk: vk::OEM_3, ctrl: false, alt: true, shift: false };
+    /// Ctrl+= (think "+"): add the composition to the dictionary.
+    pub const DICT_ADD: Hotkey = Hotkey { vk: vk::OEM_PLUS, ctrl: true, alt: false, shift: false };
+    /// Ctrl+- (think "-"): remove the highlighted candidate.
+    pub const DICT_REMOVE: Hotkey = Hotkey { vk: vk::OEM_MINUS, ctrl: true, alt: false, shift: false };
+
+    fn matches(&self, key: Key) -> bool {
+        key.vk == self.vk && key.ctrl == self.ctrl && key.alt == self.alt && key.shift == self.shift
+    }
 
     /// `{"vk": 192, "ctrl": false, "alt": true, "shift": false}`. A key
     /// without Ctrl or Alt would take a key away from typing: refused.
@@ -119,6 +134,17 @@ pub fn parse_phrases(text: &str) -> Vec<Phrase> {
 /// Discord kept part of the text as a doubled, open composition).
 pub const MULTILINE_REFUSED: &str = "片語只支援單行，請在設定的「快速輸入」修改";
 
+/// Why a dictionary change did not happen, for the reasons every operation shares.
+fn dict_failure(reason: Option<&str>, verb: &str) -> String {
+    match reason {
+        Some("restricted") => "這個程式不能修改詞庫".to_owned(),
+        Some("disabled") => "詞庫功能已關閉（config.json）".to_owned(),
+        Some("write_failed") => "詞庫檔案寫不進去，沒有變更".to_owned(),
+        Some(other) => format!("沒能{verb}（{other}）"),
+        None => format!("沒能{verb}：輸入法引擎沒有回應"),
+    }
+}
+
 /// The phrase menu while it is open.
 struct Menu {
     phrases: Vec<Phrase>,
@@ -154,11 +180,14 @@ impl Options {
         if let Some(on) = value.get("shift_toggle").and_then(serde_json::Value::as_bool) {
             options.shift_toggles = on;
         }
-        match value.get("phrase_key") {
-            Some(serde_json::Value::Null) => options.phrase_key = None,
-            Some(key) => options.phrase_key = Hotkey::parse(key).or(options.phrase_key),
-            None => {}
-        }
+        let hotkey = |name: &str, default: Option<Hotkey>| match value.get(name) {
+            Some(serde_json::Value::Null) => None,
+            Some(key) => Hotkey::parse(key).or(default),
+            None => default,
+        };
+        options.phrase_key = hotkey("phrase_key", options.phrase_key);
+        options.dict_add_key = hotkey("dict_add_key", options.dict_add_key);
+        options.dict_remove_key = hotkey("dict_remove_key", options.dict_remove_key);
         options
     }
 
@@ -253,7 +282,7 @@ pub struct Outcome {
     /// The key switched between full and half width.
     pub width_changed: bool,
     /// Something to tell the user near the caret.
-    pub notice: Option<&'static str>,
+    pub notice: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -275,6 +304,10 @@ enum Action {
     /// Text for the document, not for the engine (full-width characters
     /// typed with nothing composed).
     Type(char),
+    /// Add the composition to the user's dictionary.
+    DictAdd,
+    /// Remove the highlighted candidate from the dictionary.
+    DictRemove,
 }
 
 fn is_shift(code: u32) -> bool {
@@ -385,6 +418,12 @@ pub struct Controller<E: Engine> {
     /// Text the engine handed over for the document, not yet passed on.
     committed: String,
     candidates: Vec<String>,
+    /// The syllables each candidate covers, (start, length).
+    spans: Vec<(usize, usize)>,
+    /// Converted syllables in the composition.
+    syllables: usize,
+    /// The remove key was pressed once on this candidate: the next press removes it.
+    remove_armed: Option<usize>,
     /// Highlighted candidate: an index into the whole list.
     selected: usize,
     window_open: bool,
@@ -417,6 +456,9 @@ impl<E: Engine> Controller<E> {
             caret: 0,
             committed: String::new(),
             candidates: Vec::new(),
+            spans: Vec::new(),
+            syllables: 0,
+            remove_armed: None,
             selected: 0,
             window_open: false,
             menu: None,
@@ -670,7 +712,7 @@ impl<E: Engine> Controller<E> {
             return outcome;
         };
         if phrase.text.contains('\n') {
-            outcome.notice = Some(MULTILINE_REFUSED);
+            outcome.notice = Some(MULTILINE_REFUSED.to_owned());
             return outcome;
         }
         outcome.commit = Some(phrase.text.clone());
@@ -700,6 +742,16 @@ impl<E: Engine> Controller<E> {
     }
 
     fn classify(&self, key: Key) -> Action {
+        // The dictionary keys are ours only while there is something to
+        // add or remove; otherwise the application keeps them (Ctrl+= and
+        // Ctrl+- zoom in browsers).
+        let pressed = |hotkey: Option<Hotkey>| hotkey.is_some_and(|h| h.matches(key));
+        if self.enabled && self.window_open && pressed(self.options.dict_remove_key) {
+            return Action::DictRemove;
+        }
+        if self.enabled && self.composing() && pressed(self.options.dict_add_key) {
+            return Action::DictAdd;
+        }
         // English mode is the keyboard as it is: Shift+Space included,
         // which is easily pressed while typing capitals.
         if !self.enabled || !self.chinese || is_modifier(key.vk) || key.alt {
@@ -863,6 +915,7 @@ impl<E: Engine> Controller<E> {
         self.preedit.clone_from(&response.preedit);
         self.pending.clone_from(&response.pending);
         self.caret = response.caret;
+        self.syllables = response.syllables;
         if response.style.is_some() {
             self.style.clone_from(&response.style);
         }
@@ -1044,7 +1097,9 @@ impl<E: Engine> Controller<E> {
         self.preedit.clear();
         self.pending.clear();
         self.caret = 0;
+        self.syllables = 0;
         self.window_open = false;
+        self.remove_armed = None;
         self.prefix = false;
     }
 
@@ -1136,6 +1191,9 @@ impl<E: Engine> Controller<E> {
         if action != Action::Pass {
             self.prefix = false;
         }
+        if action != Action::DictRemove {
+            self.remove_armed = None;
+        }
         if !matches!(
             action,
             Action::Pass
@@ -1144,6 +1202,7 @@ impl<E: Engine> Controller<E> {
                 | Action::NextPage
                 | Action::PrevPage
                 | Action::ToggleWidth
+                | Action::DictRemove
         ) {
             self.window_open = false;
         }
@@ -1180,10 +1239,13 @@ impl<E: Engine> Controller<E> {
             Action::OpenCandidates => self.exchange(&Op::Candidates).map(|response| {
                 if !response.candidates.is_empty() {
                     self.candidates = response.candidates;
+                    self.spans = response.spans;
                     self.selected = 0;
                     self.window_open = true;
                 }
             }),
+            Action::DictAdd => self.add_word(&mut outcome),
+            Action::DictRemove => self.remove_candidate(&mut outcome),
             Action::SelectIndex(index) => self.exchange(&Op::Select(index)).map(drop),
             Action::ToggleStyle => {
                 let before = self.wanted_style.clone();
@@ -1221,6 +1283,77 @@ impl<E: Engine> Controller<E> {
         }
         outcome.commit = self.take_committed();
         outcome
+    }
+
+    // -- the user's dictionary ----------------------------------------------
+
+    /// Add the whole composition, with the syllables typed for it, to the
+    /// user's dictionary. The composition stays as it is.
+    fn add_word(&mut self, outcome: &mut Outcome) -> Result<(), Failure> {
+        if !self.pending.is_empty() {
+            outcome.notice = Some("注音還沒打完，打完再加入詞庫".to_owned());
+            return Ok(());
+        }
+        if self.syllables == 0 {
+            return Ok(());
+        }
+        let word = self.preedit.clone();
+        let result = self.exchange(&Op::DictAdd { start: 0, length: self.syllables });
+        outcome.notice = Some(match &result {
+            Ok(response) if response.ok => format!("已加入詞庫：{word}"),
+            Ok(response) => match response.reason.as_deref() {
+                Some("duplicate") => format!("詞庫裡已經有「{word}」"),
+                Some("too_long") => "太長了：請只打要加入的詞（最多 8 個字）".to_owned(),
+                Some("bad_reading") => "含有符號或英文，不能加入詞庫".to_owned(),
+                reason => dict_failure(reason, "加入"),
+            },
+            Err(Failure::Rejected) => dict_failure(Some("restricted"), "加入"),
+            Err(_) => dict_failure(None, "加入"),
+        });
+        result.map(drop)
+    }
+
+    /// Remove the highlighted candidate: the first press asks, the second
+    /// (with nothing in between) removes. The window stays open.
+    fn remove_candidate(&mut self, outcome: &mut Outcome) -> Result<(), Failure> {
+        let index = self.selected;
+        let (Some(word), Some(&(start, length))) = (self.candidates.get(index).cloned(), self.spans.get(index))
+        else {
+            return Ok(());
+        };
+        if self.remove_armed != Some(index) {
+            self.remove_armed = Some(index);
+            outcome.notice = Some(format!("再按一次，從詞庫刪除「{word}」（按其他鍵取消）"));
+            return Ok(());
+        }
+        self.remove_armed = None;
+        let result = self.exchange(&Op::DictRemove { start, length, word: word.clone() });
+        outcome.notice = Some(match &result {
+            Ok(response) if response.ok && response.removed.as_deref() == Some("user") => {
+                format!("已從詞庫刪除「{word}」")
+            }
+            Ok(response) if response.ok => format!("已排除「{word}」，不會再自動選出"),
+            Ok(response) => match response.reason.as_deref() {
+                Some("last_candidate") => format!("「{word}」是這個讀音唯一的字，不能刪除"),
+                Some("not_found") => "組字區已經改變，沒有刪除".to_owned(),
+                reason => dict_failure(reason, "刪除"),
+            },
+            Err(Failure::Rejected) => dict_failure(Some("restricted"), "刪除"),
+            Err(_) => dict_failure(None, "刪除"),
+        });
+        if result.as_ref().is_ok_and(|response| response.ok) {
+            // The list no longer holds the word.
+            let refreshed = self.exchange(&Op::Candidates)?;
+            if refreshed.candidates.is_empty() {
+                self.window_open = false;
+            } else {
+                self.selected = index.min(refreshed.candidates.len() - 1);
+                self.candidates = refreshed.candidates;
+                self.spans = refreshed.spans;
+            }
+            return Ok(());
+        }
+        result.map(drop)
     }
 
     /// Shift pressed and released on its own switches Chinese/English.
@@ -1278,6 +1411,11 @@ mod tests {
         late: String,
         abandoned: bool,
         log: Vec<Op>,
+        /// Words added to and removed from the dictionary.
+        added: Vec<String>,
+        removed: Vec<String>,
+        /// The next dictionary operation fails for this reason.
+        refuse: Option<&'static str>,
     }
 
     impl Engine for Fake {
@@ -1329,7 +1467,20 @@ mod tests {
                     }
                 }
                 Op::Candidates => {
-                    response.candidates = (0..12).map(|i| format!("c{i}")).collect();
+                    response.candidates =
+                        (0..12).map(|i| format!("c{i}")).filter(|c| !self.removed.contains(c)).collect();
+                    response.spans = response.candidates.iter().map(|_| (0, 1)).collect();
+                }
+                Op::DictAdd { .. } | Op::DictRemove { .. } if self.refuse.is_some() => {
+                    response.ok = false;
+                    response.reason = self.refuse.take().map(str::to_owned);
+                }
+                Op::DictAdd { start: 0, length } if *length == self.text.chars().count() => {
+                    self.added.push(self.text.clone());
+                }
+                Op::DictRemove { word, .. } => {
+                    self.removed.push(word.clone());
+                    response.removed = Some("excluded".into());
                 }
                 Op::Commit => response.commit = Some(std::mem::take(&mut self.text)),
                 Op::Escape => {
@@ -1348,6 +1499,7 @@ mod tests {
             response.pending = self.pending.clone();
             response.segments = self.text.chars().map(String::from).collect();
             response.cursor = self.text.chars().count();
+            response.syllables = self.text.chars().count();
             response.caret = response.preedit.chars().count();
             response.style =
                 Some(if self.style.is_empty() { CASUAL.to_owned() } else { self.style.clone() });
@@ -1806,9 +1958,12 @@ mod tests {
                 home_row: true,
                 start_chinese: false,
                 shift_toggles: false,
-                phrase_key: Some(Hotkey::PHRASES),
+                ..Options::default()
             }
         );
+        let dict = Options::parse(r#"{"dict_add_key": {"vk": 65, "ctrl": true, "shift": true}, "dict_remove_key": null}"#);
+        assert_eq!(dict.dict_add_key, Some(Hotkey { vk: 0x41, ctrl: true, alt: false, shift: true }));
+        assert_eq!((dict.dict_remove_key, dict.phrase_key), (None, Some(Hotkey::PHRASES)));
         // The phrase key: another combination, turned off, or refused without Ctrl or Alt.
         let ctrl_q = Options::parse(r#"{"phrase_key": {"vk": 81, "ctrl": true}}"#).phrase_key;
         assert_eq!(ctrl_q, Some(Hotkey { vk: 0x51, ctrl: true, alt: false, shift: false }));
@@ -1982,7 +2137,7 @@ mod tests {
         assert!(c.test_key(key('1')), "the menu works in English mode too");
         let refused = c.key_down(key('3'));
         assert!(refused.eaten && refused.commit.is_none(), "phrases are one line");
-        assert_eq!(refused.notice, Some(MULTILINE_REFUSED));
+        assert_eq!(refused.notice.as_deref(), Some(MULTILINE_REFUSED));
         c.open_menu(phrases());
         assert_eq!(c.key_down(key('1')), eaten(Some("地址：台北市")));
 
@@ -1992,5 +2147,77 @@ mod tests {
         c.set_enabled(true);
         assert!(!c.open_menu(Vec::new()).eaten);
         assert!(!c.menu_open());
+    }
+
+    const CTRL_PLUS: Key = Key { vk: vk::OEM_PLUS, ctrl: true, shift: false, alt: false, caps: false };
+    const CTRL_MINUS: Key = Key { vk: vk::OEM_MINUS, ctrl: true, shift: false, alt: false, caps: false };
+
+    #[test]
+    fn dictionary_keys_belong_to_the_application_when_idle() {
+        let c = Controller::new(Fake::default());
+        assert!(!c.test_key(CTRL_PLUS), "browser zoom keeps working");
+        assert!(!c.test_key(CTRL_MINUS));
+        let c = typed("ji3");
+        assert!(c.test_key(CTRL_PLUS));
+        assert!(!c.test_key(CTRL_MINUS), "only with the candidate window open");
+    }
+
+    #[test]
+    fn add_the_composition() {
+        let mut c = typed("ji3ji3");
+        let outcome = c.key_down(CTRL_PLUS);
+        assert!(outcome.eaten && outcome.commit.is_none());
+        assert_eq!(outcome.notice.as_deref(), Some("已加入詞庫：字字"));
+        assert_eq!(c.engine_mut().added, ["字字"]);
+        assert_eq!(c.preedit(), "字字", "the composition stays");
+
+        c.engine_mut().refuse = Some("duplicate");
+        assert_eq!(c.key_down(CTRL_PLUS).notice.as_deref(), Some("詞庫裡已經有「字字」"));
+
+        // Not with an unfinished syllable.
+        c.key_down(key('j'));
+        let outcome = c.key_down(CTRL_PLUS);
+        assert!(outcome.eaten);
+        assert_eq!(outcome.notice.as_deref(), Some("注音還沒打完，打完再加入詞庫"));
+        assert_eq!(c.engine_mut().added.len(), 1);
+
+        // A restricted program (the host refuses) is told so.
+        let mut c = typed("ji3");
+        c.engine_mut().broken = true;
+        assert_eq!(c.key_down(CTRL_PLUS).notice.as_deref(), Some("這個程式不能修改詞庫"));
+    }
+
+    #[test]
+    fn remove_a_candidate_on_the_second_press() {
+        let mut c = typed("ji3");
+        c.key_down(code(vk::DOWN));
+        c.key_down(code(vk::DOWN)); // c1 highlighted
+        let first = c.key_down(CTRL_MINUS);
+        assert!(first.eaten);
+        assert_eq!(first.notice.as_deref(), Some("再按一次，從詞庫刪除「c1」（按其他鍵取消）"));
+        assert!(c.engine_mut().removed.is_empty());
+        assert!(c.candidate_list().is_some(), "the window stays open");
+
+        let second = c.key_down(CTRL_MINUS);
+        assert_eq!(second.notice.as_deref(), Some("已排除「c1」，不會再自動選出"));
+        assert_eq!(c.engine_mut().removed, ["c1"]);
+        assert!(matches!(
+            c.engine_mut().log.iter().rev().nth(1),
+            Some(Op::DictRemove { start: 0, length: 1, word }) if word == "c1"
+        ));
+        let (items, selected) = c.candidate_list().unwrap();
+        assert_eq!((items[selected].as_str(), items.len()), ("c2", 11), "the list is refreshed");
+
+        // Another key in between cancels.
+        c.key_down(CTRL_MINUS);
+        c.key_down(code(vk::DOWN));
+        c.key_down(CTRL_MINUS);
+        assert_eq!(c.engine_mut().removed.len(), 1);
+
+        // A refusal says why, and nothing changes. (c3 is armed from above.)
+        c.engine_mut().refuse = Some("last_candidate");
+        let refused = c.key_down(CTRL_MINUS);
+        assert_eq!(refused.notice.as_deref(), Some("「c3」是這個讀音唯一的字，不能刪除"));
+        assert!(c.candidate_list().is_some());
     }
 }

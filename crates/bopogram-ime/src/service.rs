@@ -355,7 +355,7 @@ pub(crate) fn pick_candidate(state: &Shared, index: usize) {
         refresh(state, &context, outcome.commit, None);
     }
     if let Some(notice) = outcome.notice {
-        tip(state, notice);
+        tip(state, &notice);
     }
 }
 
@@ -852,7 +852,7 @@ impl TextService_Impl {
         refresh(&self.state, context, outcome.commit, Some(timing));
         retry_later(&self.state);
         if let Some(notice) = outcome.notice {
-            tip(&self.state, notice);
+            tip(&self.state, &notice);
         }
         if outcome.width_changed {
             let full = with_controller(&self.state, |c| c.full_width()).unwrap_or(false);

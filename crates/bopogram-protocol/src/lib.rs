@@ -67,6 +67,12 @@ pub enum Op {
     /// "casual" or "formal".
     Style(String),
     State,
+    /// Add syllables `start..start + length` of the composition, with the
+    /// text shown for them, to the user's dictionary.
+    DictAdd { start: usize, length: usize },
+    /// Remove `word`, a candidate for syllables `start..start + length`:
+    /// from the user's dictionary, or excluded if it is the dictionary's.
+    DictRemove { start: usize, length: usize, word: String },
 }
 
 impl Op {
@@ -93,6 +99,8 @@ impl Op {
             Op::Learning(_) => "learning",
             Op::Style(_) => "style",
             Op::State => "state",
+            Op::DictAdd { .. } => "dict_add",
+            Op::DictRemove { .. } => "dict_remove",
         }
     }
 
@@ -116,6 +124,10 @@ impl Op {
             Op::Learning(enabled) => json!({"op": "learning", "enabled": enabled}),
             Op::Style(style) => json!({"op": "style", "style": style}),
             Op::State => json!({"op": "state"}),
+            Op::DictAdd { start, length } => json!({"op": "dict_add", "start": start, "length": length}),
+            Op::DictRemove { start, length, word } => {
+                json!({"op": "dict_remove", "start": start, "length": length, "word": word})
+            }
         };
         request["id"] = id.into();
         request.to_string()
@@ -138,9 +150,19 @@ pub struct Response {
     /// "casual" or "formal", if the engine reports it.
     pub style: Option<String>,
     pub candidates: Vec<String>,
+    /// Syllables each candidate covers: (start, length), as the engine's
+    /// `candidates` gives them.
+    pub spans: Vec<(usize, usize)>,
+    /// Converted syllables in the composition (the unfinished one aside).
+    pub syllables: usize,
     /// Text to put into the document before showing the new preedit. Any
     /// response can carry it: the engine commits the front of a long buffer.
     pub commit: Option<String>,
+    /// Why a dictionary operation failed (`ok` false): `too_long`,
+    /// `bad_reading`, `duplicate`, `not_found`, `last_candidate`, ...
+    pub reason: Option<String>,
+    /// What `dict_remove` did: "user" (removed) or "excluded".
+    pub removed: Option<String>,
 }
 
 impl Response {
@@ -154,6 +176,14 @@ impl Response {
             .get("caret")
             .and_then(Value::as_u64)
             .map_or(cursor + pending.chars().count(), |caret| caret as usize);
+        let listed = value.get("candidates").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+        let listed: Vec<(String, usize, usize)> = listed
+            .iter()
+            .filter_map(|c| {
+                let number = |name: &str| c.get(name).and_then(Value::as_u64).unwrap_or(0) as usize;
+                Some((c.get("word")?.as_str()?.to_owned(), number("start"), number("length")))
+            })
+            .collect();
         Some(Response {
             ok: value.get("ok")?.as_bool()?,
             preedit: text("preedit")?,
@@ -167,16 +197,12 @@ impl Response {
                 .filter_map(|s| s.as_str().map(str::to_owned))
                 .collect(),
             style: text("style"),
-            candidates: value
-                .get("candidates")
-                .and_then(Value::as_array)
-                .map(|list| {
-                    list.iter()
-                        .filter_map(|c| c.get("word")?.as_str().map(str::to_owned))
-                        .collect()
-                })
-                .unwrap_or_default(),
+            spans: listed.iter().map(|&(_, start, length)| (start, length)).collect(),
+            candidates: listed.into_iter().map(|(word, _, _)| word).collect(),
+            syllables: value.get("syllables").and_then(Value::as_u64).unwrap_or(0) as usize,
             commit: text("commit"),
+            reason: text("reason"),
+            removed: text("removed"),
         })
     }
 }
@@ -237,6 +263,7 @@ mod tests {
         assert_eq!(response.preedit, "我在ㄐ");
         assert_eq!(response.segments, ["我", "在"]);
         assert_eq!(response.candidates, ["在家"]);
+        assert_eq!((response.spans.as_slice(), response.syllables), (&[(1, 2)][..], 2));
         assert_eq!(response.commit, None);
         assert_eq!(response.caret, 3);
     }
@@ -252,6 +279,31 @@ mod tests {
         assert_eq!((response.cursor, response.caret), (1, 2));
         assert_eq!(response.style.as_deref(), Some("casual"));
         assert_eq!(response.commit.as_deref(), Some("前面"));
+    }
+
+    #[test]
+    fn dictionary_operations() {
+        assert_eq!(
+            Op::DictAdd { start: 0, length: 2 }.to_json(4),
+            r#"{"id":4,"length":2,"op":"dict_add","start":0}"#
+        );
+        let remove = Op::DictRemove { start: 1, length: 2, word: "視頻".into() };
+        assert_eq!(remove.to_json(5), r#"{"id":5,"length":2,"op":"dict_remove","start":1,"word":"視頻"}"#);
+        assert_eq!(remove.name(), "dict_remove", "names carry no content");
+        // A refusal still carries the state, with the reason.
+        let value: Value = serde_json::from_str(
+            r#"{"ok":false,"error":"x","reason":"last_candidate","preedit":"視","pending":"","cursor":1,
+                "syllables":1,"segments":["視"],"id":6}"#,
+        )
+        .unwrap();
+        let response = Response::from_value(&value).unwrap();
+        assert!(!response.ok);
+        assert_eq!(response.reason.as_deref(), Some("last_candidate"));
+        let removed: Value = serde_json::from_str(
+            r#"{"ok":true,"removed":"excluded","preedit":"","pending":"","cursor":0,"syllables":0,"segments":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(Response::from_value(&removed).unwrap().removed.as_deref(), Some("excluded"));
     }
 
     #[test]
