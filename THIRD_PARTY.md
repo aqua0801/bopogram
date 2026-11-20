@@ -21,6 +21,7 @@
 | ONNX Runtime | https://github.com/microsoft/onnxruntime | MIT | 第 5 階段：在 CPU 上執行神經模型（原型引擎的選用依賴 `onnxruntime`；訓練端用其量化工具） |
 | huggingface_hub | https://github.com/huggingface/huggingface_hub | Apache-2.0 | 訓練階段：下載 Hugging Face 上的資料檔（`training/pipeline/fineweb_extract.py`） |
 | ONNX、ONNX Script | https://github.com/onnx/onnx 、 https://github.com/microsoft/onnxscript | Apache-2.0、MIT | 第 5 階段：把訓練好的模型匯出成 ONNX 檔（`training/neural/export_onnx.py`） |
+| libchewing（新酷音核心，Ubuntu 套件 `libchewing3` 0.6.0 及其內附詞庫） | https://github.com/chewing/libchewing | LGPL-2.1-or-later | 只用於評估：以公開 C API 執行測試句集，當作對照組（`eval/tools/chewing_run.py`）。不讀其原始碼、不取用其詞庫或輸出做為訓練資料，也不隨專案散布 |
 
 ## 語料
 
