@@ -144,8 +144,10 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 - Alt+\`（可在設定改）：叫出片語選單，中、英模式都可用。用選字鍵、↑↓＋Enter 或滑鼠選，
   文字直接插入游標處，不經過剪貼簿，也不經過引擎（不學習、不進打字紀錄）。再按一次或 Esc 關閉；
   按其他鍵則關閉選單並照常處理那個鍵。組字中叫出時先送出組字區。密碼欄位裡不作用。
-  - 多行片語的換行是以文字插入，不是按下 Enter 鍵；聊天程式通常只在按下 Enter 鍵時送出。
-    瀏覽器與 Electron 程式（Discord、VS Code）插入 `\n`，其他程式插入 `\r\n`。
+  - 一般程式：多行片語以文字插入（換行為 `\r\n`），不是按下 Enter 鍵。
+  - 瀏覽器與 Electron 程式（Discord、VS Code）：直接插入多行文字會讓最後一行卡在組字狀態，
+    所以多行片語改為逐字「打」進去，換行送 Shift+Enter（聊天程式的換行鍵）。
+    單行片語仍直接插入。少數把 Shift+Enter 當送出的網頁會因此送出。
   - 終端機（Windows Terminal、命令提示字元、PowerShell 等）會把換行當成 Enter 執行指令，
     所以在這些程式裡多行片語不會送出，游標旁會顯示提示。VS Code 內建終端機無法分辨，請自行留意。
 
