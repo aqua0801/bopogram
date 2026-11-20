@@ -10,8 +10,8 @@
 # Files that running applications still have loaded are deleted at the next
 # restart. Nothing needs a sign-out.
 #
-# Personal data (the engine's personal model and typing log, in the runtime
-# bundle) is kept unless -RemovePersonalData is given.
+# Personal data (the engine's personal model, typing log and user dictionary,
+# in the runtime bundle) is kept unless -RemovePersonalData is given.
 param(
     [string]$Install = (Join-Path $env:ProgramFiles "Bopogram"),
     [switch]$KeepSettings,
@@ -117,8 +117,14 @@ if ($RemovePersonalData) {
     } else {
         $bundle = Split-Path -Parent $hostConfig.config
         $engine = Get-Content -Raw -Encoding UTF8 $hostConfig.config | ConvertFrom-Json
-        foreach ($name in "user_model", "typing_log") {
+        # The user dictionary files have default paths when config.json does not name them.
+        $defaults = @{ user_dict = "userdata/userdict.tsv"; excluded_words = "userdata/excluded.tsv" }
+        foreach ($name in "user_model", "typing_log", "user_dict", "excluded_words") {
             $relative = $engine.$name
+            if (-not $relative -and $defaults.ContainsKey($name) -and
+                    -not ($engine.PSObject.Properties.Name -contains $name)) {
+                $relative = $defaults[$name]
+            }
             if (-not $relative) { continue }
             $path = if ([IO.Path]::IsPathRooted($relative)) { $relative } else { Join-Path $bundle $relative }
             foreach ($candidate in $path, [IO.Path]::ChangeExtension($path, ".tmp")) {
