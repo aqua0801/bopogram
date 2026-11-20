@@ -777,6 +777,19 @@ fn write(
                     with(state, |s| s.composition = None);
                     ending.EndComposition(cookie)?;
                 }
+                // Text with line breaks (a phrase) goes through a composition
+                // that ends at once, the path every commit of typed text
+                // takes. Inserted bare, some browsers kept part of it as an
+                // open composition: underlined, and Enter no longer sent.
+                None if text.contains('\n') && sink.is_some() => {
+                    let start = edit::insertion_point(context, cookie)?;
+                    let owner: ITfContextComposition = context.cast()?;
+                    let brief = owner.StartComposition(cookie, &start, sink.ok_or(E_FAIL)?)?;
+                    let range = brief.GetRange()?;
+                    range.SetText(cookie, 0, &wide(text))?;
+                    edit::caret_to_end(context, cookie, &range)?;
+                    brief.EndComposition(cookie)?;
+                }
                 None => edit::insert(context, cookie, &wide(text))?,
             }
         }
