@@ -36,7 +36,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GUITHREADINFO, GWL_STYLE,
 };
 
-use crate::controller::{vk, Controller, Hotkey, Insertion, Key, CASUAL, FORMAL};
+use crate::controller::{vk, Controller, Hotkey, Key, CASUAL, FORMAL};
 use crate::display::{AttributeEnumerator, CompositionAttribute};
 use crate::dll::{host_path, settings_path, GUID_DISPLAY_ATTRIBUTE, GUID_PHRASE_KEY};
 use crate::langbar::ModeButton;
@@ -605,44 +605,6 @@ fn password_window() -> bool {
         && unsafe { GetWindowLongW(GetFocus(), GWL_STYLE) } & ES_PASSWORD != 0
 }
 
-/// Programs that pass typed text to a shell, where a line break is Enter.
-const TERMINALS: &[&str] = &[
-    "windowsterminal.exe",
-    "openconsole.exe",
-    "conhost.exe",
-    "cmd.exe",
-    "powershell.exe",
-    "pwsh.exe",
-    "wezterm-gui.exe",
-    "alacritty.exe",
-    "mintty.exe",
-    "putty.exe",
-    "kitty.exe",
-    "tabby.exe",
-    "hyper.exe",
-];
-
-/// How this document takes a phrase. Browsers and Electron applications
-/// use bare line feeds; Windows controls want CR LF. (Chromium turns an
-/// inserted CR LF into LF, its text no longer matches what TSF inserted,
-/// and the last line stays behind as a doubled, open composition.)
-fn insertion() -> Insertion {
-    let exe = std::env::current_exe()
-        .ok()
-        .and_then(|path| path.file_name().map(|name| name.to_string_lossy().to_ascii_lowercase()))
-        .unwrap_or_default();
-    let class = focused_class();
-    // Chromium focuses Chrome_RenderWidgetHostHWND in some versions and its
-    // top-level Chrome_WidgetWin_N in others (Discord, Edge, VS Code).
-    let browser = class == "CHROME_RENDERWIDGETHOSTHWND"
-        || class.starts_with("CHROME_WIDGETWIN")
-        || class == "MOZILLAWINDOWCLASS";
-    Insertion {
-        newline: if browser { "\n" } else { "\r\n" },
-        multiline: !TERMINALS.contains(&exe.as_str()),
-    }
-}
-
 /// The phrase key as TSF takes it.
 fn preserved_key(key: Hotkey) -> TF_PRESERVEDKEY {
     let mut modifiers = 0;
@@ -719,7 +681,7 @@ fn phrase_key(state: &Shared, context: &ITfContext) -> bool {
     };
     let before = edit::caret_rect(context, client);
     with(state, |s| s.menu_anchor = before);
-    let Some(outcome) = with_controller(state, |c| c.open_menu(phrases, insertion())) else {
+    let Some(outcome) = with_controller(state, |c| c.open_menu(phrases)) else {
         return false;
     };
     if outcome.commit.is_some() {
@@ -782,19 +744,6 @@ fn write(
                     // Forget it first: ending it may call OnCompositionTerminated.
                     with(state, |s| s.composition = None);
                     ending.EndComposition(cookie)?;
-                }
-                // Text with line breaks (a phrase) goes through a composition
-                // that ends at once, the path every commit of typed text
-                // takes. Inserted bare, some browsers kept part of it as an
-                // open composition: underlined, and Enter no longer sent.
-                None if text.contains('\n') && sink.is_some() => {
-                    let start = edit::insertion_point(context, cookie)?;
-                    let owner: ITfContextComposition = context.cast()?;
-                    let brief = owner.StartComposition(cookie, &start, sink.ok_or(E_FAIL)?)?;
-                    let range = brief.GetRange()?;
-                    range.SetText(cookie, 0, &wide(text))?;
-                    edit::caret_to_end(context, cookie, &range)?;
-                    brief.EndComposition(cookie)?;
                 }
                 None => edit::insert(context, cookie, &wide(text))?,
             }

@@ -114,25 +114,16 @@ pub fn parse_phrases(text: &str) -> Vec<Phrase> {
         .collect()
 }
 
-/// How the document takes a phrase.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Insertion {
-    /// What a line break becomes (`\r\n` for most Windows controls).
-    pub newline: &'static str,
-    /// False where a line break may act as Enter (terminals): phrases with
-    /// more than one line are refused there.
-    pub multiline: bool,
-}
-
-/// Said when a phrase with several lines is refused.
-pub const MULTILINE_REFUSED: &str = "這個程式可能把換行當成 Enter，多行片語未送出";
+/// Said when a phrase with several lines is chosen. Phrases are one line:
+/// inserted line breaks were mishandled (terminals run them as Enter;
+/// Discord kept part of the text as a doubled, open composition).
+pub const MULTILINE_REFUSED: &str = "片語只支援單行，請在設定的「快速輸入」修改";
 
 /// The phrase menu while it is open.
 struct Menu {
     phrases: Vec<Phrase>,
     labels: Vec<String>,
     selected: usize,
-    insertion: Insertion,
 }
 
 impl Options {
@@ -601,13 +592,13 @@ impl<E: Engine> Controller<E> {
 
     /// Open the phrase menu. A composition in progress is committed first
     /// (its text is in the outcome). Nothing happens in a password field.
-    pub fn open_menu(&mut self, phrases: Vec<Phrase>, insertion: Insertion) -> Outcome {
+    pub fn open_menu(&mut self, phrases: Vec<Phrase>) -> Outcome {
         if !self.enabled || phrases.is_empty() {
             return Outcome::default();
         }
         let commit = self.finish();
         let labels = phrases.iter().map(Phrase::label).collect();
-        self.menu = Some(Menu { phrases, labels, selected: 0, insertion });
+        self.menu = Some(Menu { phrases, labels, selected: 0 });
         Outcome { eaten: true, commit, ..Outcome::default() }
     }
 
@@ -678,11 +669,11 @@ impl<E: Engine> Controller<E> {
         let Some(phrase) = menu.phrases.get(index) else {
             return outcome;
         };
-        if phrase.text.contains('\n') && !menu.insertion.multiline {
+        if phrase.text.contains('\n') {
             outcome.notice = Some(MULTILINE_REFUSED);
             return outcome;
         }
-        outcome.commit = Some(phrase.text.replace('\n', menu.insertion.newline)).filter(|t| !t.is_empty());
+        outcome.commit = Some(phrase.text.clone());
         outcome
     }
 
@@ -1917,20 +1908,18 @@ mod tests {
         parse_phrases(
             r#"{"phrases": [
                 {"name": "", "text": "地址：台北市"},
-                {"name": "簽名", "text": "祝好\r\n小明"},
-                {"name": "", "text": "第一行\n第二行"},
+                {"name": "簽名", "text": "祝好，小明"},
+                {"name": "", "text": "第一行\r\n第二行"},
                 {"name": "空的", "text": ""}
             ]}"#,
         )
     }
 
-    const EVERYWHERE: Insertion = Insertion { newline: "\r\n", multiline: true };
-
     #[test]
     fn phrase_file_and_labels() {
         let list = phrases();
         assert_eq!(list.len(), 3, "entries without text are skipped");
-        assert_eq!(list[1].text, "祝好\n小明", "line breaks are kept as \\n");
+        assert_eq!(list[2].text, "第一行\n第二行", "line breaks are kept as \\n");
         let labels: Vec<String> = list.iter().map(Phrase::label).collect();
         assert_eq!(labels, ["地址：台北市", "簽名", "第一行…"]);
         let long = Phrase { name: String::new(), text: "一二三四五六七八九十一二三四五六七八九十多".into() };
@@ -1941,7 +1930,7 @@ mod tests {
     #[test]
     fn phrase_menu() {
         let mut c = Controller::new(Fake::default());
-        assert!(c.open_menu(phrases(), EVERYWHERE).eaten);
+        assert!(c.open_menu(phrases()).eaten);
         assert!(c.menu_open());
         let (items, selected) = c.candidate_list().unwrap();
         assert_eq!((items.len(), selected), (3, 0));
@@ -1949,21 +1938,20 @@ mod tests {
         assert!(c.key_down(code(vk::DOWN)).eaten);
         assert!(!c.test_key(code(vk::SHIFT)));
         assert!(c.menu_open());
-        assert_eq!(c.key_down(key('2')), eaten(Some("祝好\r\n小明")));
+        assert_eq!(c.key_down(key('2')), eaten(Some("祝好，小明")));
         assert!(!c.menu_open());
         assert!(c.engine_mut().log.is_empty(), "phrases never reach the engine");
 
         // Enter picks the highlighted one; Esc closes without anything.
-        c.open_menu(phrases(), EVERYWHERE);
+        c.open_menu(phrases());
         c.key_down(code(vk::DOWN));
-        c.key_down(code(vk::DOWN));
-        assert_eq!(c.key_down(code(vk::RETURN)), eaten(Some("第一行\r\n第二行")));
-        c.open_menu(phrases(), EVERYWHERE);
+        assert_eq!(c.key_down(code(vk::RETURN)), eaten(Some("祝好，小明")));
+        c.open_menu(phrases());
         assert_eq!(c.key_down(code(vk::ESCAPE)), eaten(None));
         assert!(!c.menu_open());
 
         // A key the menu does not use closes it and does what it always does.
-        c.open_menu(phrases(), EVERYWHERE);
+        c.open_menu(phrases());
         assert!(c.test_key(key('j')), "a bopomofo key: the menu closes, the key composes");
         c.key_down(key('j'));
         assert!(!c.menu_open());
@@ -1972,7 +1960,7 @@ mod tests {
         // Opening it while composing commits the composition first.
         c.key_down(key('i'));
         c.key_down(key('3'));
-        let outcome = c.open_menu(phrases(), EVERYWHERE);
+        let outcome = c.open_menu(phrases());
         assert_eq!(outcome.commit.as_deref(), Some("字"));
         assert!(!c.composing() && c.menu_open());
 
@@ -1982,32 +1970,27 @@ mod tests {
         assert!(!c.menu_open());
 
         // The mouse picks through the same list.
-        c.open_menu(phrases(), EVERYWHERE);
+        c.open_menu(phrases());
         assert_eq!(c.pick(0), eaten(Some("地址：台北市")));
     }
 
     #[test]
-    fn phrase_menu_in_english_mode_and_terminals() {
+    fn phrase_menu_in_english_mode_and_multiline() {
         let mut c = Controller::new(Fake::default());
         c.toggle_chinese();
-        let terminal = Insertion { newline: "\r\n", multiline: false };
-        c.open_menu(phrases(), terminal);
+        c.open_menu(phrases());
         assert!(c.test_key(key('1')), "the menu works in English mode too");
         let refused = c.key_down(key('3'));
-        assert!(refused.eaten && refused.commit.is_none());
+        assert!(refused.eaten && refused.commit.is_none(), "phrases are one line");
         assert_eq!(refused.notice, Some(MULTILINE_REFUSED));
-        c.open_menu(phrases(), terminal);
-        assert_eq!(c.key_down(key('1')), eaten(Some("地址：台北市")), "one line is fine");
-
-        // Browsers take bare line feeds.
-        c.open_menu(phrases(), Insertion { newline: "\n", multiline: true });
-        assert_eq!(c.key_down(key('3')), eaten(Some("第一行\n第二行")));
+        c.open_menu(phrases());
+        assert_eq!(c.key_down(key('1')), eaten(Some("地址：台北市")));
 
         // Not in a password field, and not with nothing to show.
         c.set_enabled(false);
-        assert!(!c.open_menu(phrases(), EVERYWHERE).eaten);
+        assert!(!c.open_menu(phrases()).eaten);
         c.set_enabled(true);
-        assert!(!c.open_menu(Vec::new(), EVERYWHERE).eaten);
+        assert!(!c.open_menu(Vec::new()).eaten);
         assert!(!c.menu_open());
     }
 }

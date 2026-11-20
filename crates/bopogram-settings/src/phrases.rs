@@ -41,10 +41,7 @@ const WS_EX_CLIENTEDGE: u32 = 0x200;
 const WS_VSCROLL: u32 = 0x0020_0000;
 const LBS_NOTIFY: u32 = 0x1;
 const LBS_NOINTEGRALHEIGHT: u32 = 0x100;
-const ES_MULTILINE: u32 = 0x4;
-const ES_AUTOVSCROLL: u32 = 0x40;
 const ES_AUTOHSCROLL: u32 = 0x80;
-const ES_WANTRETURN: u32 = 0x1000;
 const LB_ADDSTRING: u32 = 0x180;
 const LB_INSERTSTRING: u32 = 0x181;
 const LB_DELETESTRING: u32 = 0x182;
@@ -122,7 +119,7 @@ impl Editor {
             set_text(name, &phrase.name);
         }
         if let Some(text) = item(window, ID_TEXT) {
-            set_text(text, &phrase.text.replace('\n', "\r\n"));
+            set_text(text, &phrase.text);
         }
         self.loading = false;
         let editing = self.current.is_some();
@@ -144,7 +141,7 @@ impl Editor {
             return;
         };
         self.phrases[i].name = text_of(name);
-        self.phrases[i].text = text_of(text).replace("\r\n", "\n");
+        self.phrases[i].text = text_of(text);
         send(window, ID_LIST, LB_DELETESTRING, i, 0);
         send(window, ID_LIST, LB_INSERTSTRING, i, wide(&label(&self.phrases[i])).as_ptr() as isize);
         send(window, ID_LIST, LB_SETCURSEL, i, 0);
@@ -277,19 +274,26 @@ pub fn open(owner: HWND, files: &Files) {
         b.button("刪除", ID_REMOVE, 80, 372, 62);
         b.button("上移", ID_UP, 148, 372, 40);
         b.button("下移", ID_DOWN, 192, 372, 40);
-        b.label("名稱（選填，選單中顯示；沒有時顯示第一行）", -1, 248, 12, 380);
+        b.label("名稱（選填，選單中顯示；沒有時顯示內容）", -1, 248, 12, 380);
         let name = WS_TABSTOP.0 | ES_AUTOHSCROLL;
         b.control_ex(WS_EX_CLIENTEDGE, w!("EDIT"), "", name, ID_NAME, 248, 34, 380, 26);
-        b.label("內容（可以多行）", -1, 248, 70, 380);
-        let text = WS_TABSTOP.0 | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN;
-        b.control_ex(WS_EX_CLIENTEDGE, w!("EDIT"), "", text, ID_TEXT, 248, 92, 380, 264);
+        // One line: a line break inserted into some applications (Discord)
+        // left part of it behind as an open composition.
+        b.label("內容（單行）", -1, 248, 70, 380);
+        let text = WS_TABSTOP.0 | ES_AUTOHSCROLL;
+        b.control_ex(WS_EX_CLIENTEDGE, w!("EDIT"), "", text, ID_TEXT, 248, 92, 380, 26);
         b.button("確定", ID_OK, WIDTH - 12 - 80 * 2 - 8, 372, 80);
         b.button("取消", ID_CANCEL, WIDTH - 12 - 80, 372, 80);
         send(window, ID_NAME, EM_LIMITTEXT, MAX_NAME, 0);
         send(window, ID_TEXT, EM_LIMITTEXT, MAX_TEXT, 0);
 
-        let mut editor =
-            Box::new(Editor { files: files.clone(), owner, phrases: files.load_phrases(), current: None, loading: false });
+        // Phrases written when several lines were allowed become one line,
+        // shown and saved as they are now taken.
+        let mut phrases = files.load_phrases();
+        for phrase in &mut phrases {
+            phrase.text = phrase.text.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ");
+        }
+        let mut editor = Box::new(Editor { files: files.clone(), owner, phrases, current: None, loading: false });
         editor.fill_list(window);
         let first = (!editor.phrases.is_empty()).then_some(0);
         editor.select(window, first);
