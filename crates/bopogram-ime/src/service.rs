@@ -20,7 +20,7 @@ use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetFocus, GetKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
     KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MapVirtualKeyW, MAPVK_VK_TO_VSC,
-    VIRTUAL_KEY, VK_CAPITAL, VK_CONTROL, VK_LSHIFT, VK_MENU, VK_RETURN, VK_SHIFT,
+    VIRTUAL_KEY, VK_CAPITAL, VK_CONTROL, VK_LSHIFT, VK_MENU, VK_SHIFT,
 };
 use windows::Win32::UI::TextServices::{
     CLSID_TF_CategoryMgr, IEnumTfDisplayAttributeInfo, ITfCategoryMgr, ITfComposition,
@@ -366,7 +366,7 @@ pub(crate) fn pick_candidate(state: &Shared, index: usize) {
 
 /// Type `text` as keystrokes queued behind the key being handled: each
 /// character as itself (VK_PACKET, which the controller passes), each line
-/// break as Shift+Enter, the key chat boxes take as a new line.
+/// break as CR with Shift held (Shift+Enter: a new line in chat boxes).
 fn type_text(text: &str) {
     let key = |vk: VIRTUAL_KEY, scan: u16, flags: KEYBD_EVENT_FLAGS| INPUT {
         r#type: INPUT_KEYBOARD,
@@ -374,16 +374,16 @@ fn type_text(text: &str) {
             ki: KEYBDINPUT { wVk: vk, wScan: scan, dwFlags: flags, time: 0, dwExtraInfo: 0 },
         },
     };
-    // Real scan codes: Chromium takes KeyboardEvent.code from them, and a
-    // web page may look at that rather than at the virtual key.
-    let scan = |vk: VIRTUAL_KEY| unsafe { MapVirtualKeyW(vk.0 as u32, MAPVK_VK_TO_VSC) } as u16;
-    let (shift, enter) = (scan(VK_LSHIFT), scan(VK_RETURN));
+    // A line break is the character CR typed with Shift held. A virtual
+    // Enter key reached Chromium as keydown (shift=true) but its character
+    // never came, so no line was broken; characters typed this way arrive.
+    let shift = unsafe { MapVirtualKeyW(VK_LSHIFT.0 as u32, MAPVK_VK_TO_VSC) } as u16;
     let mut inputs = Vec::new();
     for (index, line) in text.split('\n').enumerate() {
         if index > 0 {
             inputs.push(key(VK_LSHIFT, shift, KEYBD_EVENT_FLAGS(0)));
-            inputs.push(key(VK_RETURN, enter, KEYBD_EVENT_FLAGS(0)));
-            inputs.push(key(VK_RETURN, enter, KEYEVENTF_KEYUP));
+            inputs.push(key(VIRTUAL_KEY(0), 0x0D, KEYEVENTF_UNICODE));
+            inputs.push(key(VIRTUAL_KEY(0), 0x0D, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
             inputs.push(key(VK_LSHIFT, shift, KEYEVENTF_KEYUP));
         }
         for unit in line.encode_utf16() {

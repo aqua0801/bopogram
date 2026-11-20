@@ -21,6 +21,29 @@
   <div id="chat" contenteditable="true" style="border: 1px solid #888; min-height: 4em; padding: .4em; white-space: pre-wrap"></div>
 </label>
 <ol id="sent"></ol>
+<label>事件記錄（最近 60 筆，最新在上；只記錄這一頁收到的事件）
+  <button type="button" id="clear">清除</button>
+</label>
+<pre id="log" style="font: 13px Consolas, monospace; background: #f4f4f4; padding: .4em; max-height: 24em; overflow: auto"></pre>
+<script>
+  const log = document.getElementById("log");
+  const lines = [];
+  const note = (text) => {
+    lines.unshift(new Date().toISOString().slice(17, 23) + " " + text);
+    lines.length = Math.min(lines.length, 60);
+    log.textContent = lines.join("\n");
+  };
+  document.getElementById("clear").addEventListener("click", () => { lines.length = 0; log.textContent = ""; });
+  for (const type of ["keydown", "keyup"]) {
+    document.addEventListener(type, (e) => note(
+      `${type} key=${JSON.stringify(e.key)} code=${e.code || "-"} shift=${e.shiftKey} composing=${e.isComposing} target=${e.target.id || e.target.tagName}`), true);
+  }
+  document.addEventListener("beforeinput", (e) => note(
+    `beforeinput ${e.inputType} data=${JSON.stringify(e.data)} composing=${e.isComposing}`), true);
+  for (const type of ["compositionstart", "compositionend"]) {
+    document.addEventListener(type, (e) => note(`${type} data=${JSON.stringify(e.data)}`), true);
+  }
+</script>
 <script>
   const chat = document.getElementById("chat");
   chat.addEventListener("keydown", (event) => {

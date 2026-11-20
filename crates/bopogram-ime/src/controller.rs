@@ -125,7 +125,7 @@ pub struct Insertion {
     /// True where text with line breaks must be typed rather than inserted
     /// (browsers and Electron: an inserted line break left the last line
     /// stuck as an open composition, sometimes doubled). The text then goes
-    /// in as keystrokes, each line break as Shift+Enter.
+    /// in as keystrokes, each line break as CR with Shift held.
     pub keystrokes: bool,
 }
 
