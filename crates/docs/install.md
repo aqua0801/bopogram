@@ -107,6 +107,8 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 | 單按 Shift 切換中／英 | `keys.json` 的 `shift_toggle` | 約 5 秒內 |
 | 選字鍵：1 2 3… 或 A S D F… | `keys.json` 的 `select_keys` | 約 5 秒內 |
 | 每頁候選數：5、7、9、10 | `keys.json` 的 `page_size` | 約 5 秒內 |
+| 片語選單的組合鍵（預設 Alt+\`，清空則停用） | `keys.json` 的 `phrase_key` | 切換到任一程式時 |
+| 片語（「編輯片語…」） | `%LOCALAPPDATA%\Bopogram\phrases.json` | 下次叫出選單時 |
 | 候選視窗文字大小 | `%LOCALAPPDATA%\Bopogram\candidate-font.txt` | 約 5 秒內 |
 | 個人化學習 | 執行包 `config.json` 的 `user_model` | 套用時重新啟動引擎 |
 | 打字紀錄 | 執行包 `config.json` 的 `typing_log` | 套用時重新啟動引擎 |
@@ -139,6 +141,13 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
   注音鍵照常組字，Ctrl 快速鍵照常交給程式。英文模式一律是一般鍵盤（Shift+空白鍵也不攔），
   以免打大寫字母接空白時誤觸。
 - 選字鍵改成 A S D F… 後，候選視窗開著時這些鍵用來選字，數字鍵則照常是注音。
+- Alt+\`（可在設定改）：叫出片語選單，中、英模式都可用。用選字鍵、↑↓＋Enter 或滑鼠選，
+  文字直接插入游標處，不經過剪貼簿，也不經過引擎（不學習、不進打字紀錄）。再按一次或 Esc 關閉；
+  按其他鍵則關閉選單並照常處理那個鍵。組字中叫出時先送出組字區。密碼欄位裡不作用。
+  - 多行片語的換行是以文字插入，不是按下 Enter 鍵；聊天程式通常只在按下 Enter 鍵時送出。
+    瀏覽器與 Electron 程式（Discord、VS Code）插入 `\n`，其他程式插入 `\r\n`。
+  - 終端機（Windows Terminal、命令提示字元、PowerShell 等）會把換行當成 Enter 執行指令，
+    所以在這些程式裡多行片語不會送出，游標旁會顯示提示。VS Code 內建終端機無法分辨，請自行留意。
 
 ## 已知限制
 

@@ -26,12 +26,113 @@ pub struct Options {
     pub start_chinese: bool,
     /// Shift pressed and released on its own switches Chinese/English.
     pub shift_toggles: bool,
+    /// Opens the phrase menu; `None` when the user turned it off.
+    pub phrase_key: Option<Hotkey>,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { page_size: 9, home_row: false, start_chinese: true, shift_toggles: true }
+        Options {
+            page_size: 9,
+            home_row: false,
+            start_chinese: true,
+            shift_toggles: true,
+            phrase_key: Some(Hotkey::PHRASES),
+        }
     }
+}
+
+/// A key combination that works wherever the caret is (registered with TSF
+/// as a preserved key, so the application never sees it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Hotkey {
+    pub vk: u32,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+}
+
+impl Hotkey {
+    /// Alt+`, the default for the phrase menu.
+    pub const PHRASES: Hotkey = Hotkey { vk: vk::OEM_3, ctrl: false, alt: true, shift: false };
+
+    /// `{"vk": 192, "ctrl": false, "alt": true, "shift": false}`. A key
+    /// without Ctrl or Alt would take a key away from typing: refused.
+    fn parse(value: &serde_json::Value) -> Option<Hotkey> {
+        let vk = u32::try_from(value.get("vk")?.as_u64()?).ok()?;
+        let flag = |name: &str| value.get(name).and_then(serde_json::Value::as_bool).unwrap_or(false);
+        let key = Hotkey { vk, ctrl: flag("ctrl"), alt: flag("alt"), shift: flag("shift") };
+        ((1..0xFF).contains(&vk) && !is_modifier(vk) && (key.ctrl || key.alt)).then_some(key)
+    }
+}
+
+/// A text the user keeps for the phrase menu (`phrases.json`).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Phrase {
+    /// Shown in the menu; the first line of the text when empty.
+    pub name: String,
+    /// What is inserted. Lines are separated by `\n`.
+    pub text: String,
+}
+
+/// Longest label in the phrase menu, in characters.
+const PHRASE_LABEL_CHARS: usize = 20;
+
+impl Phrase {
+    /// The phrase as the menu shows it: one short line.
+    pub fn label(&self) -> String {
+        let name = self.name.trim();
+        let (source, more) = if name.is_empty() {
+            let text = self.text.trim();
+            (text.lines().next().unwrap_or(""), text.lines().nth(1).is_some())
+        } else {
+            (name, false)
+        };
+        let mut label: String = source.chars().take(PHRASE_LABEL_CHARS).collect();
+        if more || source.chars().count() > PHRASE_LABEL_CHARS {
+            label.push('…');
+        }
+        label
+    }
+}
+
+/// Read `phrases.json`: `{"phrases": [{"name": "...", "text": "..."}, ...]}`.
+/// Entries without text are skipped.
+pub fn parse_phrases(text: &str) -> Vec<Phrase> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}')) else {
+        return Vec::new();
+    };
+    let Some(list) = value.get("phrases").and_then(serde_json::Value::as_array) else {
+        return Vec::new();
+    };
+    let field = |item: &serde_json::Value, name: &str| {
+        item.get(name).and_then(serde_json::Value::as_str).unwrap_or("").replace("\r\n", "\n")
+    };
+    list.iter()
+        .map(|item| Phrase { name: field(item, "name"), text: field(item, "text") })
+        .filter(|phrase| !phrase.text.is_empty())
+        .collect()
+}
+
+/// How the document takes a phrase.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Insertion {
+    /// What a line break becomes (`\r\n` for most Windows controls).
+    pub newline: &'static str,
+    /// False where a line break may act as Enter (terminals): phrases with
+    /// more than one line are refused there.
+    pub multiline: bool,
+}
+
+/// Said when a phrase with several lines is refused.
+pub const MULTILINE_REFUSED: &str = "這個程式可能把換行當成 Enter，多行片語未送出";
+
+/// The phrase menu while it is open.
+struct Menu {
+    phrases: Vec<Phrase>,
+    labels: Vec<String>,
+    selected: usize,
+    insertion: Insertion,
 }
 
 impl Options {
@@ -61,6 +162,11 @@ impl Options {
         }
         if let Some(on) = value.get("shift_toggle").and_then(serde_json::Value::as_bool) {
             options.shift_toggles = on;
+        }
+        match value.get("phrase_key") {
+            Some(serde_json::Value::Null) => options.phrase_key = None,
+            Some(key) => options.phrase_key = Hotkey::parse(key).or(options.phrase_key),
+            None => {}
         }
         options
     }
@@ -155,6 +261,8 @@ pub struct Outcome {
     pub style_changed: bool,
     /// The key switched between full and half width.
     pub width_changed: bool,
+    /// Something to tell the user near the caret.
+    pub notice: Option<&'static str>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -289,6 +397,8 @@ pub struct Controller<E: Engine> {
     /// Highlighted candidate: an index into the whole list.
     selected: usize,
     window_open: bool,
+    /// The phrase menu, shown in the candidate window instead of candidates.
+    menu: Option<Menu>,
 }
 
 impl<E: Engine> Controller<E> {
@@ -318,6 +428,7 @@ impl<E: Engine> Controller<E> {
             candidates: Vec::new(),
             selected: 0,
             window_open: false,
+            menu: None,
         }
     }
 
@@ -340,6 +451,11 @@ impl<E: Engine> Controller<E> {
         self.chinese
     }
 
+    /// False in a password field.
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
     /// Full width is in effect (it applies in Chinese mode only).
     pub fn full_width(&self) -> bool {
         self.full_width && self.chinese
@@ -356,7 +472,35 @@ impl<E: Engine> Controller<E> {
 
     /// Where the page with the highlighted candidate starts.
     pub fn page_start(&self) -> usize {
-        self.selected / self.options.page_size * self.options.page_size
+        self.selected() / self.options.page_size * self.options.page_size
+    }
+
+    /// What the candidate window lists: the phrase menu, or the candidates.
+    fn list(&self) -> Option<(&[String], usize)> {
+        match &self.menu {
+            Some(menu) => Some((&menu.labels[..], menu.selected)),
+            None => self.window_open.then_some((&self.candidates[..], self.selected)),
+        }
+    }
+
+    fn list_len(&self) -> usize {
+        self.list().map_or(0, |(items, _)| items.len())
+    }
+
+    fn selected(&self) -> usize {
+        self.list().map_or(0, |(_, selected)| selected)
+    }
+
+    fn set_selected(&mut self, index: usize) {
+        match &mut self.menu {
+            Some(menu) => menu.selected = index,
+            None => self.selected = index,
+        }
+    }
+
+    /// The phrase menu is open.
+    pub fn menu_open(&self) -> bool {
+        self.menu.is_some()
     }
 
     /// Also true while the engine has not answered: it may be composing
@@ -387,24 +531,22 @@ impl<E: Engine> Controller<E> {
     /// The candidates to show: the page's items, the highlighted item on
     /// the page, the page number and the page count.
     pub fn candidate_page(&self) -> Option<(&[String], usize, usize, usize)> {
-        if !self.window_open {
-            return None;
-        }
+        let (items, selected) = self.list()?;
         let size = self.options.page_size;
-        let page = self.selected / size;
+        let page = selected / size;
         let start = page * size;
-        let end = (start + size).min(self.candidates.len());
-        Some((&self.candidates[start..end], self.selected - start, page, self.pages()))
+        let end = (start + size).min(items.len());
+        Some((&items[start..end], selected - start, page, self.pages()))
     }
 
     fn pages(&self) -> usize {
-        self.candidates.len().div_ceil(self.options.page_size).max(1)
+        self.list_len().div_ceil(self.options.page_size).max(1)
     }
 
     /// The whole candidate list and the highlighted index, while the
     /// window is open (for applications that draw the list themselves).
     pub fn candidate_list(&self) -> Option<(&[String], usize)> {
-        self.window_open.then_some((&self.candidates[..], self.selected))
+        self.list()
     }
 
     /// Where each page starts in the candidate list.
@@ -414,29 +556,33 @@ impl<E: Engine> Controller<E> {
 
     /// Highlight candidate `index` of the whole list. Out of range is ignored.
     pub fn highlight(&mut self, index: usize) {
-        if self.window_open && index < self.candidates.len() {
-            self.selected = index;
+        if index < self.list_len() {
+            self.set_selected(index);
         }
     }
 
     /// Show the next (1) or previous (-1) page, wrapping around.
     pub fn turn_page(&mut self, delta: isize) {
-        if self.window_open {
+        if self.list().is_some() {
             let pages = self.pages();
             let size = self.options.page_size;
-            let page = (self.selected / size + pages).wrapping_add_signed(delta) % pages;
-            self.selected = page * size;
+            let page = (self.selected() / size + pages).wrapping_add_signed(delta) % pages;
+            self.set_selected(page * size);
         }
     }
 
-    /// Close the candidate window without choosing anything.
+    /// Close the candidate window (or the phrase menu) without choosing anything.
     pub fn close_candidates(&mut self) {
         self.window_open = false;
+        self.menu = None;
     }
 
     /// Choose candidate `index` of the whole list, as its digit key would
     /// (the mouse, or an application that draws the list itself).
     pub fn pick(&mut self, index: usize) -> Outcome {
+        if self.menu.is_some() {
+            return self.choose_phrase(index);
+        }
         if !self.window_open || index >= self.candidates.len() {
             return Outcome::default();
         }
@@ -449,6 +595,95 @@ impl<E: Engine> Controller<E> {
             Err(Failure::Unreachable) => self.lost(),
         }
         Outcome { eaten: true, commit: self.take_committed(), ..Outcome::default() }
+    }
+
+    // -- the phrase menu ---------------------------------------------------
+
+    /// Open the phrase menu. A composition in progress is committed first
+    /// (its text is in the outcome). Nothing happens in a password field.
+    pub fn open_menu(&mut self, phrases: Vec<Phrase>, insertion: Insertion) -> Outcome {
+        if !self.enabled || phrases.is_empty() {
+            return Outcome::default();
+        }
+        let commit = self.finish();
+        let labels = phrases.iter().map(Phrase::label).collect();
+        self.menu = Some(Menu { phrases, labels, selected: 0, insertion });
+        Outcome { eaten: true, commit, ..Outcome::default() }
+    }
+
+    /// Close the phrase menu. True if it was open.
+    pub fn close_menu(&mut self) -> bool {
+        self.menu.take().is_some()
+    }
+
+    /// A key the menu does not take closes it (the key itself then goes
+    /// wherever it would have gone). True if the menu was closed.
+    pub fn dismiss_menu(&mut self, key: Key) -> bool {
+        self.menu.is_some() && self.menu_action(key).is_none() && self.close_menu()
+    }
+
+    /// What a key does while the phrase menu is open: `None` for a key that
+    /// closes it, `Some(Action::Pass)` for a modifier, which leaves it be.
+    fn menu_action(&self, key: Key) -> Option<Action> {
+        let menu = self.menu.as_ref()?;
+        if is_modifier(key.vk) {
+            return Some(Action::Pass);
+        }
+        if key.ctrl || key.alt {
+            return None;
+        }
+        if !key.shift {
+            if let Some(position) = self.selection_key(key) {
+                let index = self.page_start() + position;
+                return Some(if index < menu.phrases.len() {
+                    Action::SelectIndex(index)
+                } else {
+                    Action::Swallow
+                });
+            }
+        }
+        match key.vk {
+            vk::DOWN => Some(Action::MoveSelection(1)),
+            vk::UP => Some(Action::MoveSelection(-1)),
+            vk::NEXT | vk::SPACE => Some(Action::NextPage),
+            vk::PRIOR => Some(Action::PrevPage),
+            vk::RETURN => Some(Action::SelectIndex(menu.selected)),
+            vk::ESCAPE => Some(Action::CloseWindow),
+            _ => None,
+        }
+    }
+
+    fn menu_key(&mut self, action: Action) -> Outcome {
+        let count = self.list_len().max(1);
+        match action {
+            Action::SelectIndex(index) => return self.choose_phrase(index),
+            Action::MoveSelection(step) => {
+                let next = (self.selected() + count).wrapping_add_signed(step) % count;
+                self.set_selected(next);
+            }
+            Action::NextPage => self.turn_page(1),
+            Action::PrevPage => self.turn_page(-1),
+            Action::CloseWindow => self.menu = None,
+            _ => {}
+        }
+        Outcome { eaten: true, ..Outcome::default() }
+    }
+
+    /// Insert phrase `index` and close the menu.
+    fn choose_phrase(&mut self, index: usize) -> Outcome {
+        let mut outcome = Outcome { eaten: true, ..Outcome::default() };
+        let Some(menu) = self.menu.take() else {
+            return outcome;
+        };
+        let Some(phrase) = menu.phrases.get(index) else {
+            return outcome;
+        };
+        if phrase.text.contains('\n') && !menu.insertion.multiline {
+            outcome.notice = Some(MULTILINE_REFUSED);
+            return outcome;
+        }
+        outcome.commit = Some(phrase.text.replace('\n', menu.insertion.newline)).filter(|t| !t.is_empty());
+        outcome
     }
 
     // -- deciding ----------------------------------------------------------
@@ -616,13 +851,17 @@ impl<E: Engine> Controller<E> {
 
     /// Would `key_down` take this key? Makes no request.
     pub fn test_key(&self, key: Key) -> bool {
+        if let Some(action) = self.menu_action(key) {
+            return action != Action::Pass;
+        }
         self.classify(key) != Action::Pass
     }
 
     /// True if this key is about to start a new composition, which is the
     /// moment to report the text before the cursor with `set_context`.
     pub fn starts_composition(&self, key: Key) -> bool {
-        !self.composing()
+        self.menu_action(key).is_none()
+            && !self.composing()
             && matches!(self.classify(key), Action::Send(Op::Key(_) | Op::Symbol(_)))
     }
 
@@ -840,6 +1079,7 @@ impl<E: Engine> Controller<E> {
     /// Used when focus moves away and when the mode changes.
     pub fn finish(&mut self) -> Option<String> {
         self.prefix = false;
+        self.menu = None;
         if !self.composing() {
             return None;
         }
@@ -874,6 +1114,7 @@ impl<E: Engine> Controller<E> {
             self.engine.abandon();
         }
         self.clear();
+        self.menu = None;
         self.enabled = enabled;
         self.learning_unsent = true;
         // Sent now if the engine is reachable, otherwise with the next request.
@@ -890,6 +1131,12 @@ impl<E: Engine> Controller<E> {
 
     pub fn key_down(&mut self, key: Key) -> Outcome {
         self.note_key_down(key);
+        match self.menu_action(key) {
+            Some(Action::Pass) => return Outcome::default(),
+            Some(action) => return self.menu_key(action),
+            // Any other key closes the menu and does what it always does.
+            None => self.menu = None,
+        }
         // Judged before catching up: if that ends the composition, the key
         // was still meant for it and must not reach the application.
         let was_busy = self.composing() || self.prefix;
@@ -1563,8 +1810,20 @@ mod tests {
         );
         assert_eq!(
             options,
-            Options { page_size: 6, home_row: true, start_chinese: false, shift_toggles: false }
+            Options {
+                page_size: 6,
+                home_row: true,
+                start_chinese: false,
+                shift_toggles: false,
+                phrase_key: Some(Hotkey::PHRASES),
+            }
         );
+        // The phrase key: another combination, turned off, or refused without Ctrl or Alt.
+        let ctrl_q = Options::parse(r#"{"phrase_key": {"vk": 81, "ctrl": true}}"#).phrase_key;
+        assert_eq!(ctrl_q, Some(Hotkey { vk: 0x51, ctrl: true, alt: false, shift: false }));
+        assert_eq!(Options::parse(r#"{"phrase_key": null}"#).phrase_key, None);
+        let bare = Options::parse(r#"{"phrase_key": {"vk": 81, "shift": true}}"#).phrase_key;
+        assert_eq!(bare, Some(Hotkey::PHRASES), "falls back to the default");
         assert_eq!(options.labels(), ['a', 's', 'd', 'f', 'g', 'h']);
         assert_eq!(Options::parse(r#"{"page_size": 40}"#).page_size, 9, "out of range");
         assert_eq!(Options { page_size: 10, ..Options::default() }.labels().last(), Some(&'0'));
@@ -1652,5 +1911,98 @@ mod tests {
         c.set_enabled(true);
         assert!(c.engine_mut().log.contains(&Op::Learning(true)));
         assert!(c.test_key(key('j')));
+    }
+
+    fn phrases() -> Vec<Phrase> {
+        parse_phrases(
+            r#"{"phrases": [
+                {"name": "", "text": "地址：台北市"},
+                {"name": "簽名", "text": "祝好\r\n小明"},
+                {"name": "", "text": "第一行\n第二行"},
+                {"name": "空的", "text": ""}
+            ]}"#,
+        )
+    }
+
+    const EVERYWHERE: Insertion = Insertion { newline: "\r\n", multiline: true };
+
+    #[test]
+    fn phrase_file_and_labels() {
+        let list = phrases();
+        assert_eq!(list.len(), 3, "entries without text are skipped");
+        assert_eq!(list[1].text, "祝好\n小明", "line breaks are kept as \\n");
+        let labels: Vec<String> = list.iter().map(Phrase::label).collect();
+        assert_eq!(labels, ["地址：台北市", "簽名", "第一行…"]);
+        let long = Phrase { name: String::new(), text: "一二三四五六七八九十一二三四五六七八九十多".into() };
+        assert_eq!(long.label().chars().count(), PHRASE_LABEL_CHARS + 1);
+        assert!(parse_phrases("not json").is_empty());
+    }
+
+    #[test]
+    fn phrase_menu() {
+        let mut c = Controller::new(Fake::default());
+        assert!(c.open_menu(phrases(), EVERYWHERE).eaten);
+        assert!(c.menu_open());
+        let (items, selected) = c.candidate_list().unwrap();
+        assert_eq!((items.len(), selected), (3, 0));
+        // Arrows move, Shift is left alone, 2 picks the second phrase.
+        assert!(c.key_down(code(vk::DOWN)).eaten);
+        assert!(!c.test_key(code(vk::SHIFT)));
+        assert!(c.menu_open());
+        assert_eq!(c.key_down(key('2')), eaten(Some("祝好\r\n小明")));
+        assert!(!c.menu_open());
+        assert!(c.engine_mut().log.is_empty(), "phrases never reach the engine");
+
+        // Enter picks the highlighted one; Esc closes without anything.
+        c.open_menu(phrases(), EVERYWHERE);
+        c.key_down(code(vk::DOWN));
+        c.key_down(code(vk::DOWN));
+        assert_eq!(c.key_down(code(vk::RETURN)), eaten(Some("第一行\r\n第二行")));
+        c.open_menu(phrases(), EVERYWHERE);
+        assert_eq!(c.key_down(code(vk::ESCAPE)), eaten(None));
+        assert!(!c.menu_open());
+
+        // A key the menu does not use closes it and does what it always does.
+        c.open_menu(phrases(), EVERYWHERE);
+        assert!(c.test_key(key('j')), "a bopomofo key: the menu closes, the key composes");
+        c.key_down(key('j'));
+        assert!(!c.menu_open());
+        assert_eq!(c.preedit(), "j");
+
+        // Opening it while composing commits the composition first.
+        c.key_down(key('i'));
+        c.key_down(key('3'));
+        let outcome = c.open_menu(phrases(), EVERYWHERE);
+        assert_eq!(outcome.commit.as_deref(), Some("字"));
+        assert!(!c.composing() && c.menu_open());
+
+        // A key the application gets closes the menu before it goes.
+        assert!(!c.test_key(Key { ctrl: true, ..key('c') }));
+        assert!(c.dismiss_menu(Key { ctrl: true, ..key('c') }));
+        assert!(!c.menu_open());
+
+        // The mouse picks through the same list.
+        c.open_menu(phrases(), EVERYWHERE);
+        assert_eq!(c.pick(0), eaten(Some("地址：台北市")));
+    }
+
+    #[test]
+    fn phrase_menu_in_english_mode_and_terminals() {
+        let mut c = Controller::new(Fake::default());
+        c.toggle_chinese();
+        c.open_menu(phrases(), Insertion { newline: "\n", multiline: false });
+        assert!(c.test_key(key('1')), "the menu works in English mode too");
+        let refused = c.key_down(key('3'));
+        assert!(refused.eaten && refused.commit.is_none());
+        assert_eq!(refused.notice, Some(MULTILINE_REFUSED));
+        c.open_menu(phrases(), Insertion { newline: "\n", multiline: false });
+        assert_eq!(c.key_down(key('1')), eaten(Some("地址：台北市")), "one line is fine");
+
+        // Not in a password field, and not with nothing to show.
+        c.set_enabled(false);
+        assert!(!c.open_menu(phrases(), EVERYWHERE).eaten);
+        c.set_enabled(true);
+        assert!(!c.open_menu(Vec::new(), EVERYWHERE).eaten);
+        assert!(!c.menu_open());
     }
 }

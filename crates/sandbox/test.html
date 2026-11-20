@@ -17,4 +17,20 @@
 <label>密碼欄位（輸入法應該完全不作用，按鍵直接變成英數字）
   <input type="password">
 </label>
+<label>聊天框（模擬 Discord／LINE：Enter 送出、Shift+Enter 換行。多行片語插入後不應該被送出）
+  <div id="chat" contenteditable="true" style="border: 1px solid #888; min-height: 4em; padding: .4em; white-space: pre-wrap"></div>
+</label>
+<ol id="sent"></ol>
+<script>
+  const chat = document.getElementById("chat");
+  chat.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      const item = document.createElement("li");
+      item.textContent = "送出：" + JSON.stringify(chat.innerText);
+      document.getElementById("sent").appendChild(item);
+      chat.textContent = "";
+    }
+  });
+</script>
 </html>

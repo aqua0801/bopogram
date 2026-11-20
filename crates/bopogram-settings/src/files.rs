@@ -42,6 +42,40 @@ pub struct Settings {
     pub start_chinese: bool,
     /// Shift on its own switches Chinese/English.
     pub shift_toggles: bool,
+    /// Opens the phrase menu; `None` turns the menu off.
+    pub phrase_key: Option<Hotkey>,
+}
+
+/// A key combination, as the input method reads it from `keys.json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Hotkey {
+    pub vk: u32,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+}
+
+/// Alt+`.
+pub const DEFAULT_PHRASE_KEY: Hotkey = Hotkey { vk: 0xC0, ctrl: false, alt: true, shift: false };
+
+impl Hotkey {
+    fn parse(value: &Value) -> Option<Hotkey> {
+        let vk = u32::try_from(value.get("vk")?.as_u64()?).ok()?;
+        let flag = |name: &str| value.get(name).and_then(Value::as_bool).unwrap_or(false);
+        let key = Hotkey { vk, ctrl: flag("ctrl"), alt: flag("alt"), shift: flag("shift") };
+        ((1..0xFF).contains(&vk) && (key.ctrl || key.alt)).then_some(key)
+    }
+
+    fn to_json(self) -> Value {
+        serde_json::json!({ "vk": self.vk, "ctrl": self.ctrl, "alt": self.alt, "shift": self.shift })
+    }
+}
+
+/// One entry of the phrase menu (`phrases.json`). Lines end with `\n`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Phrase {
+    pub name: String,
+    pub text: String,
 }
 
 impl Default for Settings {
@@ -57,6 +91,7 @@ impl Default for Settings {
             home_row: false,
             start_chinese: true,
             shift_toggles: true,
+            phrase_key: Some(DEFAULT_PHRASE_KEY),
         }
     }
 }
@@ -78,6 +113,7 @@ fn now_secs() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+#[derive(Clone)]
 pub struct Files {
     pub host_exe: PathBuf,
     /// The Python that runs the engine.
@@ -108,6 +144,49 @@ impl Files {
     /// Selection keys, page size, start mode and Shift, read by the input method.
     fn keys_file(&self) -> Option<PathBuf> {
         Some(self.style.as_ref()?.with_file_name("keys.json"))
+    }
+
+    /// The phrase menu, read by the input method each time it opens.
+    fn phrases_file(&self) -> Option<PathBuf> {
+        Some(self.style.as_ref()?.with_file_name("phrases.json"))
+    }
+
+    pub fn load_phrases(&self) -> Vec<Phrase> {
+        let Some(value) = self.phrases_file().as_deref().and_then(read_json) else {
+            return Vec::new();
+        };
+        let field = |item: &Value, name: &str| {
+            item.get(name).and_then(Value::as_str).unwrap_or("").replace("\r\n", "\n")
+        };
+        value
+            .get("phrases")
+            .and_then(Value::as_array)
+            .map(|list| {
+                list.iter()
+                    .map(|item| Phrase { name: field(item, "name"), text: field(item, "text") })
+                    .filter(|phrase| !phrase.text.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Write the phrase menu. Phrases without text are dropped.
+    pub fn save_phrases(&self, phrases: &[Phrase]) -> Result<(), String> {
+        let path = self.phrases_file().ok_or("找不到 %LOCALAPPDATA%")?;
+        if let Some(folder) = path.parent() {
+            std::fs::create_dir_all(folder).map_err(|e| e.to_string())?;
+        }
+        let list: Vec<Value> = phrases
+            .iter()
+            .filter(|phrase| !phrase.text.is_empty())
+            .map(|phrase| serde_json::json!({ "name": phrase.name, "text": phrase.text }))
+            .collect();
+        let text = serde_json::to_string_pretty(&serde_json::json!({ "phrases": list }))
+            .map_err(|e| e.to_string())?;
+        // Written beside the file and renamed, so the menu never reads half a file.
+        let temporary = path.with_extension("json.new");
+        std::fs::write(&temporary, text).map_err(|e| format!("{}: {e}", temporary.display()))?;
+        std::fs::rename(&temporary, &path).map_err(|e| format!("{}: {e}", path.display()))
     }
 
     /// The engine's personal model, whether or not learning is on now.
@@ -224,6 +303,11 @@ impl Files {
         settings.home_row = keys.get("select_keys").and_then(Value::as_str) == Some("home_row");
         settings.start_chinese = keys.get("start_mode").and_then(Value::as_str) != Some("english");
         settings.shift_toggles = keys.get("shift_toggle").and_then(Value::as_bool) != Some(false);
+        settings.phrase_key = match keys.get("phrase_key") {
+            Some(Value::Null) => None,
+            Some(key) => Hotkey::parse(key).or(Some(DEFAULT_PHRASE_KEY)),
+            None => Some(DEFAULT_PHRASE_KEY),
+        };
         settings
     }
 
@@ -245,6 +329,7 @@ impl Files {
                 "select_keys": if settings.home_row { "home_row" } else { "digits" },
                 "start_mode": if settings.start_chinese { "chinese" } else { "english" },
                 "shift_toggle": settings.shift_toggles,
+                "phrase_key": settings.phrase_key.map_or(Value::Null, Hotkey::to_json),
             });
             std::fs::write(&keys, text.to_string()).map_err(|e| format!("{}: {e}", keys.display()))?;
         }
@@ -402,9 +487,12 @@ mod tests {
             home_row: true,
             start_chinese: false,
             shift_toggles: false,
+            phrase_key: Some(Hotkey { vk: 0x51, ctrl: true, alt: false, shift: true }),
         };
         files.save(&wanted, true).unwrap();
         assert_eq!(files.load(), wanted);
+        files.save(&Settings { phrase_key: None, ..wanted.clone() }, false).unwrap();
+        assert_eq!(files.load().phrase_key, None, "the phrase menu turned off");
         let until = files.timing_until().unwrap();
         assert!(until > now_secs() + 23 * 3600 && until <= now_secs() + 24 * 3600);
         files.save(&Settings { timing: false, ..wanted.clone() }, false).unwrap();
@@ -428,6 +516,16 @@ mod tests {
         std::fs::write(model.with_extension("tmp"), "{}").unwrap();
         assert!(files.clear_user_model().unwrap());
         assert!(!model.exists() && !model.with_extension("tmp").exists());
+
+        // Phrases: line breaks kept, empty ones dropped.
+        assert!(files.load_phrases().is_empty());
+        let phrases = [
+            Phrase { name: "簽名".into(), text: "祝好\n小明".into() },
+            Phrase { name: "空的".into(), text: String::new() },
+            Phrase { name: String::new(), text: "地址".into() },
+        ];
+        files.save_phrases(&phrases).unwrap();
+        assert_eq!(files.load_phrases(), [phrases[0].clone(), phrases[2].clone()]);
         std::fs::remove_dir_all(&folder).unwrap();
     }
 }

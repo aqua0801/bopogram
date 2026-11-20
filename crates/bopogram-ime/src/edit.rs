@@ -141,6 +141,29 @@ pub fn screen_rect_at(context: &ITfContext, cookie: u32, range: &ITfRange, units
     }
 }
 
+/// Where the caret is on the screen, if the application can tell: the
+/// selection, or the character before the caret when an empty range has no
+/// extent.
+pub fn caret_rect(context: &ITfContext, client: u32) -> Option<RECT> {
+    let found = Rc::new(Cell::new(None));
+    let out = Rc::clone(&found);
+    let document = context.clone();
+    run(context, client, TF_ES_SYNC | TF_ES_READ, move |cookie| {
+        let range = selection(&document, cookie)?;
+        let rect = screen_rect(&document, cookie, &range).or_else(|| unsafe {
+            let character = range.Clone().ok()?;
+            character.Collapse(cookie, TF_ANCHOR_START).ok()?;
+            let mut moved = 0;
+            character.ShiftStart(cookie, -1, &mut moved, std::ptr::null()).ok()?;
+            (moved != 0).then_some(())?;
+            screen_rect(&document, cookie, &character)
+        });
+        out.set(rect);
+        Ok(())
+    });
+    found.get()
+}
+
 /// The text just before the caret. `None` if the application does not let
 /// us read it; the engine then falls back on what it committed itself.
 pub fn text_before_caret(context: &ITfContext, client: u32) -> Option<String> {

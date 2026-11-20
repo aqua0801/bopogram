@@ -22,6 +22,8 @@ pub const CLSID_TEXT_SERVICE: GUID = GUID::from_u128(0xb6b6d901_0bbf_4287_a302_f
 pub const GUID_PROFILE: GUID = GUID::from_u128(0x79effb1b_3ce8_41db_9ca2_3318ec0aed82);
 /// Display attribute of the composition (the underline).
 pub const GUID_DISPLAY_ATTRIBUTE: GUID = GUID::from_u128(0x6ef85a84_f6e7_4622_b6bf_db6d3fd1bd12);
+/// The preserved key that opens the phrase menu.
+pub const GUID_PHRASE_KEY: GUID = GUID::from_u128(0x33662612_0b98_4c35_8ff1_bdd963ffbc0c);
 
 /// Name shown in the language list.
 pub const DISPLAY_NAME: &str = "Bopogram 注音（試用版）";

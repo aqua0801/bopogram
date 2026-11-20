@@ -14,6 +14,7 @@
 #![windows_subsystem = "windows"]
 
 mod files;
+mod phrases;
 
 use std::ffi::c_void;
 use std::os::windows::process::CommandExt;
@@ -33,7 +34,7 @@ use windows::Win32::UI::Controls::{
 use windows::Win32::UI::HiDpi::GetDpiForSystem;
 use windows::Win32::UI::WindowsAndMessaging::{
     AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    FindWindowW, GetDlgItem, GetMessageW, GetWindowLongPtrW, IsDialogMessageW, LoadCursorW,
+    FindWindowW, GetAncestor, GetDlgItem, GetMessageW, GetWindowLongPtrW, IsDialogMessageW, LoadCursorW, GA_ROOT,
     MessageBoxW, PostQuitMessage, RegisterClassW, SendMessageW, SetForegroundWindow, SetTimer,
     SetWindowLongPtrW, SetWindowTextW, ShowWindow, TranslateMessage, CW_USEDEFAULT,
     GWLP_USERDATA, HMENU, IDC_ARROW, IDYES, MB_DEFBUTTON2, MB_ICONINFORMATION, MB_ICONWARNING,
@@ -43,7 +44,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_CHILD, WS_GROUP, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
 
-use files::{Files, Settings, DEFAULT_FONT_PX, DEFAULT_PAGE_SIZE, FONT_SIZES, PAGE_SIZES};
+use files::{Files, Hotkey, Settings, DEFAULT_FONT_PX, DEFAULT_PAGE_SIZE, FONT_SIZES, PAGE_SIZES};
 
 const CLASS_NAME: PCWSTR = w!("BopogramSettings");
 const TITLE: &str = "Bopogram 注音設定";
@@ -80,11 +81,25 @@ const ID_HOME_ROW: i32 = 151;
 /// One per entry of `PAGE_SIZES`.
 const ID_PAGE: i32 = 160;
 const ID_CLEAR: i32 = 170;
+const ID_PHRASE_KEY: i32 = 180;
+const ID_PHRASES: i32 = 181;
 const STATUS_TIMER: usize = 1;
+
+// The hot key control (commctrl.h): a field that shows the key combination pressed in it.
+const HOTKEY_CLASS: PCWSTR = w!("msctls_hotkey32");
+const HKM_SETHOTKEY: u32 = 0x401;
+const HKM_GETHOTKEY: u32 = 0x402;
+const HKM_SETRULES: u32 = 0x403;
+const HOTKEYF_SHIFT: u32 = 0x1;
+const HOTKEYF_CONTROL: u32 = 0x2;
+const HOTKEYF_ALT: u32 = 0x4;
+const HKCOMB_NONE: usize = 0x1;
+const HKCOMB_S: usize = 0x2;
+const WS_BORDER: u32 = 0x0080_0000;
 
 /// Client area in pixels at 96 DPI: two columns.
 const WIDTH: i32 = 780;
-const HEIGHT: i32 = 384;
+const HEIGHT: i32 = 456;
 const COLUMN: i32 = 372;
 const LEFT: i32 = 12;
 const RIGHT: i32 = LEFT + COLUMN + 12;
@@ -140,9 +155,25 @@ impl Builder {
 
     #[allow(clippy::too_many_arguments)]
     fn control(&self, class: PCWSTR, text: &str, style: u32, id: i32, x: i32, y: i32, w: i32, h: i32) -> Option<HWND> {
+        self.control_ex(0, class, text, style, id, x, y, w, h)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn control_ex(
+        &self,
+        ex: u32,
+        class: PCWSTR,
+        text: &str,
+        style: u32,
+        id: i32,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    ) -> Option<HWND> {
         unsafe {
             let created = CreateWindowExW(
-                WINDOW_EX_STYLE(0),
+                WINDOW_EX_STYLE(ex),
                 class,
                 PCWSTR(wide(text).as_ptr()),
                 WS_CHILD | WS_VISIBLE | WINDOW_STYLE(style),
@@ -208,9 +239,9 @@ impl Builder {
     }
 }
 
-fn build(window: HWND, app: &App) {
-    let dpi = unsafe { GetDpiForSystem() } as i32;
-    let font = unsafe {
+/// The text of every window here.
+fn ui_font(dpi: i32) -> HFONT {
+    unsafe {
         CreateFontW(
             -(15 * dpi / 96),
             0,
@@ -227,7 +258,12 @@ fn build(window: HWND, app: &App) {
             0,
             w!("Microsoft JhengHei UI"),
         )
-    };
+    }
+}
+
+fn build(window: HWND, app: &App) {
+    let dpi = unsafe { GetDpiForSystem() } as i32;
+    let font = ui_font(dpi);
     let tooltip = unsafe {
         CreateWindowExW(
             WINDOW_EX_STYLE(0),
@@ -288,23 +324,36 @@ fn build(window: HWND, app: &App) {
     b.option("單按 Shift 切換中／英", BS_AUTOCHECKBOX, WS_GROUP.0, ID_SHIFT, r, 92);
     b.tip(ID_SHIFT, "中文模式下 Shift+空白鍵另外切換全形／半形。");
 
-    b.group("引擎", r, 138, 156);
+    b.group("快速輸入", r, 138, 100);
+    b.label("片語選單", -1, r + 14, 164, 84);
+    let key = b.control(HOTKEY_CLASS, "", WS_TABSTOP.0 | WS_BORDER, ID_PHRASE_KEY, r + 100, 160, 160, 26);
+    if let Some(key) = key {
+        // A key without Ctrl or Alt would be taken from typing: Alt is added.
+        unsafe {
+            SendMessageW(key, HKM_SETRULES, Some(WPARAM(HKCOMB_NONE | HKCOMB_S)), Some(LPARAM(HOTKEYF_ALT as isize)))
+        };
+    }
+    b.tip(ID_PHRASE_KEY, "按下想用的組合鍵（需含 Ctrl 或 Alt）；按 Backspace 清空則停用片語選單。");
+    b.button("編輯片語…", ID_PHRASES, r + 14, 198, 126);
+    b.tip(ID_PHRASES, "在任何程式按上面的組合鍵叫出片語選單，選了就插入文字（不經過剪貼簿）。");
+
+    b.group("引擎", r, 248, 156);
     let bundle = app.files.config.as_deref().and_then(Path::parent);
     let bundle = bundle.map_or("找不到（bopogram-host.json）".to_owned(), |p| p.display().to_string());
-    b.label(&format!("執行包：{bundle}"), -1, r + 14, 160, COLUMN - 28);
-    b.label("", ID_STATUS, r + 14, 186, COLUMN - 28);
-    b.option("計時紀錄", BS_AUTOCHECKBOX, WS_GROUP.0, ID_TIMING, r, 212);
+    b.label(&format!("執行包：{bundle}"), -1, r + 14, 270, COLUMN - 28);
+    b.label("", ID_STATUS, r + 14, 296, COLUMN - 28);
+    b.option("計時紀錄", BS_AUTOCHECKBOX, WS_GROUP.0, ID_TIMING, r, 322);
     b.tip(ID_TIMING, "只記每個按鍵的耗時，不記內容；24 小時後自動關閉。");
-    b.button("重新啟動引擎", ID_RESTART, r + 14, 250, 126);
+    b.button("重新啟動引擎", ID_RESTART, r + 14, 360, 126);
 
-    b.button("確定", ID_OK, WIDTH - 12 - 80 * 3 - 16, 344, 80);
-    b.button("取消", ID_CANCEL, WIDTH - 12 - 80 * 2 - 8, 344, 80);
-    b.button("套用", ID_APPLY, WIDTH - 12 - 80, 344, 80);
+    b.button("確定", ID_OK, WIDTH - 12 - 80 * 3 - 16, 416, 80);
+    b.button("取消", ID_CANCEL, WIDTH - 12 - 80 * 2 - 8, 416, 80);
+    b.button("套用", ID_APPLY, WIDTH - 12 - 80, 416, 80);
 }
 
 /// The input method's icon (`bopogram.ico` beside this program) on the
 /// window's title bar and taskbar button.
-fn set_icon(window: HWND) {
+pub(crate) fn set_icon(window: HWND) {
     let Some(path) = std::env::current_exe().ok().map(|exe| exe.with_file_name("bopogram.ico")) else {
         return;
     };
@@ -335,7 +384,41 @@ fn set_checked(window: HWND, id: i32, on: bool) {
     }
 }
 
+/// The phrase key into the hot key field (nothing: the menu is off).
+fn show_hotkey(window: HWND, key: Option<Hotkey>) {
+    let value = key.map_or(0, |key| {
+        let mut modifiers = 0;
+        if key.shift {
+            modifiers |= HOTKEYF_SHIFT;
+        }
+        if key.ctrl {
+            modifiers |= HOTKEYF_CONTROL;
+        }
+        if key.alt {
+            modifiers |= HOTKEYF_ALT;
+        }
+        key.vk | modifiers << 8
+    });
+    if let Some(control) = item(window, ID_PHRASE_KEY) {
+        unsafe { SendMessageW(control, HKM_SETHOTKEY, Some(WPARAM(value as usize)), None) };
+    }
+}
+
+fn read_hotkey(window: HWND) -> Option<Hotkey> {
+    let control = item(window, ID_PHRASE_KEY)?;
+    let value = unsafe { SendMessageW(control, HKM_GETHOTKEY, None, None) }.0 as u32;
+    let (vk, modifiers) = (value & 0xFF, (value >> 8) & 0xFF);
+    let key = Hotkey {
+        vk,
+        ctrl: modifiers & HOTKEYF_CONTROL != 0,
+        alt: modifiers & HOTKEYF_ALT != 0,
+        shift: modifiers & HOTKEYF_SHIFT != 0,
+    };
+    (vk != 0 && (key.ctrl || key.alt)).then_some(key)
+}
+
 fn show(window: HWND, settings: &Settings) {
+    show_hotkey(window, settings.phrase_key);
     set_checked(window, ID_CASUAL, !settings.formal);
     set_checked(window, ID_FORMAL, settings.formal);
     set_checked(window, ID_LEARNING, settings.learning);
@@ -377,6 +460,7 @@ fn read(window: HWND) -> Settings {
         home_row: checked(window, ID_HOME_ROW),
         start_chinese: !checked(window, ID_START_ENGLISH),
         shift_toggles: checked(window, ID_SHIFT),
+        phrase_key: read_hotkey(window),
     }
 }
 
@@ -486,6 +570,7 @@ unsafe extern "system" fn window_proc(
                 ID_FOLDER => open_folder(window, app),
                 ID_RESTART => restart_engine(window, app),
                 ID_CLEAR => clear_personal(window, app),
+                ID_PHRASES => phrases::open(window, &app.files),
                 _ => {}
             }
             LRESULT(0)
@@ -557,8 +642,11 @@ fn main() {
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-            // Tab, Enter and Escape as in a dialog box.
-            if !IsDialogMessageW(window, &msg).as_bool() {
+            // Tab, Enter and Escape as in a dialog box, in whichever of our
+            // windows the message is for.
+            let root = GetAncestor(msg.hwnd, GA_ROOT);
+            let dialog = if root.is_invalid() { window } else { root };
+            if !IsDialogMessageW(dialog, &msg).as_bool() {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }

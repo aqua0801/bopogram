@@ -10,8 +10,10 @@
 //!   application keeps its own, as Microsoft's input methods do.
 //! - `mode.txt`: the shared mode, `chinese` or `english`.
 //! - `keys.json`: selection keys, candidates per page, the mode a new
-//!   application starts in, and whether Shift alone switches the mode
-//!   (written by the settings window; see `Options`).
+//!   application starts in, whether Shift alone switches the mode, and the
+//!   phrase menu's key (written by the settings window; see `Options`).
+//! - `phrases.json`: the phrase menu (written by the settings window).
+//!   Read each time the menu opens.
 //!
 //! Processes that cannot reach the folder use the defaults.
 
@@ -19,7 +21,7 @@ use std::cell::Cell;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use crate::controller::{Options, CASUAL, FORMAL};
+use crate::controller::{parse_phrases, Options, Phrase, CASUAL, FORMAL};
 
 /// Candidate text size when nothing is set.
 pub const DEFAULT_FONT_PX: i32 = 18;
@@ -104,6 +106,13 @@ pub fn options() -> Options {
             options
         }
     })
+}
+
+/// The phrases of the phrase menu; empty if there are none.
+pub fn load_phrases() -> Vec<Phrase> {
+    folder()
+        .and_then(|f| std::fs::read_to_string(f.join("phrases.json")).ok())
+        .map_or_else(Vec::new, |text| parse_phrases(&text))
 }
 
 thread_local! {

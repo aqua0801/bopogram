@@ -81,6 +81,18 @@ $remove = "powershell -ExecutionPolicy Bypass -Command `"& '$install\uninstall.p
 [IO.File]::WriteAllText((Join-Path $desktop "update.cmd"), "@echo off`r`n$update`r`n")
 [IO.File]::WriteAllText((Join-Path $desktop "uninstall.cmd"), "@echo off`r`n$remove`r`n")
 
+# Sample phrases for the phrase menu (Alt+`): one line, several lines, and
+# a long one. Written as JSON escapes so this script stays ASCII.
+$local = Join-Path $env:LOCALAPPDATA "Bopogram"
+New-Item -ItemType Directory -Force $local | Out-Null
+$phrases = '{"phrases": [' +
+    '{"name": "", "text": "\u53f0\u5317\u5e02\u4fe1\u7fa9\u5340\u5e02\u5e9c\u8def 1 \u865f"},' +
+    '{"name": "\u7c3d\u540d", "text": "\u795d\u597d\n\u5c0f\u660e"},' +
+    '{"name": "", "text": "line 1\nline 2\nline 3"},' +
+    '{"name": "", "text": "The quick brown fox jumps over the lazy dog, twice over."}' +
+    ']}'
+[IO.File]::WriteAllText((Join-Path $local "phrases.json"), $phrases)
+
 # What Code Integrity blocked, if anything.
 try {
     $blocked = Get-WinEvent -LogName "Microsoft-Windows-CodeIntegrity/Operational" -MaxEvents 200 -ErrorAction Stop |

@@ -11,6 +11,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use windows::core::{implement, IUnknownImpl, Interface, Ref, Result, BOOL, GUID};
 use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, HWND, LPARAM, POINT, RECT, WPARAM};
@@ -28,15 +29,16 @@ use windows::Win32::UI::TextServices::{
     ITfLangBarItemButton, ITfLangBarItemMgr, ITfLangBarItemSink, ITfSource, ITfThreadFocusSink,
     ITfThreadFocusSink_Impl, ITfThreadMgr, ITfUIElement,
     ITfUIElementMgr, TF_ES_ASYNCDONTCARE, TF_ES_READWRITE, TF_LBI_ICON, TF_LBI_TEXT,
+    TF_MOD_ALT, TF_MOD_CONTROL, TF_MOD_SHIFT, TF_PRESERVEDKEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetCursorPos, GetGUIThreadInfo, GetWindowLongW, KillTimer, SetTimer,
     GUITHREADINFO, GWL_STYLE,
 };
 
-use crate::controller::{Controller, Key, CASUAL, FORMAL};
+use crate::controller::{vk, Controller, Hotkey, Insertion, Key, CASUAL, FORMAL};
 use crate::display::{AttributeEnumerator, CompositionAttribute};
-use crate::dll::{host_path, settings_path, GUID_DISPLAY_ATTRIBUTE};
+use crate::dll::{host_path, settings_path, GUID_DISPLAY_ATTRIBUTE, GUID_PHRASE_KEY};
 use crate::langbar::ModeButton;
 use crate::pipe::PipeEngine;
 use crate::popup::{Event, Handler, Popup};
@@ -76,6 +78,15 @@ pub(crate) struct State {
     /// What we committed lately, per document (most recent last), for
     /// documents whose text cannot be read: the engine gets it as context.
     recent: Vec<(usize, String)>,
+    /// The phrase key as registered with TSF, if it is.
+    preserved: Option<Hotkey>,
+    /// When the phrase key last arrived (held keys repeat; see `phrase_key`).
+    phrase_key_at: Option<Instant>,
+    /// The phrase key had Alt in it: its release is eaten, or the
+    /// application would take Alt pressed alone and open its menu bar.
+    eat_alt_up: bool,
+    /// Where the caret was when the phrase menu opened.
+    menu_anchor: Option<RECT>,
 }
 
 /// Documents remembered in `State::recent`, and characters kept for each.
@@ -343,6 +354,9 @@ pub(crate) fn pick_candidate(state: &Shared, index: usize) {
     if let Some(context) = document_context(state) {
         refresh(state, &context, outcome.commit, None);
     }
+    if let Some(notice) = outcome.notice {
+        tip(state, notice);
+    }
 }
 
 pub(crate) fn close_candidates(state: &Shared) {
@@ -431,6 +445,8 @@ fn draw_candidates(state: &Shared) {
         let shown = s.candidate_ui.as_ref().is_none_or(|ui| ui.shown);
         let labels = s.controller.as_ref().map(|c| c.labels()).unwrap_or_default();
         let page = s.controller.as_ref().and_then(|c| c.candidate_page());
+        let menu = s.controller.as_ref().is_some_and(|c| c.menu_open());
+        let anchor = if menu { s.menu_anchor.or(s.anchor) } else { s.anchor };
         let Some(popup) = &s.popup else { return };
         match page {
             Some((items, selected, page, pages)) if shown => popup.show(
@@ -439,7 +455,7 @@ fn draw_candidates(state: &Shared) {
                 selected,
                 page,
                 pages,
-                s.anchor.unwrap_or_else(fallback_anchor),
+                anchor.unwrap_or_else(fallback_anchor),
             ),
             _ => popup.hide(),
         }
@@ -569,19 +585,145 @@ fn key_from(wparam: WPARAM) -> Key {
     }
 }
 
-/// Is the focused window a classic edit control in password mode?
-fn password_window() -> bool {
+/// The window class of the focused window, upper case; empty if none.
+fn focused_class() -> String {
     unsafe {
         let window = GetFocus();
         if window.is_invalid() {
-            return false;
+            return String::new();
         }
         let mut class = [0u16; 64];
         let len = GetClassNameW(window, &mut class) as usize;
-        let class = String::from_utf16_lossy(&class[..len]).to_ascii_uppercase();
-        (class == "EDIT" || class.contains("RICHEDIT"))
-            && GetWindowLongW(window, GWL_STYLE) & ES_PASSWORD != 0
+        String::from_utf16_lossy(&class[..len]).to_ascii_uppercase()
     }
+}
+
+/// Is the focused window a classic edit control in password mode?
+fn password_window() -> bool {
+    let class = focused_class();
+    (class == "EDIT" || class.contains("RICHEDIT"))
+        && unsafe { GetWindowLongW(GetFocus(), GWL_STYLE) } & ES_PASSWORD != 0
+}
+
+/// Programs that pass typed text to a shell, where a line break is Enter.
+const TERMINALS: &[&str] = &[
+    "windowsterminal.exe",
+    "openconsole.exe",
+    "conhost.exe",
+    "cmd.exe",
+    "powershell.exe",
+    "pwsh.exe",
+    "wezterm-gui.exe",
+    "alacritty.exe",
+    "mintty.exe",
+    "putty.exe",
+    "kitty.exe",
+    "tabby.exe",
+    "hyper.exe",
+];
+
+/// How this document takes a phrase. Browsers and Electron applications
+/// use bare line feeds; Windows controls want CR LF.
+fn insertion() -> Insertion {
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.file_name().map(|name| name.to_string_lossy().to_ascii_lowercase()))
+        .unwrap_or_default();
+    let class = focused_class();
+    let browser = class == "CHROME_RENDERWIDGETHOSTHWND" || class == "MOZILLAWINDOWCLASS";
+    Insertion {
+        newline: if browser { "\n" } else { "\r\n" },
+        multiline: !TERMINALS.contains(&exe.as_str()),
+    }
+}
+
+/// The phrase key as TSF takes it.
+fn preserved_key(key: Hotkey) -> TF_PRESERVEDKEY {
+    let mut modifiers = 0;
+    if key.alt {
+        modifiers |= TF_MOD_ALT;
+    }
+    if key.ctrl {
+        modifiers |= TF_MOD_CONTROL;
+    }
+    if key.shift {
+        modifiers |= TF_MOD_SHIFT;
+    }
+    TF_PRESERVEDKEY { uVKey: key.vk, uModifiers: modifiers }
+}
+
+/// Register the phrase key the settings name (or none), replacing the one
+/// registered before. Checked when the application gets the focus.
+fn sync_hotkey(state: &Shared) {
+    let wanted = settings::options().phrase_key;
+    let Some((thread_mgr, client, current)) = with(state, |s| (s.thread_mgr.clone(), s.client, s.preserved))
+    else {
+        return;
+    };
+    if wanted == current {
+        return;
+    }
+    let Some(keystrokes) = thread_mgr.and_then(|t| t.cast::<ITfKeystrokeMgr>().ok()) else {
+        return;
+    };
+    let mut registered = None;
+    unsafe {
+        if let Some(old) = current {
+            let _ = keystrokes.UnpreserveKey(&GUID_PHRASE_KEY, &preserved_key(old));
+        }
+        if let Some(key) = wanted {
+            let description: Vec<u16> = "片語選單".encode_utf16().collect();
+            if keystrokes.PreserveKey(client, &GUID_PHRASE_KEY, &preserved_key(key), &description).is_ok() {
+                registered = Some(key);
+            }
+        }
+    }
+    with(state, |s| s.preserved = registered);
+}
+
+/// A held key arrives again and again; this long between two arrivals
+/// makes them separate presses.
+const PHRASE_KEY_REPEAT: Duration = Duration::from_millis(150);
+
+/// The phrase key: open the menu, or close it if it is open. True if the
+/// key is ours (it is not in a password field).
+fn phrase_key(state: &Shared, context: &ITfContext) -> bool {
+    let now = Instant::now();
+    let Some(last) = with(state, |s| s.phrase_key_at.replace(now)) else {
+        return false;
+    };
+    if last.is_some_and(|at| now.duration_since(at) < PHRASE_KEY_REPEAT) {
+        return true;
+    }
+    if with_controller(state, |c| c.close_menu()).unwrap_or(false) {
+        refresh_candidates(state);
+        return true;
+    }
+    let enabled = with_controller(state, |c| c.enabled()).unwrap_or(false);
+    if !enabled {
+        return false;
+    }
+    let phrases = settings::load_phrases();
+    if phrases.is_empty() {
+        tip(state, "還沒有片語：在設定的「快速輸入」新增");
+        return true;
+    }
+    let Some(client) = with(state, |s| s.client) else {
+        return false;
+    };
+    let before = edit::caret_rect(context, client);
+    with(state, |s| s.menu_anchor = before);
+    let Some(outcome) = with_controller(state, |c| c.open_menu(phrases, insertion())) else {
+        return false;
+    };
+    if outcome.commit.is_some() {
+        // The composition went into the document; the caret moved with it.
+        refresh(state, context, outcome.commit, None);
+        let after = edit::caret_rect(context, client);
+        with(state, |s| s.menu_anchor = after.or(before));
+    }
+    refresh_candidates(state);
+    outcome.eaten
 }
 
 /// Somewhere near the caret, for when the application cannot say where the
@@ -741,6 +883,9 @@ impl TextService_Impl {
         }
         refresh(&self.state, context, outcome.commit, Some(timing));
         retry_later(&self.state);
+        if let Some(notice) = outcome.notice {
+            tip(&self.state, notice);
+        }
         if outcome.width_changed {
             let full = with_controller(&self.state, |c| c.full_width()).unwrap_or(false);
             tip(&self.state, if full { "全形" } else { "半形" });
@@ -754,23 +899,34 @@ impl TextService_Impl {
         outcome.eaten
     }
 
-    /// Shift on its own switches between Chinese and English.
-    fn key_up(&self, context: &ITfContext, wparam: WPARAM) {
+    /// Shift on its own switches between Chinese and English. True for the
+    /// one release that is eaten: Alt after the phrase key. TSF first asks
+    /// (`test`), then delivers; the answer must be the same both times.
+    fn key_up(&self, context: &ITfContext, wparam: WPARAM, test: bool) -> bool {
         let key = key_from(wparam);
+        if matches!(key.vk, vk::MENU | 0xA4 | vk::RMENU) {
+            let eat = with(&self.state, |s| {
+                if test { s.eat_alt_up } else { std::mem::take(&mut s.eat_alt_up) }
+            });
+            if eat.unwrap_or(false) {
+                return true;
+            }
+        }
         let Some((outcome, toggled, chinese)) = with_controller(&self.state, |c| {
             let before = c.chinese();
             let outcome = c.key_up(key);
             (outcome, before != c.chinese(), c.chinese())
         }) else {
-            return;
+            return false;
         };
         if !toggled {
-            return;
+            return false;
         }
         mode_switched(chinese);
         refresh(&self.state, context, outcome.commit, None);
         tip(&self.state, if chinese { "中" } else { "英" });
         button_changed(&self.state);
+        false
     }
 }
 
@@ -784,12 +940,15 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
             // The candidate list must not outlive the text service.
             with_controller(&self.state, |c| c.close_candidates());
             refresh_candidates(&self.state);
-            let (thread_mgr, client, button, focus_cookie) = with(&self.state, |s| {
-                (s.thread_mgr.take(), s.client, s.button.take(), s.focus_cookie.take())
+            let (thread_mgr, client, button, focus_cookie, preserved) = with(&self.state, |s| {
+                (s.thread_mgr.take(), s.client, s.button.take(), s.focus_cookie.take(), s.preserved.take())
             })
             .unwrap_or_default();
             if let Some(thread_mgr) = thread_mgr {
                 unsafe {
+                    if let (Some(key), Ok(keystrokes)) = (preserved, thread_mgr.cast::<ITfKeystrokeMgr>()) {
+                        let _ = keystrokes.UnpreserveKey(&GUID_PHRASE_KEY, &preserved_key(key));
+                    }
                     if let (Some(cookie), Ok(source)) = (focus_cookie, thread_mgr.cast::<ITfSource>()) {
                         let _ = source.UnadviseSink(cookie);
                     }
@@ -871,6 +1030,7 @@ impl ITfTextInputProcessorEx_Impl for TextService_Impl {
                 }
             }
             adopt_shared_mode(&self.state);
+            sync_hotkey(&self.state);
             button_changed(&self.state);
             Ok(())
         })
@@ -905,6 +1065,7 @@ fn focus_gained(state: &Shared) {
         with_controller(state, |c| c.want_style(&style));
     }
     adopt_shared_mode(state);
+    sync_hotkey(state);
     button_changed(state);
     button_changed_later(state);
 }
@@ -934,12 +1095,17 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             self.refresh_enabled(context);
             timing.step("password");
             let options = settings::options();
-            let eaten = with_controller(&self.state, |c| {
+            let tested = with_controller(&self.state, |c| {
                 c.set_options(options);
                 c.note_key_down(key);
-                c.test_key(key)
+                let eaten = c.test_key(key);
+                // A key that goes to the application closes the phrase menu.
+                (eaten, !eaten && c.dismiss_menu(key))
             });
-            let eaten = eaten.unwrap_or(false);
+            let (eaten, dismissed) = tested.unwrap_or_default();
+            if dismissed {
+                refresh_candidates(&self.state);
+            }
             // Keys the input method leaves alone are not worth a line.
             if eaten {
                 timing.finish();
@@ -961,24 +1127,40 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
     // and acting on it here keeps the application's view of Shift intact.
     fn OnTestKeyUp(&self, context: Ref<ITfContext>, wparam: WPARAM, _: LPARAM) -> Result<BOOL> {
         guard(Ok(false.into()), || {
-            if let Some(context) = context.as_ref().filter(|_| !crate::broken()) {
-                self.key_up(context, wparam);
-            }
-            Ok(false.into())
+            let eaten = match context.as_ref().filter(|_| !crate::broken()) {
+                Some(context) => self.key_up(context, wparam, true),
+                None => false,
+            };
+            Ok(eaten.into())
         })
     }
 
     fn OnKeyUp(&self, context: Ref<ITfContext>, wparam: WPARAM, _: LPARAM) -> Result<BOOL> {
         guard(Ok(false.into()), || {
-            if let Some(context) = context.as_ref().filter(|_| !crate::broken()) {
-                self.key_up(context, wparam);
-            }
-            Ok(false.into())
+            let eaten = match context.as_ref().filter(|_| !crate::broken()) {
+                Some(context) => self.key_up(context, wparam, false),
+                None => false,
+            };
+            Ok(eaten.into())
         })
     }
 
-    fn OnPreservedKey(&self, _: Ref<ITfContext>, _: *const GUID) -> Result<BOOL> {
-        Ok(false.into())
+    fn OnPreservedKey(&self, context: Ref<ITfContext>, guid: *const GUID) -> Result<BOOL> {
+        guard(Ok(false.into()), || {
+            let Some(context) = context.as_ref().filter(|_| !crate::broken()) else {
+                return Ok(false.into());
+            };
+            if guid.is_null() || unsafe { *guid } != GUID_PHRASE_KEY {
+                return Ok(false.into());
+            }
+            self.refresh_enabled(context);
+            let eaten = phrase_key(&self.state, context);
+            if eaten {
+                let alt = with(&self.state, |s| s.preserved.is_some_and(|key| key.alt)).unwrap_or(false);
+                with(&self.state, |s| s.eat_alt_up = alt);
+            }
+            Ok(eaten.into())
+        })
     }
 }
 
