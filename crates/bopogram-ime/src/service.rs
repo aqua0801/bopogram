@@ -18,9 +18,7 @@ use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, HWND, LPARAM, POINT, RECT
 use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetFocus, GetKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
-    KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MapVirtualKeyW, MAPVK_VK_TO_VSC,
-    VIRTUAL_KEY, VK_CAPITAL, VK_CONTROL, VK_LSHIFT, VK_MENU, VK_SHIFT,
+    GetFocus, GetKeyState, VK_CAPITAL, VK_CONTROL, VK_MENU, VK_SHIFT,
 };
 use windows::Win32::UI::TextServices::{
     CLSID_TF_CategoryMgr, IEnumTfDisplayAttributeInfo, ITfCategoryMgr, ITfComposition,
@@ -359,41 +357,6 @@ pub(crate) fn pick_candidate(state: &Shared, index: usize) {
     if let Some(notice) = outcome.notice {
         tip(state, notice);
     }
-    if let Some(text) = outcome.keystrokes {
-        type_text(&text);
-    }
-}
-
-/// Type `text` as keystrokes queued behind the key being handled: each
-/// character as itself (VK_PACKET, which the controller passes), each line
-/// break as CR with Shift held (Shift+Enter: a new line in chat boxes).
-fn type_text(text: &str) {
-    let key = |vk: VIRTUAL_KEY, scan: u16, flags: KEYBD_EVENT_FLAGS| INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT { wVk: vk, wScan: scan, dwFlags: flags, time: 0, dwExtraInfo: 0 },
-        },
-    };
-    // A line break is the character CR typed with Shift held. A virtual
-    // Enter key reached Chromium as keydown (shift=true) but its character
-    // never came, so no line was broken; characters typed this way arrive.
-    let shift = unsafe { MapVirtualKeyW(VK_LSHIFT.0 as u32, MAPVK_VK_TO_VSC) } as u16;
-    let mut inputs = Vec::new();
-    for (index, line) in text.split('\n').enumerate() {
-        if index > 0 {
-            inputs.push(key(VK_LSHIFT, shift, KEYBD_EVENT_FLAGS(0)));
-            inputs.push(key(VIRTUAL_KEY(0), 0x0D, KEYEVENTF_UNICODE));
-            inputs.push(key(VIRTUAL_KEY(0), 0x0D, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
-            inputs.push(key(VK_LSHIFT, shift, KEYEVENTF_KEYUP));
-        }
-        for unit in line.encode_utf16() {
-            inputs.push(key(VIRTUAL_KEY(0), unit, KEYEVENTF_UNICODE));
-            inputs.push(key(VIRTUAL_KEY(0), unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
-        }
-    }
-    unsafe {
-        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
-    }
 }
 
 pub(crate) fn close_candidates(state: &Shared) {
@@ -660,7 +623,9 @@ const TERMINALS: &[&str] = &[
 ];
 
 /// How this document takes a phrase. Browsers and Electron applications
-/// use bare line feeds; Windows controls want CR LF.
+/// use bare line feeds; Windows controls want CR LF. (Chromium turns an
+/// inserted CR LF into LF, its text no longer matches what TSF inserted,
+/// and the last line stays behind as a doubled, open composition.)
 fn insertion() -> Insertion {
     let exe = std::env::current_exe()
         .ok()
@@ -675,7 +640,6 @@ fn insertion() -> Insertion {
     Insertion {
         newline: if browser { "\n" } else { "\r\n" },
         multiline: !TERMINALS.contains(&exe.as_str()),
-        keystrokes: browser,
     }
 }
 
@@ -940,9 +904,6 @@ impl TextService_Impl {
         retry_later(&self.state);
         if let Some(notice) = outcome.notice {
             tip(&self.state, notice);
-        }
-        if let Some(text) = outcome.keystrokes {
-            type_text(&text);
         }
         if outcome.width_changed {
             let full = with_controller(&self.state, |c| c.full_width()).unwrap_or(false);

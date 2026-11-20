@@ -122,11 +122,6 @@ pub struct Insertion {
     /// False where a line break may act as Enter (terminals): phrases with
     /// more than one line are refused there.
     pub multiline: bool,
-    /// True where text with line breaks must be typed rather than inserted
-    /// (browsers and Electron: an inserted line break left the last line
-    /// stuck as an open composition, sometimes doubled). The text then goes
-    /// in as keystrokes, each line break as CR with Shift held.
-    pub keystrokes: bool,
 }
 
 /// Said when a phrase with several lines is refused.
@@ -268,9 +263,6 @@ pub struct Outcome {
     pub width_changed: bool,
     /// Something to tell the user near the caret.
     pub notice: Option<&'static str>,
-    /// Text to type as keystrokes (`\n` meaning Shift+Enter), after
-    /// everything else.
-    pub keystrokes: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -688,10 +680,6 @@ impl<E: Engine> Controller<E> {
         };
         if phrase.text.contains('\n') && !menu.insertion.multiline {
             outcome.notice = Some(MULTILINE_REFUSED);
-            return outcome;
-        }
-        if phrase.text.contains('\n') && menu.insertion.keystrokes {
-            outcome.keystrokes = Some(phrase.text.clone());
             return outcome;
         }
         outcome.commit = Some(phrase.text.replace('\n', menu.insertion.newline)).filter(|t| !t.is_empty());
@@ -1936,7 +1924,7 @@ mod tests {
         )
     }
 
-    const EVERYWHERE: Insertion = Insertion { newline: "\r\n", multiline: true, keystrokes: false };
+    const EVERYWHERE: Insertion = Insertion { newline: "\r\n", multiline: true };
 
     #[test]
     fn phrase_file_and_labels() {
@@ -2002,7 +1990,7 @@ mod tests {
     fn phrase_menu_in_english_mode_and_terminals() {
         let mut c = Controller::new(Fake::default());
         c.toggle_chinese();
-        let terminal = Insertion { newline: "\r\n", multiline: false, keystrokes: false };
+        let terminal = Insertion { newline: "\r\n", multiline: false };
         c.open_menu(phrases(), terminal);
         assert!(c.test_key(key('1')), "the menu works in English mode too");
         let refused = c.key_down(key('3'));
@@ -2011,14 +1999,9 @@ mod tests {
         c.open_menu(phrases(), terminal);
         assert_eq!(c.key_down(key('1')), eaten(Some("地址：台北市")), "one line is fine");
 
-        // Browsers: several lines are typed, one line is inserted.
-        let browser = Insertion { newline: "\n", multiline: true, keystrokes: true };
-        c.open_menu(phrases(), browser);
-        let typed = c.key_down(key('3'));
-        assert!(typed.eaten && typed.commit.is_none());
-        assert_eq!(typed.keystrokes.as_deref(), Some("第一行\n第二行"));
-        c.open_menu(phrases(), browser);
-        assert_eq!(c.key_down(key('1')), eaten(Some("地址：台北市")));
+        // Browsers take bare line feeds.
+        c.open_menu(phrases(), Insertion { newline: "\n", multiline: true });
+        assert_eq!(c.key_down(key('3')), eaten(Some("第一行\n第二行")));
 
         // Not in a password field, and not with nothing to show.
         c.set_enabled(false);
