@@ -19,8 +19,8 @@ use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetFocus, GetKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
-    KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_CAPITAL, VK_CONTROL,
-    VK_MENU, VK_RETURN, VK_SHIFT,
+    KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MapVirtualKeyW, MAPVK_VK_TO_VSC,
+    VIRTUAL_KEY, VK_CAPITAL, VK_CONTROL, VK_LSHIFT, VK_MENU, VK_RETURN, VK_SHIFT,
 };
 use windows::Win32::UI::TextServices::{
     CLSID_TF_CategoryMgr, IEnumTfDisplayAttributeInfo, ITfCategoryMgr, ITfComposition,
@@ -374,13 +374,17 @@ fn type_text(text: &str) {
             ki: KEYBDINPUT { wVk: vk, wScan: scan, dwFlags: flags, time: 0, dwExtraInfo: 0 },
         },
     };
+    // Real scan codes: Chromium takes KeyboardEvent.code from them, and a
+    // web page may look at that rather than at the virtual key.
+    let scan = |vk: VIRTUAL_KEY| unsafe { MapVirtualKeyW(vk.0 as u32, MAPVK_VK_TO_VSC) } as u16;
+    let (shift, enter) = (scan(VK_LSHIFT), scan(VK_RETURN));
     let mut inputs = Vec::new();
     for (index, line) in text.split('\n').enumerate() {
         if index > 0 {
-            inputs.push(key(VK_SHIFT, 0, KEYBD_EVENT_FLAGS(0)));
-            inputs.push(key(VK_RETURN, 0, KEYBD_EVENT_FLAGS(0)));
-            inputs.push(key(VK_RETURN, 0, KEYEVENTF_KEYUP));
-            inputs.push(key(VK_SHIFT, 0, KEYEVENTF_KEYUP));
+            inputs.push(key(VK_LSHIFT, shift, KEYBD_EVENT_FLAGS(0)));
+            inputs.push(key(VK_RETURN, enter, KEYBD_EVENT_FLAGS(0)));
+            inputs.push(key(VK_RETURN, enter, KEYEVENTF_KEYUP));
+            inputs.push(key(VK_LSHIFT, shift, KEYEVENTF_KEYUP));
         }
         for unit in line.encode_utf16() {
             inputs.push(key(VIRTUAL_KEY(0), unit, KEYEVENTF_UNICODE));

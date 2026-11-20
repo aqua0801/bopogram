@@ -11,6 +11,11 @@
 //! next to the executable: {"python": "...", "config": "..."}. An optional
 //! "trace" there (or --trace <file>) makes the engine log every request and
 //! response to that file, for debugging; it records everything typed.
+//!
+//! A GUI-subsystem program, so that starting it (at sign-in, after install)
+//! opens no console window. `--client` therefore reads requests from a pipe
+//! or file, not from a console: `Get-Content requests.txt | bopogram-host --client`.
+#![windows_subsystem = "windows"]
 
 mod client;
 mod engine;
