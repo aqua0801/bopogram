@@ -77,7 +77,15 @@ class Session:
         if rescore is not None:
             rescore(self.decoder, self.context)
 
+    def _sync(self) -> None:
+        """If the user's dictionary changed, decode the buffer again with it. Called
+        before anything that changes or commits the buffer, so that a change shows on
+        the next key and never moves the text under the user's eyes."""
+        if self.decoder.refresh():
+            self._rescore()
+
     def _insert(self, item: str) -> None:
+        self._sync()
         self.decoder.insert(self.cursor, item)
         self.cursor += 1
         self._rescore()
@@ -128,6 +136,7 @@ class Session:
         elif self.initial:
             self.initial = ""
         elif self.cursor > 0:
+            self._sync()
             self.decoder.delete(self.cursor - 1)
             self.cursor -= 1
             self._rescore()
@@ -135,6 +144,7 @@ class Session:
     def delete(self) -> None:
         """Remove the item after the cursor (the Delete key)."""
         if not self.pending and self.cursor < self._size:
+            self._sync()
             self.decoder.delete(self.cursor)
             self._rescore()
 
@@ -198,12 +208,16 @@ class Session:
         if is_literal(syls[start]):  # a symbol can be changed to a related symbol
             return [{"word": alt, "start": start, "length": 1} for alt in alternatives(syls[start][1:])]
         out, seen = [], set()
+        lexicon, unigram = self.engine.lexicon, self.engine.lm.unigram
         for length in range(min(MAX_WORD_LEN, len(syls) - start), 0, -1):
-            words = self.engine.lexicon.candidates(tuple(syls[start:start + length]))
-            rank = self.engine.lm.unigram
+            key = tuple(syls[start:start + length])
+            words = lexicon.candidates(key)
             if length == 1:  # single characters: frequent under THIS reading first
-                lexicon, syl = self.engine.lexicon, syls[start]
-                rank = lambda w: self.engine.lm.unigram(w) + lexicon.reading_logp(w, syl)
+                score = lambda w: unigram(w) + lexicon.reading_logp(w, key[0])
+            else:
+                score = unigram
+            # The user's own words come first.
+            rank = lambda w: (lexicon.is_user(w, key), score(w))
             for word in sorted(words, key=rank, reverse=True):
                 if word not in seen:
                     seen.add(word)
@@ -215,6 +229,7 @@ class Session:
         cands = self.candidates()
         if not 0 <= index < len(cands):
             return False
+        self._sync()
         c = cands[index]
         if is_literal(self.decoder.syllables[c["start"]]):
             self.decoder.delete(c["start"])
@@ -231,6 +246,7 @@ class Session:
     def cycle(self, delta: int = 1) -> bool:
         """Change the word at the cursor to its next (or previous) candidate of the
         same length, without opening the candidate list."""
+        self._sync()
         span = self._span_at_cursor()
         if span is None:
             return False
@@ -269,7 +285,8 @@ class Session:
                 continue
             last = (a, b)
             word = "".join(t for t, _, _ in items[a:b])
-            if b > count or is_literal(buf[a]) or (b - a == 1 and len(text) > 1) or word not in self.engine.lexicon:
+            if (b > count or is_literal(buf[a]) or (b - a == 1 and len(text) > 1)
+                    or word not in self.engine.lexicon or self.engine.lexicon.blocked(word, buf[a:b])):
                 flush()
                 continue
             run.append(word)
@@ -318,6 +335,7 @@ class Session:
 
     def commit(self) -> str:
         """Finish the composition and return its text (a syllable in progress is dropped)."""
+        self._sync()
         text = "".join(self._segments())
         if text:
             self._learn(self._size)

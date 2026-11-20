@@ -51,6 +51,20 @@ class UserModel:
             return 0.0
         return self.weight * (math.log1p(b) + 0.3 * math.log1p(u))
 
+    def forget(self, text: str) -> int:
+        """Drop every word and word pair whose text contains `text` (used when the user
+        removes or excludes it). Returns how many entries went; the file is saved."""
+        drop_u = [w for w in self.unigrams if text in w]
+        drop_b = [k for k in self.bigrams if text in k.replace("\t", "")]
+        for w in drop_u:
+            del self.unigrams[w]
+        for k in drop_b:
+            del self.bigrams[k]
+        if drop_u or drop_b:
+            self._dirty = True
+            self.save(force=True)
+        return len(drop_u) + len(drop_b)
+
     def save(self, force: bool = False) -> None:
         """Write the file, at most once every SAVE_INTERVAL seconds unless `force`:
         rewriting it on every commit would make each commit slower as it grows."""
