@@ -663,7 +663,11 @@ fn insertion() -> Insertion {
         .and_then(|path| path.file_name().map(|name| name.to_string_lossy().to_ascii_lowercase()))
         .unwrap_or_default();
     let class = focused_class();
-    let browser = class == "CHROME_RENDERWIDGETHOSTHWND" || class == "MOZILLAWINDOWCLASS";
+    // Chromium focuses Chrome_RenderWidgetHostHWND in some versions and its
+    // top-level Chrome_WidgetWin_N in others (Discord, Edge, VS Code).
+    let browser = class == "CHROME_RENDERWIDGETHOSTHWND"
+        || class.starts_with("CHROME_WIDGETWIN")
+        || class == "MOZILLAWINDOWCLASS";
     Insertion {
         newline: if browser { "\n" } else { "\r\n" },
         multiline: !TERMINALS.contains(&exe.as_str()),
