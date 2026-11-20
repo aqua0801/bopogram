@@ -70,8 +70,8 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 5. 安裝時若用了 `-Trace`，刪除該紀錄檔（它記錄了所有打的字）。
 6. 刪除 `%LOCALAPPDATA%\Bopogram\`：設定（`keys.json`、`style.txt` 等）、`host.log`（只記啟動與錯誤）、
    計時紀錄。加 `-KeepSettings` 可保留。
-7. 加 `-RemovePersonalData` 時，刪除引擎 `config.json` 指定的個人化資料（`user.json`）與打字紀錄
-   （`typing_log.jsonl`）。預設保留。
+7. 加 `-RemovePersonalData` 時，刪除引擎 `config.json` 指定的個人化資料（`user.json`）、打字紀錄
+   （`typing_log.jsonl`）與使用者詞庫（`userdict.tsv`、`excluded.tsv`）。預設保留。
 8. 最後檢查登錄中是否還有本輸入法的 CLSID，有就列出來。
 
 預設不刪的只有執行包（`D:\bopogram-data\bopogram-runtime\`，含個人化資料）與引擎程式（repo）。
