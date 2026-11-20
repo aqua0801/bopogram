@@ -276,7 +276,7 @@ class SessionTest(unittest.TestCase):
 
     def test_learning_can_be_switched_off(self):
         with tempfile.TemporaryDirectory() as d:
-            user = UserModel(Path(d) / "user.json")
+            user = UserModel(Path(d) / "user.json", accepted_step=1)
             s = make_session(user)
             s.learn = False
             type_keys(s, "ji3")
@@ -296,10 +296,16 @@ class SessionTest(unittest.TestCase):
     def test_user_model_changes_ranking(self):
         user = UserModel()
         for _ in range(5):
-            user.learn(["我", "再", "加"], corrected=True)
+            user.learn(["我", "再", "加"], {0, 1, 2})
         s = make_session(user)
         type_keys(s, "ji3y94ru8 ")
         self.assertEqual(s.preedit(), "我再加")
+
+    def test_by_default_only_corrections_are_learned(self):
+        user = UserModel()
+        user.learn(["我", "在", "家"], {1})
+        self.assertEqual(user.unigrams, {"在": 3})
+        self.assertEqual(user.bigrams, {"我\t在": 3, "在\t家": 3})
 
 
 class RerankTest(unittest.TestCase):

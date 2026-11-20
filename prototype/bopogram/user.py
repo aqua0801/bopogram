@@ -19,9 +19,18 @@ SAVE_INTERVAL = 30.0
 
 
 class UserModel:
-    def __init__(self, path: str | Path | None = None, weight: float = 1.0):
+    def __init__(self, path: str | Path | None = None, weight: float = 2.0,
+                 unigram_weight: float = 0.3, correction_step: int = 3, accepted_step: int = 0):
         self.path = Path(path) if path else None
         self.weight = weight
+        self.unigram_weight = unigram_weight    # share of the word count in the bonus
+        self.correction_step = correction_step  # a word picked by hand counts this many times
+        # A word taken as the engine chose it. 0 by default: learning accepted text only
+        # reinforces what the models already prefer and makes the bonus favour cutting a
+        # sentence into many familiar words. Over the dev set (eval/tools/simulate_learning.py)
+        # learning everything lowered first-try accuracy 90.3% -> 89.9%; learning only
+        # corrections raised it to 90.5% and a second pass over the same text to 96.0%.
+        self.accepted_step = accepted_step
         self.unigrams: dict[str, int] = {}
         self.bigrams: dict[str, int] = {}
         self._saved_at = 0.0
@@ -31,16 +40,21 @@ class UserModel:
             self.unigrams = data.get("unigrams", {})
             self.bigrams = data.get("bigrams", {})
 
-    def learn(self, words: list[str], corrected: bool = False) -> None:
-        """Record a committed word sequence. A manual correction counts more."""
-        step = 3 if corrected else 1
-        self._dirty = True
+    def learn(self, words: list[str], picked: set[int] | frozenset = frozenset()) -> None:
+        """Record a committed word sequence; `picked` are the indices of the words the
+        user chose by hand. A pair counts as a correction when either word was picked."""
         prev = None
-        for w in words:
-            self.unigrams[w] = self.unigrams.get(w, 0) + step
+        for k, w in enumerate(words):
+            step = self.correction_step if k in picked else self.accepted_step
+            if step:
+                self.unigrams[w] = self.unigrams.get(w, 0) + step
+                self._dirty = True
             if prev is not None:
-                key = prev + "\t" + w
-                self.bigrams[key] = self.bigrams.get(key, 0) + step
+                pstep = self.correction_step if (k in picked or k - 1 in picked) else self.accepted_step
+                if pstep:
+                    key = prev + "\t" + w
+                    self.bigrams[key] = self.bigrams.get(key, 0) + pstep
+                    self._dirty = True
             prev = w
 
     def bonus(self, prev: str | None, word: str) -> float:
@@ -49,7 +63,7 @@ class UserModel:
         u = self.unigrams.get(word, 0)
         if not b and not u:
             return 0.0
-        return self.weight * (math.log1p(b) + 0.3 * math.log1p(u))
+        return self.weight * (math.log1p(b) + self.unigram_weight * math.log1p(u))
 
     def forget(self, text: str) -> int:
         """Drop every word and word pair whose text contains `text` (used when the user

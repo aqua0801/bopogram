@@ -273,9 +273,7 @@ class Session:
 
         def flush() -> None:
             if run:
-                user.learn(list(run), corrected=False)
-                for word in picked:
-                    user.learn([word], corrected=True)
+                user.learn(list(run), set(picked))
             run.clear()
             picked.clear()
 
@@ -291,7 +289,7 @@ class Session:
                 continue
             run.append(word)
             if (a, b) in self.decoder.pinned:
-                picked.append(word)
+                picked.append(len(run) - 1)
         flush()
         user.save()
 
