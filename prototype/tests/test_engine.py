@@ -156,6 +156,16 @@ class SessionTest(unittest.TestCase):
         type_keys(s, "d04")                  # later typing must not undo the choice
         self.assertEqual(s.preedit()[:2], "我再")
 
+    def test_a_pick_fixes_characters_not_word_ends(self):
+        d = make_session().decoder
+        d.pinned = {(1, 2): "在"}
+        self.assertTrue(d._allowed(1, 3, "在家"))     # covers the pick with the same text
+        self.assertFalse(d._allowed(1, 3, "再加"))
+        self.assertTrue(d._allowed(2, 3, "家"))
+        d.pinned = {(1, 3): "在家"}
+        self.assertFalse(d._allowed(1, 2, "在"))      # may not cut through a pick
+        self.assertFalse(d._allowed(0, 2, "我在"))
+
     def test_candidates_start_at_the_cursor_inside_a_word(self):
         s = make_session()
         type_keys(s, "ji3d04d04")            # 我看看; 看看 is one word

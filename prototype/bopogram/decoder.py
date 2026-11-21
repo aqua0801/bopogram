@@ -182,11 +182,13 @@ class Decoder:
         return ""
 
     def _allowed(self, i: int, j: int, word: str) -> bool:
-        """An edge may not cut through a pinned span, and must equal it if it covers it."""
+        """An edge may not cut through a pinned span. It may cover one if it has the
+        picked text there: a pick fixes the characters, not where the words end, so
+        picking 在 in 我再家 still allows the word 在家."""
         for (a, b), fixed in self.pinned.items():
             if j <= a or i >= b:
                 continue
-            if (i, j) != (a, b) or word != fixed:
+            if i > a or j < b or word[a - i:b - i] != fixed:
                 return False
         return True
 

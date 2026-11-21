@@ -288,7 +288,7 @@ class Session:
                 flush()
                 continue
             run.append(word)
-            if (a, b) in self.decoder.pinned:
+            if any(a <= p < q <= b for p, q in self.decoder.pinned):  # the word holds a pick
                 picked.append(len(run) - 1)
         flush()
         user.save()
