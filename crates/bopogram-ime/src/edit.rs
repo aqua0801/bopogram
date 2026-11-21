@@ -186,19 +186,21 @@ pub fn text_before_caret(context: &ITfContext, client: u32) -> Option<String> {
 
 /// Has the application switched keyboard input methods off for this context?
 /// Applications do this for fields that must not be composed into; browsers
-/// do it for password fields. Needs no edit session.
-pub fn keyboard_disabled(context: &ITfContext) -> bool {
-    let Ok(compartments) = context.cast::<ITfCompartmentMgr>() else {
-        return false;
-    };
-    [GUID_COMPARTMENT_KEYBOARD_DISABLED, GUID_COMPARTMENT_EMPTYCONTEXT].iter().any(|guid| unsafe {
-        compartments
-            .GetCompartment(guid)
-            .and_then(|compartment| compartment.GetValue())
-            .ok()
-            .and_then(|value| i32::try_from(&value).ok())
-            .is_some_and(|value| value != 0)
-    })
+/// do it for password fields. Needs no edit session. The answer names the
+/// switch that is on (`keyboard-disabled` or `empty-context`).
+pub fn keyboard_disabled(context: &ITfContext) -> Option<&'static str> {
+    let compartments = context.cast::<ITfCompartmentMgr>().ok()?;
+    [(GUID_COMPARTMENT_KEYBOARD_DISABLED, "keyboard-disabled"), (GUID_COMPARTMENT_EMPTYCONTEXT, "empty-context")]
+        .into_iter()
+        .find(|(guid, _)| unsafe {
+            compartments
+                .GetCompartment(guid)
+                .and_then(|compartment| compartment.GetValue())
+                .ok()
+                .and_then(|value| i32::try_from(&value).ok())
+                .is_some_and(|value| value != 0)
+        })
+        .map(|(_, name)| name)
 }
 
 /// Does the application declare the field at the caret as a password field?

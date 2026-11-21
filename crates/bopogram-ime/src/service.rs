@@ -790,24 +790,30 @@ fn write(
 
 impl TextService_Impl {
     /// Turn the input method off in password fields and back on elsewhere.
-    fn refresh_enabled(&self, context: &ITfContext) {
-        let Some((client, last)) = with(&self.state, |s| {
+    /// Says why it is off, for the timing log.
+    fn refresh_enabled(&self, context: &ITfContext) -> Option<&'static str> {
+        let (client, last) = with(&self.state, |s| {
             let idle = s.controller.as_ref().is_some_and(|c| !c.composing());
             idle.then_some((s.client, s.password))
         })
-        .flatten() else {
-            return;
-        };
+        .flatten()?;
         // Only the input scope can be momentarily unreadable, so only its
         // answer is remembered.
         let scope = edit::password_scope(context, client).unwrap_or(last);
-        let password = password_window() || edit::keyboard_disabled(context) || scope;
+        let off = if password_window() {
+            Some("password-window")
+        } else if let Some(switch) = edit::keyboard_disabled(context) {
+            Some(switch)
+        } else {
+            scope.then_some("password-scope")
+        };
         with(&self.state, |s| {
             s.password = scope;
             if let Some(controller) = s.controller.as_mut() {
-                controller.set_enabled(!password);
+                controller.set_enabled(off.is_none());
             }
         });
+        off
     }
 
     fn key_down(&self, context: &ITfContext, wparam: WPARAM) -> bool {
@@ -1060,8 +1066,11 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             let mut timing = timing::Key::start("test");
             adopt_shared_mode_if_idle(&self.state);
             let key = key_from(wparam);
-            self.refresh_enabled(context);
+            let off = self.refresh_enabled(context);
             timing.step("password");
+            if let Some(reason) = off {
+                timing.step(reason);
+            }
             let options = settings::options();
             let tested = with_controller(&self.state, |c| {
                 c.set_options(options);
@@ -1074,8 +1083,9 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             if dismissed {
                 refresh_candidates(&self.state);
             }
-            // Keys the input method leaves alone are not worth a line.
-            if eaten {
+            // Keys the input method leaves alone are not worth a line, unless
+            // it left them alone because it is off: the log says why.
+            if eaten || off.is_some() {
                 timing.finish();
             }
             Ok(eaten.into())
