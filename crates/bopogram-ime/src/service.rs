@@ -1060,7 +1060,16 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
 
     fn OnTestKeyDown(&self, context: Ref<ITfContext>, wparam: WPARAM, _: LPARAM) -> Result<BOOL> {
         guard(Ok(false.into()), || {
-            let Some(context) = context.as_ref().filter(|_| !crate::broken()) else {
+            if crate::broken() {
+                return Ok(false.into());
+            }
+            let Some(context) = context.as_ref() else {
+                // No document to type into (games, windows without a text
+                // field): the key goes to the application. Logged so that
+                // such applications can be told apart.
+                let mut timing = timing::Key::start("test");
+                timing.step("no-context");
+                timing.finish();
                 return Ok(false.into());
             };
             let mut timing = timing::Key::start("test");
