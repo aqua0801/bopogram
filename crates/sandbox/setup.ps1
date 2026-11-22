@@ -108,6 +108,8 @@ try {
 # 4. Things to type into.
 Start-Process powershell.exe -ArgumentList "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", "C:\stage\testform.ps1"
 Start-Process "C:\stage\test.html"
+# A window with no text field, like a game.
+Start-Process powershell.exe -ArgumentList "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", "C:\stage\nofield.ps1"
 # A 32-bit application.
 Start-Process "$env:SystemRoot\SysWOW64\notepad.exe"
 Log "setup finished $(Get-Date -Format s)"

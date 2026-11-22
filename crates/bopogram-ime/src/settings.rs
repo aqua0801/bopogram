@@ -10,8 +10,9 @@
 //!   application keeps its own, as Microsoft's input methods do.
 //! - `mode.txt`: the shared mode, `chinese` or `english`.
 //! - `keys.json`: selection keys, candidates per page, the mode a new
-//!   application starts in, whether Shift alone switches the mode, and the
-//!   phrase menu's key (written by the settings window; see `Options`).
+//!   application starts in, whether Shift alone switches the mode, the
+//!   phrase menu's and the dictionary's keys, and whether to compose where
+//!   there is no text field (written by the settings window; see `Options`).
 //! - `phrases.json`: the phrase menu (written by the settings window).
 //!   Read each time the menu opens.
 //!

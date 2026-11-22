@@ -42,6 +42,8 @@ pub struct Settings {
     pub start_chinese: bool,
     /// Shift on its own switches Chinese/English.
     pub shift_toggles: bool,
+    /// Compose in windows with no text field too (games).
+    pub type_anywhere: bool,
     /// Opens the phrase menu; `None` turns the menu off.
     pub phrase_key: Option<Hotkey>,
     /// While composing: add the composition to the dictionary.
@@ -98,6 +100,7 @@ impl Default for Settings {
             home_row: false,
             start_chinese: true,
             shift_toggles: true,
+            type_anywhere: false,
             phrase_key: Some(DEFAULT_PHRASE_KEY),
             dict_add_key: Some(DEFAULT_DICT_ADD_KEY),
             dict_remove_key: Some(DEFAULT_DICT_REMOVE_KEY),
@@ -312,6 +315,7 @@ impl Files {
         settings.home_row = keys.get("select_keys").and_then(Value::as_str) == Some("home_row");
         settings.start_chinese = keys.get("start_mode").and_then(Value::as_str) != Some("english");
         settings.shift_toggles = keys.get("shift_toggle").and_then(Value::as_bool) != Some(false);
+        settings.type_anywhere = keys.get("type_anywhere").and_then(Value::as_bool) == Some(true);
         // Null turns the key off; something unreadable keeps the default.
         let hotkey = |name: &str, default: Hotkey| match keys.get(name) {
             Some(Value::Null) => None,
@@ -342,6 +346,7 @@ impl Files {
                 "select_keys": if settings.home_row { "home_row" } else { "digits" },
                 "start_mode": if settings.start_chinese { "chinese" } else { "english" },
                 "shift_toggle": settings.shift_toggles,
+                "type_anywhere": settings.type_anywhere,
                 "phrase_key": settings.phrase_key.map_or(Value::Null, Hotkey::to_json),
                 "dict_add_key": settings.dict_add_key.map_or(Value::Null, Hotkey::to_json),
                 "dict_remove_key": settings.dict_remove_key.map_or(Value::Null, Hotkey::to_json),
@@ -502,6 +507,7 @@ mod tests {
             home_row: true,
             start_chinese: false,
             shift_toggles: false,
+            type_anywhere: true,
             phrase_key: Some(Hotkey { vk: 0x51, ctrl: true, alt: false, shift: true }),
             dict_add_key: Some(Hotkey { vk: 0x41, ctrl: true, alt: true, shift: false }),
             dict_remove_key: None,

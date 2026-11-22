@@ -444,6 +444,12 @@ impl Popup {
         unsafe { SetTimer(Some(self.window), TIP_TIMER, TIP_MS, None) };
     }
 
+    /// Show a line of text that stays until replaced or hidden: the
+    /// composition, where the application cannot show it.
+    pub fn show_text(&self, text: &str, anchor: RECT) {
+        self.place(Mode::Tip(wide(text)), anchor);
+    }
+
     fn place(&self, mode: Mode, anchor: RECT) {
         unsafe {
             KillTimer(Some(self.window), TIP_TIMER).ok();

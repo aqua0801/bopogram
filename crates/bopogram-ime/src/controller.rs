@@ -33,6 +33,9 @@ pub struct Options {
     /// In the candidate window: remove the highlighted candidate (pressed
     /// twice, the first press asks).
     pub dict_remove_key: Option<Hotkey>,
+    /// Compose even where the application offers no document to type into
+    /// (games): the text is then sent as typed characters.
+    pub type_anywhere: bool,
 }
 
 impl Default for Options {
@@ -45,6 +48,7 @@ impl Default for Options {
             phrase_key: Some(Hotkey::PHRASES),
             dict_add_key: Some(Hotkey::DICT_ADD),
             dict_remove_key: Some(Hotkey::DICT_REMOVE),
+            type_anywhere: false,
         }
     }
 }
@@ -179,6 +183,9 @@ impl Options {
         }
         if let Some(on) = value.get("shift_toggle").and_then(serde_json::Value::as_bool) {
             options.shift_toggles = on;
+        }
+        if let Some(on) = value.get("type_anywhere").and_then(serde_json::Value::as_bool) {
+            options.type_anywhere = on;
         }
         let hotkey = |name: &str, default: Option<Hotkey>| match value.get(name) {
             Some(serde_json::Value::Null) => None,
@@ -1964,6 +1971,8 @@ mod tests {
         let dict = Options::parse(r#"{"dict_add_key": {"vk": 65, "ctrl": true, "shift": true}, "dict_remove_key": null}"#);
         assert_eq!(dict.dict_add_key, Some(Hotkey { vk: 0x41, ctrl: true, alt: false, shift: true }));
         assert_eq!((dict.dict_remove_key, dict.phrase_key), (None, Some(Hotkey::PHRASES)));
+        assert!(!dict.type_anywhere);
+        assert!(Options::parse(r#"{"type_anywhere": true}"#).type_anywhere);
         // The phrase key: another combination, turned off, or refused without Ctrl or Alt.
         let ctrl_q = Options::parse(r#"{"phrase_key": {"vk": 81, "ctrl": true}}"#).phrase_key;
         assert_eq!(ctrl_q, Some(Hotkey { vk: 0x51, ctrl: true, alt: false, shift: false }));

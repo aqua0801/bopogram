@@ -50,7 +50,7 @@ foreach ($file in "target\release\bopogram_ime.dll", "target\release\bopogram-ho
     New-Item -ItemType Directory -Force (Split-Path -Parent $target) | Out-Null
     Copy-Item (Join-Path $crates $file) $target -Force
 }
-foreach ($file in "setup.ps1", "testform.ps1", "test.html") {
+foreach ($file in "setup.ps1", "testform.ps1", "nofield.ps1", "test.html") {
     Copy-Item (Join-Path $PSScriptRoot $file) $stage -Force
 }
 Remove-Item (Join-Path $out "*") -Force -ErrorAction SilentlyContinue
