@@ -15,7 +15,9 @@ use std::time::{Duration, Instant};
 
 use windows::core::{implement, IUnknownImpl, Interface, Ref, Result, BOOL, GUID};
 use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, HWND, LPARAM, POINT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::ClientToScreen;
+use windows::Win32::Graphics::Gdi::{
+    ClientToScreen, GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+};
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetFocus, GetKeyState, VK_CAPITAL, VK_CONTROL, VK_MENU, VK_SHIFT,
@@ -32,8 +34,8 @@ use windows::Win32::UI::TextServices::{
     TF_MOD_ALT, TF_MOD_CONTROL, TF_MOD_SHIFT, TF_PRESERVEDKEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetCursorPos, GetGUIThreadInfo, GetWindowLongW, KillTimer, SetTimer,
-    GUITHREADINFO, GWL_STYLE,
+    GetAncestor, GetClassNameW, GetCursorPos, GetGUIThreadInfo, GetWindowLongW, GetWindowRect, KillTimer, SetTimer,
+    WindowFromPoint, GA_ROOT, GUITHREADINFO, GWL_STYLE,
 };
 
 use crate::controller::{vk, Controller, Hotkey, Key, CASUAL, FORMAL};
@@ -87,8 +89,8 @@ pub(crate) struct State {
     eat_alt_up: bool,
     /// Where the caret was when the phrase menu opened.
     menu_anchor: Option<RECT>,
-    /// The application does not know where its caret is: it puts the
-    /// composition in the top left corner (games). The composition is then
+    /// The application does not show the composition: Windows does, in the
+    /// top left corner of the screen (games). The composition is then
     /// shown in our window, here: where the mouse pointer was when the
     /// composition began, as the pointer has usually just clicked the field.
     unplaced: Option<RECT>,
@@ -730,20 +732,37 @@ fn fallback_anchor() -> RECT {
     }
 }
 
-/// Is `rect` (where the application says the composition is) the top left
-/// corner of the focused window or of the screen? Applications that do not
-/// know where their caret is say that; a real field starts a little inside.
-fn at_top_left(rect: &RECT) -> bool {
-    let at = |x: i32, y: i32| (rect.left - x).abs() <= 1 && (rect.top - y).abs() <= 1;
-    if at(0, 0) {
-        return true;
-    }
+/// Is the composition shown by Windows in the top left corner of the screen,
+/// away from where the user is typing? Applications that do not show the
+/// composition leave it to Windows, which draws it in a window of its own;
+/// one that never says where its caret is gets that window in the corner
+/// (over a full-screen game too). A window of Windows' own at the caret,
+/// as classic edit controls get, is where it belongs.
+fn shown_elsewhere(rect: &RECT) -> bool {
     unsafe {
-        let window = GetFocus();
-        let mut origin = POINT::default();
-        !window.is_invalid() && ClientToScreen(window, &mut origin).as_bool() && at(origin.x, origin.y)
+        let focus = GetFocus();
+        if focus.is_invalid() {
+            return false;
+        }
+        let centre = POINT { x: (rect.left + rect.right) / 2, y: (rect.top + rect.bottom) / 2 };
+        let hit = WindowFromPoint(centre);
+        if hit.is_invalid() || GetAncestor(hit, GA_ROOT) == GetAncestor(focus, GA_ROOT) {
+            return false;
+        }
+        let mut window = RECT::default();
+        let mut monitor = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if GetWindowRect(hit, &mut window).is_err()
+            || !GetMonitorInfoW(MonitorFromWindow(hit, MONITOR_DEFAULTTONEAREST), &mut monitor).as_bool()
+        {
+            return false;
+        }
+        let corner = monitor.rcMonitor;
+        (window.left - corner.left).abs() <= CORNER_PX && (window.top - corner.top).abs() <= CORNER_PX
     }
 }
+
+/// How near the corner of the screen Windows' composition window sits, in pixels.
+const CORNER_PX: i32 = 8;
 
 /// Just below the mouse pointer.
 fn pointer_anchor() -> RECT {
@@ -824,13 +843,35 @@ fn write(
         // application cannot say where that character is.
         let rect = edit::screen_rect_at(context, cookie, &range, caret as i32)
             .or_else(|| edit::screen_rect(context, cookie, &range));
+        if let Some(r) = rect {
+            let mut origin = POINT::default();
+            let _ = ClientToScreen(GetFocus(), &mut origin);
+            timing::note(
+                "where",
+                &[
+                    ("left", r.left),
+                    ("top", r.top),
+                    ("right", r.right),
+                    ("bottom", r.bottom),
+                    ("window_x", origin.x),
+                    ("window_y", origin.y),
+                    ("elsewhere", shown_elsewhere(&r) as i32),
+                ],
+            );
+        } else {
+            timing::note("where", &[("unknown", 1)]);
+        }
+        // Once found in the corner, the composition stays at the pointer
+        // until it ends: such applications also give the odd position that
+        // is neither, and the window must not jump about.
         match rect {
-            Some(rect) if at_top_left(&rect) => with(state, |s| {
+            Some(rect) if shown_elsewhere(&rect) => with(state, |s| {
                 s.anchor = Some(*s.unplaced.get_or_insert_with(pointer_anchor));
             }),
             Some(rect) => with(state, |s| {
-                s.anchor = Some(rect);
-                s.unplaced = None;
+                if s.unplaced.is_none() {
+                    s.anchor = Some(rect);
+                }
             }),
             None => None,
         };

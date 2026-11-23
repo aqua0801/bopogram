@@ -96,33 +96,50 @@ impl Key {
             return;
         }
         let total = self.started.elapsed().as_secs_f64() * 1000.0;
-        let time = unsafe { GetLocalTime() };
-        let mut line = format!(
-            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}\t{}\t{}\ttotal={total:.1}",
-            time.wYear,
-            time.wMonth,
-            time.wDay,
-            time.wHour,
-            time.wMinute,
-            time.wSecond,
-            time.wMilliseconds,
-            application(),
-            self.kind,
-        );
+        let mut line = format!("{}\ttotal={total:.1}", head(self.kind));
         for (name, ms) in &self.steps {
             line.push_str(&format!("\t{name}={ms:.1}"));
         }
-        line.push('\n');
-        if let Some(folder) = folder() {
-            // One write per line, appended: lines from several applications
-            // do not mix.
-            let file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(folder.join("timing.log"));
-            if let Ok(mut file) = file {
-                let _ = file.write_all(line.as_bytes());
-            }
+        append(line);
+    }
+}
+
+/// The start of a line: the time, the application and the kind.
+fn head(kind: &str) -> String {
+    let time = unsafe { GetLocalTime() };
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}\t{}\t{kind}",
+        time.wYear,
+        time.wMonth,
+        time.wDay,
+        time.wHour,
+        time.wMinute,
+        time.wSecond,
+        time.wMilliseconds,
+        application(),
+    )
+}
+
+/// A line of numbers (screen positions, say) instead of durations.
+pub fn note(kind: &str, values: &[(&str, i32)]) {
+    if !on() {
+        return;
+    }
+    let mut line = head(kind);
+    for (name, value) in values {
+        line.push_str(&format!("\t{name}={value}"));
+    }
+    append(line);
+}
+
+fn append(mut line: String) {
+    line.push('\n');
+    if let Some(folder) = folder() {
+        // One write per line, appended: lines from several applications
+        // do not mix.
+        let file = std::fs::OpenOptions::new().create(true).append(true).open(folder.join("timing.log"));
+        if let Ok(mut file) = file {
+            let _ = file.write_all(line.as_bytes());
         }
     }
 }
