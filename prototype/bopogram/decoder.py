@@ -387,12 +387,12 @@ class Decoder:
         seen: set[str] = set()
         final = self.nodes[-1]
         if self.eos_weight and len(final) > 1:
-            w, score_fn, n = self.eos_weight, self.lm.score, len(self.syllables)
+            w, score_fn, end = self.eos_weight, self.lm.score, len(self.syllables)
 
             def eos(h: Hyp) -> float:
                 # A user word is unknown to the model, which makes ending after it look
                 # unlikely; the user's own word is not to lose on that account.
-                if h.word is not None and self.lexicon.is_user(h.word, tuple(self.syllables[h.start:n])):
+                if h.word is not None and self.lexicon.is_user(h.word, tuple(self.syllables[h.start:end])):
                     return 0.0
                 return w * score_fn(h.state, "</s>")[0]
             final = sorted(final, key=lambda h: h.score + eos(h), reverse=True)
