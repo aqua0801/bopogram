@@ -17,6 +17,11 @@ from .user import UserModel
 from .userdict import UserDict
 
 USER_DICT_BONUS = 6.0
+# The models pick 她 / 它 where 他 is meant about as often as the reverse, and almost
+# never get 她 right from the context (dev set 2026-11-21: 她 right 12 of 147 times,
+# 他 wrong 34 of 360). A small handicap makes 他 the default; it moves 他 to 343 of
+# 360 for 她 12 -> 5 and 它 6 -> 5 of 14. Overridden by "word_bias" in the config.
+WORD_BIAS = {"她": -1.0, "它": -1.0}
 DEFAULT_CONFIG = Path.home() / "bopogram-data" / "models" / "config.json"
 
 
@@ -44,6 +49,8 @@ class Engine:
     character less likely under a reading it seldom has; optional.
     "neural" adds the scores of the position-wise model (see neural.py) to the
     lattice; absent or null means the n-gram engine alone.
+    "word_bias" maps words to a log score added wherever they are used (default
+    WORD_BIAS); {} turns it off.
     "user_dict" and "excluded_words" are the user's own dictionary (userdict.py);
     each defaults to the path shown and null turns it off. "user_dict_bonus" is
     added to the score of every user word.
@@ -93,7 +100,8 @@ class Engine:
         self._decoder_args = dict(beam=cfg.get("beam", 16), max_candidates=cfg.get("max_candidates", 40),
                                   word_penalty=cfg.get("word_penalty", 0.0),
                                   eos_weight=cfg.get("eos_weight", 0.0),
-                                  style=cfg.get("style", "casual"))
+                                  style=cfg.get("style", "casual"),
+                                  word_bias=cfg.get("word_bias", WORD_BIAS))
         self.decoder = self.new_decoder()
         # The dictionary is millions of long-lived Python objects. Without this, every
         # full garbage collection walks all of them and a keystroke now and then takes

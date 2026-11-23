@@ -68,7 +68,7 @@ class Env:
         files = [d / f if f else None for f in user_files]
         self.userdict = UserDict(*files)
         lexicon.attach(self.userdict, BONUS)
-        user = UserModel(d / "user.json") if user_model else None
+        user = UserModel(d / "user.json", accepted_step=1) if user_model else None
         self.engine = SimpleNamespace(
             lexicon=lexicon, lm=lm, user=user, userdict=self.userdict,
             new_decoder=lambda: Decoder(lexicon, lm, extra_score=user.bonus if user else None))

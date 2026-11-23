@@ -11,6 +11,9 @@ the lattice is extended and the best result is read back.
 With --neural-scores the per-position scores of the neural model (computed
 beforehand by training/neural/score_testset.py) are combined with the n-gram
 engine; latency is not measured in that case, because the model is not run here.
+
+Scoring: where the output uses the other standard form of a character or word
+(臺/台, 記錄/紀錄, ...; VARIANT_CHARS, VARIANT_WORDS), it counts as right.
 """
 
 from __future__ import annotations
@@ -24,6 +27,31 @@ from collections import defaultdict
 OVERLAP_MARK = "〔語料重複〕"
 # Third-person pronouns sound identical; which one is meant often cannot be
 # known from the sentence. A second score treats them as interchangeable.
+# Both forms are standard in Taiwan (Ministry of Education), so writing either is
+# not an error: single characters, and two-character words for pairs that are
+# only interchangeable inside those words.
+VARIANT_CHARS = [frozenset(p) for p in
+                 ("臺台", "裏裡", "祕秘", "週周", "佈布", "姊姐", "佔占", "羣群", "汙污", "菸煙", "豔艷", "歎嘆")]
+VARIANT_WORDS = [frozenset(p) for p in
+                 (("記錄", "紀錄"), ("作法", "做法"), ("作夢", "做夢"), ("作為", "做為"), ("身分", "身份"),
+                  ("部分", "部份"), ("甚麼", "什麼"), ("計畫", "計劃"), ("念書", "唸書"))]
+
+
+def accept_variants(gold: str, hyp: str) -> str:
+    """`gold` with every character where `hyp` uses the other standard form replaced by
+    `hyp`'s, so that such a difference does not count as an error."""
+    if len(gold) != len(hyp):
+        return gold
+    out = list(gold)
+    for i, (g, h) in enumerate(zip(gold, hyp)):
+        if g == h:
+            continue
+        if frozenset((g, h)) in VARIANT_CHARS or any(
+                k >= 0 and frozenset((gold[k:k + 2], hyp[k:k + 2])) in VARIANT_WORDS for k in (i - 1, i)):
+            out[i] = h
+    return "".join(out)
+
+
 _PRONOUNS = str.maketrans({"她": "他", "它": "他", "牠": "他", "祂": "他"})
 
 
@@ -179,6 +207,7 @@ def run_eval(args) -> int:
             # Casual style writes 的 for every structural particle; that is not an error.
             gold = "".join("的" if s == "˙ㄉㄜ" and g in "地得" and h == "的" else g
                            for g, h, s in zip(gold, hyp, syls))
+        gold = accept_variants(gold, hyp)
         correct_chars = sum(1 for a, b in zip(hyp, gold) if a == b) if len(hyp) == len(gold) else 0
         groups = ["all", row["category"]]
         if OVERLAP_MARK not in (row.get("note") or ""):

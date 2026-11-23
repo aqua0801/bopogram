@@ -156,6 +156,16 @@ class SessionTest(unittest.TestCase):
         type_keys(s, "d04")                  # later typing must not undo the choice
         self.assertEqual(s.preedit()[:2], "我再")
 
+    def test_a_pick_fixes_characters_not_word_ends(self):
+        d = make_session().decoder
+        d.pinned = {(1, 2): "在"}
+        self.assertTrue(d._allowed(1, 3, "在家"))     # covers the pick with the same text
+        self.assertFalse(d._allowed(1, 3, "再加"))
+        self.assertTrue(d._allowed(2, 3, "家"))
+        d.pinned = {(1, 3): "在家"}
+        self.assertFalse(d._allowed(1, 2, "在"))      # may not cut through a pick
+        self.assertFalse(d._allowed(0, 2, "我在"))
+
     def test_candidates_start_at_the_cursor_inside_a_word(self):
         s = make_session()
         type_keys(s, "ji3d04d04")            # 我看看; 看看 is one word
@@ -276,7 +286,7 @@ class SessionTest(unittest.TestCase):
 
     def test_learning_can_be_switched_off(self):
         with tempfile.TemporaryDirectory() as d:
-            user = UserModel(Path(d) / "user.json")
+            user = UserModel(Path(d) / "user.json", accepted_step=1)
             s = make_session(user)
             s.learn = False
             type_keys(s, "ji3")
@@ -296,10 +306,16 @@ class SessionTest(unittest.TestCase):
     def test_user_model_changes_ranking(self):
         user = UserModel()
         for _ in range(5):
-            user.learn(["我", "再", "加"], corrected=True)
+            user.learn(["我", "再", "加"], {0, 1, 2})
         s = make_session(user)
         type_keys(s, "ji3y94ru8 ")
         self.assertEqual(s.preedit(), "我再加")
+
+    def test_by_default_only_corrections_are_learned(self):
+        user = UserModel()
+        user.learn(["我", "在", "家"], {1})
+        self.assertEqual(user.unigrams, {"在": 3})
+        self.assertEqual(user.bigrams, {"我\t在": 3, "在\t家": 3})
 
 
 class RerankTest(unittest.TestCase):
