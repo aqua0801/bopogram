@@ -20,20 +20,30 @@ use windows::Win32::System::Registry::{
 use windows::Win32::UI::Input::KeyboardAndMouse::HKL;
 use windows::Win32::UI::TextServices::{
     ITfCategoryMgr, ITfInputProcessorProfileMgr, CLSID_TF_CategoryMgr,
-    CLSID_TF_InputProcessorProfiles, GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER,
+    CLSID_TF_InputProcessorProfiles, GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER, GUID_TFCAT_TIPCAP_COMLESS,
     GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT,
-    GUID_TFCAT_TIP_KEYBOARD,
+    GUID_TFCAT_TIPCAP_UIELEMENTENABLED, GUID_TFCAT_TIP_KEYBOARD,
 };
 
 use crate::dll::{icon_path, module_path, CLSID_TEXT_SERVICE, DISPLAY_NAME, GUID_PROFILE, LANGID_ZH_TW};
 use crate::{wide, wide_z};
 
-const CATEGORIES: [GUID; 4] = [
+const CATEGORIES: [GUID; 6] = [
     GUID_TFCAT_TIP_KEYBOARD,
     GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER,
     // Without these two, Windows 8 and later hide the input method.
     GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
     GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT,
+    // Applications that draw the candidates themselves (games) start TSF
+    // allowing only input methods with this category; any other is
+    // switched away from at once. The candidate list is offered to them
+    // (see `candidates`).
+    GUID_TFCAT_TIPCAP_UIELEMENTENABLED,
+    // Applications that start TSF without COM allow only these. Nothing
+    // here needs COM initialised; without it the composition is shown
+    // without its underline (the display attribute needs the category
+    // manager, a COM object).
+    GUID_TFCAT_TIPCAP_COMLESS,
 ];
 
 fn class_key() -> String {
