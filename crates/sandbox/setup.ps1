@@ -110,6 +110,12 @@ Start-Process powershell.exe -ArgumentList "-STA", "-WindowStyle", "Hidden", "-E
 Start-Process "C:\stage\test.html"
 # A window with no text field, like a game.
 Start-Process powershell.exe -ArgumentList "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", "C:\stage\nofield.ps1"
+# The front-end timing log on (it holds no typed text), copied to C:\out
+# every few seconds so that the main system can read it.
+$until = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 86400
+[IO.File]::WriteAllText((Join-Path $local "timing-until.txt"), "$until")
+$copy = "while (`$true) { Copy-Item '$local\timing.log' C:\out\timing.log -ErrorAction SilentlyContinue; Start-Sleep 3 }"
+Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-Command", $copy
 # A 32-bit application.
 Start-Process "$env:SystemRoot\SysWOW64\notepad.exe"
 Log "setup finished $(Get-Date -Format s)"
