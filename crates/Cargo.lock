@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "bopogram"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "bopogram-host"
 version = "0.0.0"
 dependencies = [

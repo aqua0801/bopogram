@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["bopogram-host", "bopogram-ime", "bopogram-protocol", "bopogram-settings"]
+members = ["bopogram", "bopogram-host", "bopogram-ime", "bopogram-protocol", "bopogram-settings"]
 
 [workspace.package]
 version = "0.0.0"

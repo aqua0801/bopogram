@@ -1,0 +1,17 @@
+[package]
+name = "bopogram"
+description = "Bopogram engine: context-aware bopomofo conversion (no Windows components)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "bopogram"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bopogram"
+path = "src/main.rs"
+
+[dependencies]
+serde_json.workspace = true
