@@ -78,7 +78,6 @@ const ID_SHARED_MODE: i32 = 140;
 const ID_START_CHINESE: i32 = 141;
 const ID_START_ENGLISH: i32 = 142;
 const ID_SHIFT: i32 = 143;
-const ID_TYPE_ANYWHERE: i32 = 144;
 const ID_DIGIT_KEYS: i32 = 150;
 const ID_HOME_ROW: i32 = 151;
 /// One per entry of `PAGE_SIZES`.
@@ -324,18 +323,13 @@ fn build(window: HWND, app: &App) {
     b.tip(ID_CLEAR, "刪除個人化學習資料（無法復原）。打字紀錄與詞庫不受影響。");
 
     // Right column: modes and the engine.
-    b.group("中／英模式", r, 10, 146);
+    b.group("中／英模式", r, 10, 118);
     b.option("所有程式共用", BS_AUTOCHECKBOX, WS_GROUP.0, ID_SHARED_MODE, r, 32);
     b.tip(ID_SHARED_MODE, "所有程式共用同一個中／英模式；新開的程式沿用目前的模式。");
     b.label("新開的程式", -1, r + 14, 66, 84);
     b.radios(&["中文", "英文"], ID_START_CHINESE, r + 100, 62, 80);
     b.option("單按 Shift 切換中／英", BS_AUTOCHECKBOX, WS_GROUP.0, ID_SHIFT, r, 92);
     b.tip(ID_SHIFT, "中文模式下 Shift+空白鍵另外切換全形／半形。");
-    b.option("遊戲中也能打中文", BS_AUTOCHECKBOX, WS_GROUP.0, ID_TYPE_ANYWHERE, r, 118);
-    b.tip(
-        ID_TYPE_ANYWHERE,
-        "在沒有文字框的視窗（例如 Minecraft）照常組字：組字區顯示在視窗左下角，選好的字以按鍵送出。         打開後，遊戲裡停在中文模式時注音鍵會被拿去組字，操作遊戲請切到英文。密碼欄位一律停用。",
-    );
 
     // A key field. A key without Ctrl or Alt would be taken from typing:
     // `added` is put with it.
@@ -360,21 +354,21 @@ fn build(window: HWND, app: &App) {
     b.button("管理詞庫…", ID_DICTIONARY, l + 14, 438, 126);
     b.tip(ID_DICTIONARY, "查看自訂詞與排除的詞；加入新詞、排除不想要的詞，或取消排除。");
 
-    b.group("快速輸入", r, 166, 100);
-    b.label("片語選單", -1, r + 14, 192, 84);
-    hotkey(ID_PHRASE_KEY, r + 100, 188, HOTKEYF_ALT);
+    b.group("快速輸入", r, 138, 100);
+    b.label("片語選單", -1, r + 14, 164, 84);
+    hotkey(ID_PHRASE_KEY, r + 100, 160, HOTKEYF_ALT);
     b.tip(ID_PHRASE_KEY, "按下想用的組合鍵（需含 Ctrl 或 Alt）；按 Backspace 清空則停用片語選單。");
-    b.button("編輯片語…", ID_PHRASES, r + 14, 226, 126);
+    b.button("編輯片語…", ID_PHRASES, r + 14, 198, 126);
     b.tip(ID_PHRASES, "在任何程式按上面的組合鍵叫出片語選單，選了就插入文字（不經過剪貼簿）。");
 
-    b.group("引擎", r, 276, 156);
+    b.group("引擎", r, 248, 156);
     let bundle = app.files.config.as_deref().and_then(Path::parent);
     let bundle = bundle.map_or("找不到（bopogram-host.json）".to_owned(), |p| p.display().to_string());
-    b.label(&format!("執行包：{bundle}"), -1, r + 14, 298, COLUMN - 28);
-    b.label("", ID_STATUS, r + 14, 324, COLUMN - 28);
-    b.option("計時紀錄", BS_AUTOCHECKBOX, WS_GROUP.0, ID_TIMING, r, 350);
+    b.label(&format!("執行包：{bundle}"), -1, r + 14, 270, COLUMN - 28);
+    b.label("", ID_STATUS, r + 14, 296, COLUMN - 28);
+    b.option("計時紀錄", BS_AUTOCHECKBOX, WS_GROUP.0, ID_TIMING, r, 322);
     b.tip(ID_TIMING, "只記每個按鍵的耗時，不記內容；24 小時後自動關閉。");
-    b.button("重新啟動引擎", ID_RESTART, r + 14, 388, 126);
+    b.button("重新啟動引擎", ID_RESTART, r + 14, 360, 126);
 
     b.button("確定", ID_OK, WIDTH - 12 - 80 * 3 - 16, BUTTONS_Y, 80);
     b.button("取消", ID_CANCEL, WIDTH - 12 - 80 * 2 - 8, BUTTONS_Y, 80);
@@ -460,7 +454,6 @@ fn show(window: HWND, settings: &Settings) {
     set_checked(window, ID_START_CHINESE, settings.start_chinese);
     set_checked(window, ID_START_ENGLISH, !settings.start_chinese);
     set_checked(window, ID_SHIFT, settings.shift_toggles);
-    set_checked(window, ID_TYPE_ANYWHERE, settings.type_anywhere);
     set_checked(window, ID_DIGIT_KEYS, !settings.home_row);
     set_checked(window, ID_HOME_ROW, settings.home_row);
     for (i, size) in PAGE_SIZES.iter().enumerate() {
@@ -493,7 +486,6 @@ fn read(window: HWND) -> Settings {
         home_row: checked(window, ID_HOME_ROW),
         start_chinese: !checked(window, ID_START_ENGLISH),
         shift_toggles: checked(window, ID_SHIFT),
-        type_anywhere: checked(window, ID_TYPE_ANYWHERE),
         phrase_key: read_hotkey(window, ID_PHRASE_KEY),
         dict_add_key: read_hotkey(window, ID_DICT_ADD_KEY),
         dict_remove_key: read_hotkey(window, ID_DICT_REMOVE_KEY),

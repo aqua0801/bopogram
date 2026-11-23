@@ -17,10 +17,8 @@ use windows::core::{implement, IUnknownImpl, Interface, Ref, Result, BOOL, GUID}
 use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetFocus, GetKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
-    KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_CAPITAL, VK_CONTROL, VK_MENU, VK_SHIFT,
+    GetFocus, GetKeyState, VK_CAPITAL, VK_CONTROL, VK_MENU, VK_SHIFT,
 };
 use windows::Win32::UI::TextServices::{
     CLSID_TF_CategoryMgr, IEnumTfDisplayAttributeInfo, ITfCategoryMgr, ITfComposition,
@@ -34,8 +32,7 @@ use windows::Win32::UI::TextServices::{
     TF_MOD_ALT, TF_MOD_CONTROL, TF_MOD_SHIFT, TF_PRESERVEDKEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetClientRect, GetCursorPos, GetForegroundWindow, GetGUIThreadInfo, GetWindowLongW,
-    KillTimer, SetTimer,
+    GetClassNameW, GetCursorPos, GetGUIThreadInfo, GetWindowLongW, KillTimer, SetTimer,
     GUITHREADINFO, GWL_STYLE,
 };
 
@@ -90,10 +87,11 @@ pub(crate) struct State {
     eat_alt_up: bool,
     /// Where the caret was when the phrase menu opened.
     menu_anchor: Option<RECT>,
-    /// Composing with no document to write into (`Options::type_anywhere`):
-    /// the composition is shown in our window and committed text is typed
-    /// as characters.
-    detached: bool,
+    /// The application does not know where its caret is: it puts the
+    /// composition in the top left corner (games). The composition is then
+    /// shown in our window, here: where the mouse pointer was when the
+    /// composition began, as the pointer has usually just clicked the field.
+    unplaced: Option<RECT>,
 }
 
 /// Documents remembered in `State::recent`, and characters kept for each.
@@ -101,13 +99,11 @@ const RECENT_DOCUMENTS: usize = 8;
 const RECENT_CHARS: usize = 40;
 
 /// Identifies a document while it exists.
-fn document_key(context: Option<&ITfContext>) -> usize {
-    context
-        .and_then(|context| unsafe { context.GetDocumentMgr() }.ok())
-        .map_or(0, |document| document.as_raw() as usize)
+fn document_key(context: &ITfContext) -> usize {
+    unsafe { context.GetDocumentMgr() }.map_or(0, |document| document.as_raw() as usize)
 }
 
-fn remember_commit(state: &Shared, context: Option<&ITfContext>, text: &str) {
+fn remember_commit(state: &Shared, context: &ITfContext, text: &str) {
     let key = document_key(context);
     with(state, |s| {
         let mut kept = s
@@ -126,7 +122,7 @@ fn remember_commit(state: &Shared, context: Option<&ITfContext>, text: &str) {
     });
 }
 
-fn recent_text(state: &Shared, context: Option<&ITfContext>) -> String {
+fn recent_text(state: &Shared, context: &ITfContext) -> String {
     let key = document_key(context);
     with(state, |s| s.recent.iter().find(|(k, _)| *k == key).map(|(_, t)| t.clone()))
         .flatten()
@@ -167,7 +163,9 @@ unsafe extern "system" fn retry_timer(_window: HWND, _message: u32, id: usize, _
         let waiting: Vec<_> = RETRY.with(|retry| retry.borrow_mut().drain(..).collect());
         for state in waiting.iter().filter_map(std::rc::Weak::upgrade) {
             let Some(commit) = with_controller(&state, |c| c.flush()) else { continue };
-            refresh(&state, document_context(&state).as_ref(), commit, None);
+            if let Some(context) = document_context(&state) {
+                refresh(&state, &context, commit, None);
+            }
             retry_later(&state);
         }
     })
@@ -260,7 +258,9 @@ pub(crate) fn toggle_mode(state: &Shared) {
         return;
     };
     mode_switched(chinese);
-    refresh(state, document_context(state).as_ref(), commit, None);
+    if let Some(context) = document_context(state) {
+        refresh(state, &context, commit, None);
+    }
     button_changed(state);
 }
 
@@ -296,7 +296,9 @@ fn adopt_shared_mode(state: &Shared) {
         return;
     };
     if let Some(text) = commit {
-        refresh(state, document_context(state).as_ref(), Some(text), None);
+        if let Some(context) = document_context(state) {
+            refresh(state, &context, Some(text), None);
+        }
     }
 }
 
@@ -354,7 +356,9 @@ pub(crate) fn pick_candidate(state: &Shared, index: usize) {
     let Some(outcome) = with_controller(state, |c| c.pick(index)) else {
         return;
     };
-    refresh(state, document_context(state).as_ref(), outcome.commit, None);
+    if let Some(context) = document_context(state) {
+        refresh(state, &context, outcome.commit, None);
+    }
     if let Some(notice) = outcome.notice {
         tip(state, &notice);
     }
@@ -448,8 +452,11 @@ fn draw_candidates(state: &Shared) {
         let page = s.controller.as_ref().and_then(|c| c.candidate_page());
         let menu = s.controller.as_ref().is_some_and(|c| c.menu_open());
         let anchor = if menu { s.menu_anchor.or(s.anchor) } else { s.anchor };
-        // With no document, the composition has nowhere to show but here.
-        let detached = if s.detached { s.controller.as_ref().map(|c| c.preedit().to_owned()) } else { None };
+        // Where the application does not show the composition properly, we do.
+        let preedit = match (s.unplaced, s.controller.as_ref()) {
+            (Some(_), Some(controller)) if !controller.preedit().is_empty() => Some(controller.preedit().to_owned()),
+            _ => None,
+        };
         let Some(popup) = &s.popup else { return };
         match page {
             Some((items, selected, page, pages)) if shown => popup.show(
@@ -460,7 +467,7 @@ fn draw_candidates(state: &Shared) {
                 pages,
                 anchor.unwrap_or_else(fallback_anchor),
             ),
-            _ => match detached.filter(|preedit| !preedit.is_empty()) {
+            _ => match preedit {
                 Some(preedit) => popup.show_text(&preedit, anchor.unwrap_or_else(fallback_anchor)),
                 None => popup.hide(),
             },
@@ -471,17 +478,10 @@ fn draw_candidates(state: &Shared) {
 /// Bring the document and the candidate window in line with the controller.
 fn refresh(
     state: &Shared,
-    context: Option<&ITfContext>,
+    context: &ITfContext,
     commit: Option<String>,
     mut timing: Option<&mut timing::Key>,
 ) {
-    if with(state, |s| s.detached).unwrap_or(false) {
-        refresh_detached(state, commit, timing);
-        return;
-    }
-    let Some(context) = context else {
-        return;
-    };
     let Some((client, sink, preedit, caret, unchanged)) = with(state, |s| {
         let controller = s.controller.as_ref()?;
         let preedit = controller.preedit().to_owned();
@@ -495,7 +495,7 @@ fn refresh(
         return;
     };
     if let Some(text) = &commit {
-        remember_commit(state, Some(context), text);
+        remember_commit(state, context, text);
     }
     if !unchanged {
         let shared = Rc::clone(state);
@@ -512,75 +512,6 @@ fn refresh(
         timing.step("popup");
     }
 }
-
-/// The same with no document: committed text is typed into the focused
-/// window as characters, and the composition is shown in our window.
-fn refresh_detached(state: &Shared, commit: Option<String>, mut timing: Option<&mut timing::Key>) {
-    if let Some(text) = &commit {
-        remember_commit(state, None, text);
-        type_text(text);
-    }
-    with(state, |s| {
-        s.shown = s.controller.as_ref().map(|c| c.preedit().to_owned()).unwrap_or_default();
-        s.anchor = Some(detached_anchor());
-    });
-    if let Some(timing) = timing.as_deref_mut() {
-        timing.step("write");
-    }
-    refresh_candidates(state);
-    if let Some(timing) = timing {
-        timing.step("popup");
-    }
-}
-
-/// Type `text` into the focused window, one character at a time, as if from
-/// the keyboard. Applications with no document (games) read characters this
-/// way. The key that arrives for each (`VK_PACKET`) is left alone.
-fn type_text(text: &str) {
-    let key = |unit: u16, up: bool| INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: VIRTUAL_KEY(0),
-                wScan: unit,
-                dwFlags: if up { KEYEVENTF_UNICODE | KEYEVENTF_KEYUP } else { KEYEVENTF_UNICODE },
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
-    };
-    let inputs: Vec<INPUT> = text.encode_utf16().flat_map(|unit| [key(unit, false), key(unit, true)]).collect();
-    unsafe {
-        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
-    }
-}
-
-/// Where our window goes with no document: just above the bottom left of
-/// the focused window, where games keep their chat line.
-fn detached_anchor() -> RECT {
-    unsafe {
-        let window = GetForegroundWindow();
-        let mut client = RECT::default();
-        if window.is_invalid() || GetClientRect(window, &mut client).is_err() {
-            return fallback_anchor();
-        }
-        let mut corner = POINT { x: client.left, y: client.bottom };
-        if !ClientToScreen(window, &mut corner).as_bool() {
-            return fallback_anchor();
-        }
-        let dpi = GetDpiForWindow(window).max(96) as i32;
-        let left = corner.x + 8 * dpi / 96;
-        let top = corner.y - DETACHED_MARGIN * dpi / 96;
-        // A bottom far below any screen: the window is placed above `top`.
-        RECT { left, top, right: left, bottom: i32::MAX / 4 }
-    }
-}
-
-/// How far above the bottom of a game's window its chat line ends, at 96 DPI.
-const DETACHED_MARGIN: i32 = 48;
-
-/// Typed characters arrive as this key; never ours.
-const VK_PACKET: u32 = 0xE7;
 
 /// A short notice near the caret.
 fn tip(state: &Shared, text: &str) {
@@ -768,7 +699,7 @@ fn phrase_key(state: &Shared, context: &ITfContext) -> bool {
     };
     if outcome.commit.is_some() {
         // The composition went into the document; the caret moved with it.
-        refresh(state, Some(context), outcome.commit, None);
+        refresh(state, context, outcome.commit, None);
         let after = edit::caret_rect(context, client);
         with(state, |s| s.menu_anchor = after.or(before));
     }
@@ -798,6 +729,33 @@ fn fallback_anchor() -> RECT {
         RECT { left: point.x, top: point.y, right: point.x, bottom: point.y + 16 }
     }
 }
+
+/// Is `rect` (where the application says the composition is) the top left
+/// corner of the focused window or of the screen? Applications that do not
+/// know where their caret is say that; a real field starts a little inside.
+fn at_top_left(rect: &RECT) -> bool {
+    let at = |x: i32, y: i32| (rect.left - x).abs() <= 1 && (rect.top - y).abs() <= 1;
+    if at(0, 0) {
+        return true;
+    }
+    unsafe {
+        let window = GetFocus();
+        let mut origin = POINT::default();
+        !window.is_invalid() && ClientToScreen(window, &mut origin).as_bool() && at(origin.x, origin.y)
+    }
+}
+
+/// Just below the mouse pointer.
+fn pointer_anchor() -> RECT {
+    let mut point = POINT::default();
+    unsafe {
+        let _ = GetCursorPos(&mut point);
+    }
+    RECT { left: point.x, top: point.y, right: point.x, bottom: point.y + POINTER_HEIGHT }
+}
+
+/// Room left for the pointer itself, in pixels.
+const POINTER_HEIGHT: i32 = 24;
 
 /// Bring the document in line with the controller. Runs in an edit session.
 #[allow(clippy::too_many_arguments)]
@@ -838,7 +796,10 @@ fn write(
                 with(state, |s| s.composition = None);
                 ending.EndComposition(cookie)?;
             }
-            with(state, |s| s.anchor = None);
+            with(state, |s| {
+                s.anchor = None;
+                s.unplaced = None;
+            });
             return Ok(());
         }
 
@@ -863,9 +824,16 @@ fn write(
         // application cannot say where that character is.
         let rect = edit::screen_rect_at(context, cookie, &range, caret as i32)
             .or_else(|| edit::screen_rect(context, cookie, &range));
-        if let Some(rect) = rect {
-            with(state, |s| s.anchor = Some(rect));
-        }
+        match rect {
+            Some(rect) if at_top_left(&rect) => with(state, |s| {
+                s.anchor = Some(*s.unplaced.get_or_insert_with(pointer_anchor));
+            }),
+            Some(rect) => with(state, |s| {
+                s.anchor = Some(rect);
+                s.unplaced = None;
+            }),
+            None => None,
+        };
     }
     Ok(())
 }
@@ -873,13 +841,7 @@ fn write(
 impl TextService_Impl {
     /// Turn the input method off in password fields and back on elsewhere.
     /// Says why it is off, for the timing log.
-    ///
-    /// Where there is no document to type into (no context, or an empty
-    /// one: games) it is off too, unless the user wants to type anyway
-    /// (`type_anywhere`); it then composes detached. An application that
-    /// switched input methods off for its field is never overridden: that
-    /// is how browsers mark password fields.
-    fn refresh_enabled(&self, context: Option<&ITfContext>) -> Option<&'static str> {
+    fn refresh_enabled(&self, context: &ITfContext) -> Option<&'static str> {
         let (client, last) = with(&self.state, |s| {
             let idle = s.controller.as_ref().is_some_and(|c| !c.composing());
             idle.then_some((s.client, s.password))
@@ -887,24 +849,16 @@ impl TextService_Impl {
         .flatten()?;
         // Only the input scope can be momentarily unreadable, so only its
         // answer is remembered.
-        let scope = context.is_some_and(|c| edit::password_scope(c, client).unwrap_or(last));
-        let switch = context.and_then(edit::keyboard_disabled);
-        let nowhere = match context {
-            None => Some("no-context"),
-            Some(_) => switch.filter(|name| *name == "empty-context"),
-        };
-        let (off, detached) = if password_window() {
-            (Some("password-window"), false)
-        } else if scope {
-            (Some("password-scope"), false)
-        } else if let Some(nowhere) = nowhere {
-            if settings::options().type_anywhere { (None, true) } else { (Some(nowhere), false) }
+        let scope = edit::password_scope(context, client).unwrap_or(last);
+        let off = if password_window() {
+            Some("password-window")
+        } else if let Some(switch) = edit::keyboard_disabled(context) {
+            Some(switch)
         } else {
-            (switch, false)
+            scope.then_some("password-scope")
         };
         with(&self.state, |s| {
             s.password = scope;
-            s.detached = detached;
             if let Some(controller) = s.controller.as_mut() {
                 controller.set_enabled(off.is_none());
             }
@@ -912,29 +866,28 @@ impl TextService_Impl {
         off
     }
 
-    fn key_down(&self, context: Option<&ITfContext>, wparam: WPARAM) -> bool {
+    fn key_down(&self, context: &ITfContext, wparam: WPARAM) -> bool {
         let mut timing = timing::Key::start("down");
         let eaten = self.key_down_timed(context, wparam, &mut timing);
         timing.finish();
         eaten
     }
 
-    fn key_down_timed(&self, context: Option<&ITfContext>, wparam: WPARAM, timing: &mut timing::Key) -> bool {
+    fn key_down_timed(&self, context: &ITfContext, wparam: WPARAM, timing: &mut timing::Key) -> bool {
         let key = key_from(wparam);
         self.refresh_enabled(context);
         timing.step("password");
-        let Some((starts, client, detached)) = with(&self.state, |s| {
-            Some((s.controller.as_ref()?.starts_composition(key), s.client, s.detached))
+        let Some((starts, client)) = with(&self.state, |s| {
+            Some((s.controller.as_ref()?.starts_composition(key), s.client))
         })
         .flatten() else {
             return false;
         };
         if starts {
+            // Not readable in every application; the engine copes without.
             // Not readable in every application: then what we committed
             // in this document lately, and nothing in a new one.
-            let text = context
-                .filter(|_| !detached)
-                .and_then(|context| edit::text_before_caret(context, client))
+            let text = edit::text_before_caret(context, client)
                 .unwrap_or_else(|| recent_text(&self.state, context));
             with_controller(&self.state, |c| c.set_context(&text));
             timing.step("context");
@@ -973,7 +926,7 @@ impl TextService_Impl {
     /// Shift on its own switches between Chinese and English. True for the
     /// one release that is eaten: Alt after the phrase key. TSF first asks
     /// (`test`), then delivers; the answer must be the same both times.
-    fn key_up(&self, context: Option<&ITfContext>, wparam: WPARAM, test: bool) -> bool {
+    fn key_up(&self, context: &ITfContext, wparam: WPARAM, test: bool) -> bool {
         let key = key_from(wparam);
         if matches!(key.vk, vk::MENU | 0xA4 | vk::RMENU) {
             let eat = with(&self.state, |s| {
@@ -1157,12 +1110,18 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
 
     fn OnTestKeyDown(&self, context: Ref<ITfContext>, wparam: WPARAM, _: LPARAM) -> Result<BOOL> {
         guard(Ok(false.into()), || {
-            if crate::broken() || wparam.0 as u32 == VK_PACKET {
+            if crate::broken() {
                 return Ok(false.into());
             }
-            // No context: nothing to type into (games, windows without a
-            // text field). See `refresh_enabled`.
-            let context = context.as_ref();
+            let Some(context) = context.as_ref() else {
+                // No document to type into (games, windows without a text
+                // field): the key goes to the application. Logged so that
+                // such applications can be told apart.
+                let mut timing = timing::Key::start("test");
+                timing.step("no-context");
+                timing.finish();
+                return Ok(false.into());
+            };
             let mut timing = timing::Key::start("test");
             adopt_shared_mode_if_idle(&self.state);
             let key = key_from(wparam);
@@ -1194,10 +1153,10 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
 
     fn OnKeyDown(&self, context: Ref<ITfContext>, wparam: WPARAM, _: LPARAM) -> Result<BOOL> {
         guard(Ok(false.into()), || {
-            if crate::broken() || wparam.0 as u32 == VK_PACKET {
+            let Some(context) = context.as_ref().filter(|_| !crate::broken()) else {
                 return Ok(false.into());
-            }
-            Ok(self.key_down(context.as_ref(), wparam).into())
+            };
+            Ok(self.key_down(context, wparam).into())
         })
     }
 
@@ -1205,14 +1164,20 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
     // and acting on it here keeps the application's view of Shift intact.
     fn OnTestKeyUp(&self, context: Ref<ITfContext>, wparam: WPARAM, _: LPARAM) -> Result<BOOL> {
         guard(Ok(false.into()), || {
-            let eaten = !crate::broken() && self.key_up(context.as_ref(), wparam, true);
+            let eaten = match context.as_ref().filter(|_| !crate::broken()) {
+                Some(context) => self.key_up(context, wparam, true),
+                None => false,
+            };
             Ok(eaten.into())
         })
     }
 
     fn OnKeyUp(&self, context: Ref<ITfContext>, wparam: WPARAM, _: LPARAM) -> Result<BOOL> {
         guard(Ok(false.into()), || {
-            let eaten = !crate::broken() && self.key_up(context.as_ref(), wparam, false);
+            let eaten = match context.as_ref().filter(|_| !crate::broken()) {
+                Some(context) => self.key_up(context, wparam, false),
+                None => false,
+            };
             Ok(eaten.into())
         })
     }
@@ -1225,7 +1190,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             if guid.is_null() || unsafe { *guid } != GUID_PHRASE_KEY {
                 return Ok(false.into());
             }
-            self.refresh_enabled(Some(context));
+            self.refresh_enabled(context);
             let eaten = phrase_key(&self.state, context);
             if eaten {
                 let alt = with(&self.state, |s| s.preserved.is_some_and(|key| key.alt)).unwrap_or(false);

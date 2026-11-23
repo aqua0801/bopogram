@@ -1,8 +1,9 @@
 # A window with no text field, like a game: it draws the characters it
 # receives (WM_CHAR) and has no edit control or text store. Unlike a plain
 # Windows Forms form it keeps input methods enabled (CanEnableIme), as games
-# do: Microsoft's input methods can type into it blind. For testing the
-# "type in games" setting. Test tool only; not part of the input method.
+# do: Microsoft's input methods can type into it blind. For testing how
+# the composition is shown where the application cannot show it. Test tool
+# only; not part of the input method.
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing -TypeDefinition @'

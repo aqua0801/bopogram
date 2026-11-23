@@ -105,7 +105,6 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 | 所有程式共用中／英模式 | `%LOCALAPPDATA%\Bopogram\mode-scope.txt`（共用的模式存在 `mode.txt`） | 切換到任一程式時 |
 | 新開的程式以中文或英文開始 | `%LOCALAPPDATA%\Bopogram\keys.json` 的 `start_mode` | 之後開啟的程式 |
 | 單按 Shift 切換中／英 | `keys.json` 的 `shift_toggle` | 約 5 秒內 |
-| 遊戲中也能打中文（預設關閉） | `keys.json` 的 `type_anywhere` | 約 5 秒內 |
 | 選字鍵：1 2 3… 或 A S D F… | `keys.json` 的 `select_keys` | 約 5 秒內 |
 | 每頁候選數：5、7、9、10 | `keys.json` 的 `page_size` | 約 5 秒內 |
 | 片語選單的組合鍵（預設 Alt+\`，清空則停用） | `keys.json` 的 `phrase_key` | 切換到任一程式時 |
@@ -176,12 +175,10 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
   只有引擎不在了（管線斷線，或 host 等了 5 秒仍沒回應）才放棄，組字區的內容原樣送進文件。
 - 密碼欄位會自動停用（不組字、不學習、不記錄）；判斷依賴程式的宣告，
   遇到沒被認出的密碼欄位請先切到英文模式，並回報是哪個程式。
-- 沒有文字框的視窗（遊戲，例如 Minecraft）預設不組字，按鍵原樣交給程式，遊戲操作不受影響。
-  設定勾選「遊戲中也能打中文」後照常組字：組字區顯示在視窗左下角的小框，
-  選好的字以按鍵一個個送出。這時停在中文模式，注音鍵（含 WASD）會被拿去組字，
-  操作遊戲請切到英文；若遊戲用單按 Shift（例如蹲下），也會切換中／英，可在設定關掉「單按 Shift 切換」。
-  程式明確關閉輸入法的欄位（瀏覽器的密碼欄位等）不受這個設定影響，一律停用。
 - 候選視窗位置在少數程式可能不準（程式不回報游標位置時改用系統游標或滑鼠位置）。
+- 不知道游標在哪的程式（遊戲，例如 Minecraft）會把組字區放在視窗或螢幕的最左上角，而且通常不顯示組字內容。
+  遇到這種情況，組字內容改顯示在輸入法自己的小框裡，位置是開始組字時滑鼠游標的下方；
+  候選視窗開著時只顯示候選。全螢幕遊戲可能把小框蓋住。
 - 移除後仍開著的程式會繼續佔住 DLL，直到程式結束。
 
 ## 回報問題
@@ -203,8 +200,7 @@ python D:\bopogram\prototype\tools\review_log.py D:\bopogram-data\bopogram-runti
 **按鍵反應慢**：在設定視窗勾選「計時紀錄」，照常打字到感覺慢的情況出現，
 再把 `%LOCALAPPDATA%\Bopogram\timing.log` 交回來。每行是時間、程式名稱、請求種類與各步驟的耗時
 （`password` 檢查密碼欄位、`context` 讀上文、`engine` 等引擎、`write` 寫入文件、`popup` 候選視窗），
-不含任何打的字。輸入法因故停用時，該行會多一個原因：`password-window`、`password-scope`（密碼欄位）、
-`keyboard-disabled`（程式關閉了輸入法）、`empty-context`、`no-context`（沒有文字框）。24 小時後自動停止。
+不含任何打的字。24 小時後自動停止。
 
 **文字被吞、莫名送出**：開啟引擎的追蹤記錄後重現問題，再把檔案交回來。
 追蹤檔會記下**所有打的字**（密碼欄位除外），查完務必關掉並刪除檔案。
