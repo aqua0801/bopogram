@@ -15,8 +15,8 @@ corrected records what the engine chose at the time.
 The data is personal: keep OUT_DIR outside the repo (default place:
 ~/bopogram-data/personal/) and never put it in git. Only records that were
 approved in the review tool are in the export; this script reads nothing else.
-Records whose items and text differ in length, or that contain a space or a tab,
-are skipped. Then, for example:
+A typed space is written as U+3000 (the engine treats it the same). Records whose
+items and text differ in length, or that contain a tab or a newline, are skipped. Then, for example:
 
     bopogram --config CONFIG eval OUT_DIR/personal.tsv --readings OUT_DIR/personal_bopomofo.tsv --style casual
 """
@@ -39,9 +39,13 @@ def main() -> None:
     with open(args.export, encoding="utf-8") as fh:
         for line in fh:
             r = json.loads(line)
-            items, text, first = r["items"], r["text"], r["first"]
-            fields = [text, first, r.get("context") or "", *items]
-            if len(items) != len(text) or any(c in f for f in fields for c in " \t\n") \
+            # A typed space becomes U+3000: the files are space-separated, and the
+            # engine treats both as a space (not scored by the model).
+            sp = lambda x: x.replace(" ", "\u3000")
+            items, text, first = [sp(i) for i in r["items"]], sp(r["text"]), sp(r["first"])
+            r["context"] = sp(r.get("context") or "")
+            fields = [text, first, r["context"], *items]
+            if len(items) != len(text) or any(c in f for f in fields for c in "\t\n") \
                     or all(i.startswith("=") for i in items):
                 skipped += 1
                 continue

@@ -86,7 +86,8 @@ def load_readings(path: str) -> dict[str, list[str]]:
         for line in fh:
             parts = line.rstrip("\n").split("\t")
             if len(parts) >= 2 and parts[0] != "id":
-                out[parts[0]] = parts[1].split()
+                # ASCII spaces only: a literal full-width space ("=\u3000") is an item.
+                out[parts[0]] = [p for p in parts[1].split(" ") if p]
     return out
 
 
