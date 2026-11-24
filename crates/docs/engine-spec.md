@@ -166,7 +166,18 @@ Rust 版的首選正確率必須與 Python 版完全相同；不同就是移植�
   charlm 關閉的五輪仍 0 差異。
 - 效能：每個音節約 3～4 ms（不含 charlm 時 < 0.2 ms）；載入 0.4 秒。
   記憶體：工作集 498 MB、尖峰 509 MB（charlm 約 +20 MB；n-gram 模型本來就有 481 MB），略超過 500 MB 目標。
-- 尚未做：`eval` 命令。
+- `eval` 命令（`eval.rs`）：三種系統（`bopogram`、`word-unigram`、`char-unigram`）、`--style`、
+  `--charlm-model`／`--charlm-weight`／`--charlm-top`／`--no-charlm`、`--errors`、`--json`，計分與輸出格式照原型。
+  神經模型相關選項（`--neural-*`、`--dump-nbest`、`--beam`、`--nbest`）沒有移植，使用時報錯請改用原型。
+  測試句集 513 句，五種設定（charlm 正式／口語、不用 charlm、兩個對照組）與原型的錯誤清單、指標、
+  列印的表格完全相同（char-unigram 用測試句集自身的字頻當替代字頻表，只為比對兩邊）。
+
+  | 設定 | 首選句正確率 | 每音節延遲 P50／P95（Rust） | 原型（numpy 版 charlm） |
+  |---|---|---|---|
+  | charlm，正式 | 92.98% | 4.3／6.7 ms | 23.4／32.4 ms |
+  | charlm，口語 | 93.76% | 4.2／6.6 ms | 23.6／32.3 ms |
+  | 不用 charlm | 91.62% | 0.10／0.32 ms | 0.38／1.33 ms |
+  | word-unigram 對照組 | 55.95% | 0.008／0.021 ms | |
 
 ### 請 WSL 端處理（兩項都已在 02d8775 處理）
 

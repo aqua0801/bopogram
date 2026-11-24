@@ -74,7 +74,15 @@ impl Rerank {
 fn load_charlm(cfg: &Value, base: &Path, models: Option<&Path>) -> io::Result<Option<Rerank>> {
     let Some(c) = cfg.get("charlm").filter(|c| !c.is_null()) else { return Ok(None) };
     let model = c.get("model").and_then(Value::as_str).ok_or_else(|| invalid("config: \"charlm\" without \"model\"".into()))?;
-    let named = base.join(model);
+    let weight = c.get("weight").and_then(Value::as_f64).unwrap_or(0.5);
+    let top = c.get("top").and_then(Value::as_u64).map_or(5, |v| v as usize);
+    load_rerank(&base.join(model), models, weight, top)
+}
+
+/// A character model from a model path as `load_charlm` finds it; `None`
+/// (with a warning) if there is no `charlm.bin` for it.
+pub fn load_rerank(named: &Path, models: Option<&Path>, weight: f64, top: usize) -> io::Result<Option<Rerank>> {
+    let named = named.to_path_buf();
     let candidates: Vec<PathBuf> = if named.extension().is_some_and(|e| e == "bin") {
         vec![named.clone()]
     } else {
@@ -91,11 +99,7 @@ fn load_charlm(cfg: &Value, base: &Path, models: Option<&Path>) -> io::Result<Op
     if !meta.exists() {
         meta = named.with_file_name("charlm.json");
     }
-    Ok(Some(Rerank {
-        lm: RefCell::new(CharLM::load(&file, &meta)?),
-        weight: c.get("weight").and_then(Value::as_f64).unwrap_or(0.5),
-        top: c.get("top").and_then(Value::as_u64).map_or(5, |v| v as usize),
-    }))
+    Ok(Some(Rerank { lm: RefCell::new(CharLM::load(&file, &meta)?), weight, top }))
 }
 
 /// The user model's bonus as the decoder's extra score.
@@ -300,6 +304,16 @@ impl Engine {
             word_bias,
             charlm,
         })
+    }
+
+    pub fn max_candidates(&self) -> usize {
+        self.max_candidates
+    }
+
+    /// Use another character model, or none (`eval --charlm-model`, `--no-charlm`).
+    pub fn set_charlm(&mut self, charlm: Option<Rerank>) {
+        self.charlm = charlm.map(Rc::new);
+        self.decoder.merge = self.charlm.is_none();
     }
 
     /// How many results the re-ranker chooses from (5 without one, as in engine.py).

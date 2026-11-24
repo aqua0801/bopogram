@@ -62,6 +62,7 @@ pub struct MixtureLM {
     cache: RefCell<HashMap<(StateRef, Token), (f64, StateRef)>>,
     unigrams: RefCell<HashMap<String, f64>>,
     null: StateRef,
+    context_free: std::cell::Cell<bool>,
 }
 
 const LN_10: f64 = std::f64::consts::LN_10;
@@ -95,6 +96,7 @@ impl MixtureLM {
             cache: RefCell::new(HashMap::new()),
             unigrams: RefCell::new(HashMap::new()),
             null,
+            context_free: std::cell::Cell::new(false),
         }
     }
 
@@ -117,14 +119,30 @@ impl MixtureLM {
 
     /// The state at the start of a sentence.
     pub fn begin(&self) -> StateRef {
+        if self.context_free.get() {
+            return Rc::clone(&self.null);
+        }
         let s = self.token("<s>");
         let ids = self.ids.borrow();
         let states = self.models.iter().zip(ids[s as usize].iter()).map(|(m, &id)| m.begin_sentence(id)).collect();
         Rc::new(MixState(states))
     }
 
+    /// Score every word without context from now on (the `word-unigram`
+    /// baseline of `eval`): `score` gives the unigram score and one state.
+    pub fn set_context_free(&self) {
+        self.context_free.set(true);
+    }
+
     /// ln P(token | state) and the following state.
     pub fn score(&self, state: &StateRef, token: Token) -> (f64, StateRef) {
+        if self.context_free.get() {
+            return (self.score_in_context(&self.null.clone(), token).0, Rc::clone(&self.null));
+        }
+        self.score_in_context(state, token)
+    }
+
+    fn score_in_context(&self, state: &StateRef, token: Token) -> (f64, StateRef) {
         if let Some(hit) = self.cache.borrow().get(&(Rc::clone(state), token)) {
             return (hit.0, Rc::clone(&hit.1));
         }
@@ -166,7 +184,7 @@ impl MixtureLM {
         if let Some(&v) = self.unigrams.borrow().get(word) {
             return v;
         }
-        let v = self.score(&self.null.clone(), self.token(word)).0;
+        let v = self.score_in_context(&self.null.clone(), self.token(word)).0;
         let mut unigrams = self.unigrams.borrow_mut();
         if unigrams.len() > UNIGRAM_LIMIT {
             unigrams.clear();

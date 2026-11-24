@@ -2,6 +2,7 @@
 //!
 //!     bopogram convert --keys "ji3y94ru8 "
 //!     bopogram convert --bopomofo "ㄨㄛˇ ㄗㄞˋ ㄐㄧㄚ" --context "上文" --nbest 5
+//!     bopogram eval eval/testset/testset.tsv --readings eval/readings/testset_bopomofo.tsv
 //!     bopogram lookup 垃圾 行
 //!     bopogram lookup --bopomofo "ㄌㄜˋ ㄙㄜˋ"
 //!     bopogram serve [--trace FILE]    # JSON lines on stdin/stdout, see server.rs
@@ -21,7 +22,7 @@ use bopogram::engine::{config_path, load_lexicon, read_config, Engine};
 use bopogram::layout::layout;
 use bopogram::lm::build::build;
 
-const USAGE: &str = "usage: bopogram [--config FILE] [--models DIR] {convert|lookup|serve|build-lm} ...";
+const USAGE: &str = "usage: bopogram [--config FILE] [--models DIR] {convert|eval|lookup|serve|build-lm} ...";
 
 struct Args {
     rest: Vec<String>,
@@ -69,6 +70,7 @@ fn main() -> ExitCode {
     let result = match command.as_str() {
         "convert" => convert(&mut args, config.as_deref(), models.as_deref()),
         "lookup" => lookup(&mut args, config.as_deref()),
+        "eval" => eval(&mut args, config.as_deref(), models.as_deref()),
         "serve" => serve(&mut args, config.as_deref(), models.as_deref()),
         "build-lm" => build_lm(&mut args),
         "lm-probe" => lm_probe(&mut args),
@@ -132,6 +134,59 @@ fn convert(args: &mut Args, config: Option<&str>, models: Option<&Path>) -> io::
             writeln!(out, "{text}")?;
         }
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn eval(args: &mut Args, config: Option<&str>, models: Option<&Path>) -> io::Result<ExitCode> {
+    use bopogram::eval::{run, Options, System};
+    for name in ["--neural-model", "--neural-scores", "--neural-mode", "--neural-weight", "--neural-floor", "--dump-nbest", "--beam", "--nbest"] {
+        if args.rest.iter().any(|a| a == name) {
+            return Ok(fail(format!("{name}: not in this engine (the neural model is not ported); use the prototype")));
+        }
+    }
+    let readings = args.take("--readings");
+    let system_name = args.take("--system").unwrap_or_else(|| "bopogram".into());
+    let char_freq = args.take("--char-freq");
+    let style_name = args.take("--style").unwrap_or_else(|| "formal".into());
+    let charlm_model = args.take("--charlm-model");
+    let parse_f64 = |v: Option<String>, name: &str, default: f64| -> Result<f64, String> {
+        v.map_or(Ok(default), |v| v.parse().map_err(|_| format!("{name}: not a number")))
+    };
+    let charlm_weight = parse_f64(args.take("--charlm-weight"), "--charlm-weight", 0.5);
+    let charlm_top = args.take("--charlm-top").map_or(Ok(5), |v| v.parse::<usize>().map_err(|_| "--charlm-top: not a number".to_owned()));
+    let no_charlm = args.flag("--no-charlm");
+    let errors = args.take("--errors");
+    let json = args.take("--json");
+    let (Ok(charlm_weight), Ok(charlm_top)) = (charlm_weight, charlm_top) else {
+        return Ok(fail("--charlm-weight / --charlm-top: not a number"));
+    };
+    let [testset] = args.rest.as_slice() else {
+        return Ok(fail("usage: bopogram eval TESTSET --readings READINGS [--system bopogram|word-unigram|char-unigram] [--style casual|formal] ..."));
+    };
+    let Some(readings) = readings else { return Ok(fail("--readings is required")) };
+    let Some(system) = System::parse(&system_name) else { return Ok(fail(format!("unknown system {system_name:?}"))) };
+    let Some(style) = Style::parse(&style_name) else { return Ok(fail(format!("unknown style {style_name:?}"))) };
+    let mut engine = Engine::load(&config_path(config), false, models)?;
+    if let Some(model) = charlm_model {
+        match bopogram::engine::load_rerank(Path::new(&model), models, charlm_weight, charlm_top)? {
+            Some(r) => engine.set_charlm(Some(r)),
+            None => return Ok(fail(format!("{model}: no charlm.bin for it"))),
+        }
+    }
+    if no_charlm {
+        engine.set_charlm(None);
+    }
+    let (testset, readings) = (Path::new(testset), Path::new(&readings));
+    let opts = Options {
+        testset,
+        readings,
+        system,
+        char_freq: char_freq.as_deref().map(Path::new),
+        style,
+        errors: errors.as_deref().map(Path::new),
+        json: json.as_deref().map(Path::new),
+    };
+    run(&mut engine, &opts, &mut io::stdout().lock())?;
     Ok(ExitCode::SUCCESS)
 }
 

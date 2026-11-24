@@ -11,6 +11,7 @@
 //! - `context`: the text before the cursor, read into the model state.
 //! - `layout`: keystrokes -> syllables.
 //! - `engine`: the config and one-call conversion.
+//! - `eval`: test-set accuracy, baselines and latency.
 //! - `session`, `symbols`: one composition with its editing rules.
 //! - `server`: the `serve` protocol for the front end.
 //! - `userdict`, `dictops`: the user's own words and exclusions.
@@ -21,6 +22,7 @@ pub mod context;
 pub mod decoder;
 pub mod dictops;
 pub mod engine;
+pub mod eval;
 pub mod layout;
 pub mod lexicon;
 pub mod lm;
