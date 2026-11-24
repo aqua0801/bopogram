@@ -75,6 +75,7 @@ fn main() -> ExitCode {
         "build-lm" => build_lm(&mut args),
         "lm-probe" => lm_probe(&mut args),
         "charlm-check" => charlm_check(&mut args),
+        "charlm-bench" => charlm_bench(&mut args),
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
@@ -360,6 +361,102 @@ fn charlm_check(args: &mut Args) -> io::Result<ExitCode> {
     );
     println!("through the prefix cache: {cached_bad} differ from the reference");
     println!("from scratch {:.1} ms per sequence; with the cache {:.1} ms", fresh * 1e3 / seqs as f64, cached * 1e3 / all.len().max(1) as f64);
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The process's working set and its peak, in bytes (Windows only).
+#[cfg(windows)]
+fn working_set() -> (usize, usize) {
+    #[repr(C)]
+    #[derive(Default)]
+    struct Counters {
+        cb: u32,
+        page_fault_count: u32,
+        peak_working_set: usize,
+        working_set: usize,
+        rest: [usize; 6],
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentProcess() -> isize;
+        fn K32GetProcessMemoryInfo(process: isize, counters: *mut Counters, cb: u32) -> i32;
+    }
+    let mut c = Counters { cb: std::mem::size_of::<Counters>() as u32, ..Default::default() };
+    // SAFETY: a plain query into a struct of the documented layout.
+    unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut c, c.cb) };
+    (c.working_set, c.peak_working_set)
+}
+
+#[cfg(not(windows))]
+fn working_set() -> (usize, usize) {
+    (0, 0)
+}
+
+/// Development: replay recorded re-ranking calls (JSON lines {"context",
+/// "texts"}) and time each. `--cold` evicts the CPU caches before every call
+/// (a pause in typing); `--scores FILE` writes every score, to check that an
+/// optimization changes no number.
+fn charlm_bench(args: &mut Args) -> io::Result<ExitCode> {
+    use bopogram::charlm::CharLM;
+    let cold = args.flag("--cold");
+    let scores_out = args.take("--scores");
+    let [model, calls] = args.rest.as_slice() else {
+        return Ok(fail("usage: bopogram charlm-bench MODEL_DIR CALLS.jsonl [--cold] [--scores OUT]"));
+    };
+    let mut calls_v = Vec::new();
+    for line in std::fs::read_to_string(calls)?.lines() {
+        let rec: serde_json::Value = serde_json::from_str(line).map_err(io::Error::other)?;
+        let context = rec["context"].as_str().unwrap_or("").to_owned();
+        let texts: Vec<String> = rec["texts"].as_array().into_iter().flatten().filter_map(|t| t.as_str().map(str::to_owned)).collect();
+        calls_v.push((context, texts));
+    }
+    let before = working_set().0;
+    let dir = Path::new(model);
+    let started = Instant::now();
+    let mut lm = CharLM::load(&dir.join("charlm.bin"), &dir.join("charlm.json"))?;
+    let loaded = started.elapsed().as_secs_f64();
+    let after_load = working_set().0;
+    let mut flush = if cold { vec![0u8; 512 << 20] } else { Vec::new() };
+    let mut times = Vec::with_capacity(calls_v.len());
+    let mut scores = String::new();
+    for (i, (context, texts)) in calls_v.iter().enumerate() {
+        if cold {
+            flush.fill(i as u8);
+            std::hint::black_box(&flush);
+        }
+        let t0 = Instant::now();
+        let got = lm.score(context, texts);
+        times.push(t0.elapsed().as_secs_f64() * 1000.0);
+        for s in got {
+            scores.push_str(&format!("{s:?}\n"));
+        }
+    }
+    drop(flush);
+    let (now, peak) = working_set();
+    let mut sorted = times.clone();
+    sorted.sort_by(f64::total_cmp);
+    let pct = |q: f64| sorted[((q * (sorted.len() - 1) as f64).round() as usize).min(sorted.len() - 1)];
+    println!(
+        "{} calls ({}, {:?}): P50 {:.2} ms, P95 {:.2} ms, mean {:.2} ms, max {:.1} ms; load {:.2} s",
+        times.len(),
+        if cold { "cold" } else { "warm" },
+        bopogram::int8::best(),
+        pct(0.5),
+        pct(0.95),
+        times.iter().sum::<f64>() / times.len().max(1) as f64,
+        sorted.last().copied().unwrap_or(0.0),
+        loaded
+    );
+    println!(
+        "working set: {} MB before loading, +{} MB after loading, +{} MB at the end (peak {} MB, includes the flush buffer when cold)",
+        before >> 20,
+        (after_load.saturating_sub(before)) >> 20,
+        (now.saturating_sub(before)) >> 20,
+        peak >> 20
+    );
+    if let Some(path) = scores_out {
+        std::fs::write(path, scores)?;
+    }
     Ok(ExitCode::SUCCESS)
 }
 

@@ -16,11 +16,16 @@
 //! the keys, values and output of the sequences scored recently are kept and a
 //! new sequence starts where it parts from the closest of them.
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::Path;
+use std::rc::Rc;
 
 use serde_json::Value;
+
+use crate::int8::{self, Weights};
+use crate::pool::Pool;
 
 const MAGIC: &[u8; 8] = b"BPCLM\x00\x00\x01";
 const ALIGN: usize = 64;
@@ -67,13 +72,6 @@ pub fn pairwise_sum(a: &[f64]) -> f64 {
         n2 -= n2 % 8;
         pairwise_sum(&a[..n2]) + pairwise_sum(&a[n2..])
     }
-}
-
-fn round_half_away(x: f64) -> f64 {
-    if x == 0.0 {
-        return 0.0;
-    }
-    x.signum() * (x.abs() + 0.5).floor()
 }
 
 /// Abramowitz & Stegun 7.1.26; part of the format.
@@ -123,74 +121,91 @@ fn layer_norm(x: &[f32], w: &[f32], b: &[f32], eps: f64, out: &mut Vec<f32>) {
 }
 
 /// 8-bit quantization of one row: (scale, q).
-fn quantize(x: &[f32], q: &mut [i8]) -> f32 {
-    let m = x.iter().fold(0.0f32, |a, v| a.max(v.abs()));
+///
+/// Written so that the compiler can use vector instructions: every step
+/// (max, division, floor, addition) is exact or correctly rounded, so the
+/// vector code gives the scalar results; `quantize` picks AVX-512 when the
+/// CPU has it.
+#[inline(always)]
+fn quantize_body(x: &[f32], q: &mut [i8]) -> f32 {
+    let mut lanes = [0.0f32; 16];
+    let mut chunks = x.chunks_exact(16);
+    for c in &mut chunks {
+        for (l, &v) in lanes.iter_mut().zip(c) {
+            *l = l.max(v.abs());
+        }
+    }
+    let m = chunks.remainder().iter().fold(lanes.iter().fold(0.0f32, |a, &v| a.max(v)), |a, v| a.max(v.abs()));
     let scale = (m as f64 / 127.0) as f32;
     let safe = if scale == 0.0 { 1.0 } else { scale as f64 };
     for (q, &v) in q.iter_mut().zip(x) {
-        *q = round_half_away(v as f64 / safe).clamp(-127.0, 127.0) as i8;
+        let v = v as f64 / safe;
+        // round_half_away: 0.5 away from zero (the sign of a zero does not matter).
+        let r = (v.abs() + 0.5).floor().copysign(v);
+        *q = r.clamp(-127.0, 127.0) as i8;
     }
     scale
 }
 
-// -- integer dot products --------------------------------------------------------
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512bw,avx512vl,avx512dq")]
+unsafe fn quantize_avx512(x: &[f32], q: &mut [i8]) -> f32 {
+    quantize_body(x, q)
+}
 
+fn has_avx512() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        static HAS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *HAS.get_or_init(|| {
+            std::arch::is_x86_feature_detected!("avx512f")
+                && std::arch::is_x86_feature_detected!("avx512bw")
+                && std::arch::is_x86_feature_detected!("avx512vl")
+                && std::arch::is_x86_feature_detected!("avx512dq")
+        })
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    false
+}
+
+fn quantize(x: &[f32], q: &mut [i8]) -> f32 {
+    #[cfg(target_arch = "x86_64")]
+    if has_avx512() {
+        // SAFETY: the CPU has these features.
+        return unsafe { quantize_avx512(x, q) };
+    }
+    quantize_body(x, q)
+}
+
+/// `out[j] = f32(acc[j] · (s · scale[j]) + bias[j])`, in f64 (each step
+/// correctly rounded, so vector code gives the same).
 #[inline(always)]
-fn dot_plain(a: &[i8], b: &[i8]) -> i32 {
-    a.iter().zip(b).map(|(&x, &y)| x as i32 * y as i32).sum()
+fn dequantize_body(acc: &[i32], s: f64, scale: &[f32], bias: &[f32], out: &mut [f32]) {
+    for (((o, &a), &sc), &b) in out.iter_mut().zip(acc).zip(scale).zip(bias) {
+        *o = (a as f64 * (s * sc as f64) + b as f64) as f32;
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-unsafe fn dots_avx2(qx: &[i8], w: &[i8], n_in: usize, acc: &mut [i32]) {
-    use std::arch::x86_64::*;
-    let blocks = n_in / 16;
-    for (j, out) in acc.iter_mut().enumerate() {
-        let row = &w[j * n_in..(j + 1) * n_in];
-        let mut s0 = _mm256_setzero_si256();
-        let mut s1 = _mm256_setzero_si256();
-        let mut k = 0;
-        while k + 1 < blocks {
-            let a0 = _mm256_cvtepi8_epi16(_mm_loadu_si128(qx.as_ptr().add(k * 16) as *const __m128i));
-            let b0 = _mm256_cvtepi8_epi16(_mm_loadu_si128(row.as_ptr().add(k * 16) as *const __m128i));
-            let a1 = _mm256_cvtepi8_epi16(_mm_loadu_si128(qx.as_ptr().add(k * 16 + 16) as *const __m128i));
-            let b1 = _mm256_cvtepi8_epi16(_mm_loadu_si128(row.as_ptr().add(k * 16 + 16) as *const __m128i));
-            s0 = _mm256_add_epi32(s0, _mm256_madd_epi16(a0, b0));
-            s1 = _mm256_add_epi32(s1, _mm256_madd_epi16(a1, b1));
-            k += 2;
-        }
-        if k < blocks {
-            let a0 = _mm256_cvtepi8_epi16(_mm_loadu_si128(qx.as_ptr().add(k * 16) as *const __m128i));
-            let b0 = _mm256_cvtepi8_epi16(_mm_loadu_si128(row.as_ptr().add(k * 16) as *const __m128i));
-            s0 = _mm256_add_epi32(s0, _mm256_madd_epi16(a0, b0));
-        }
-        let s = _mm256_add_epi32(s0, s1);
-        let half = _mm_add_epi32(_mm256_castsi256_si128(s), _mm256_extracti128_si256(s, 1));
-        let half = _mm_add_epi32(half, _mm_shuffle_epi32(half, 0b01_00_11_10));
-        let half = _mm_add_epi32(half, _mm_shuffle_epi32(half, 0b10_11_00_01));
-        let tail = blocks * 16;
-        *out = _mm_cvtsi128_si32(half) + dot_plain(&qx[tail..], &row[tail..]);
-    }
+#[target_feature(enable = "avx512f,avx512bw,avx512vl,avx512dq")]
+unsafe fn dequantize_avx512(acc: &[i32], s: f64, scale: &[f32], bias: &[f32], out: &mut [f32]) {
+    dequantize_body(acc, s, scale, bias, out)
 }
 
-/// `acc[j] = Σ qx · w[j]` for every row j of `w` (rows of `n_in`). Exact.
-fn dots(qx: &[i8], w: &[i8], n_in: usize, acc: &mut [i32]) {
+fn dequantize(acc: &[i32], s: f64, scale: &[f32], bias: &[f32], out: &mut [f32]) {
     #[cfg(target_arch = "x86_64")]
-    {
-        if std::arch::is_x86_feature_detected!("avx2") {
-            // SAFETY: the CPU has AVX2; all reads stay inside the slices.
-            unsafe { dots_avx2(qx, w, n_in, acc) };
-            return;
-        }
+    if has_avx512() {
+        // SAFETY: the CPU has these features.
+        return unsafe { dequantize_avx512(acc, s, scale, bias, out) };
     }
-    for (j, out) in acc.iter_mut().enumerate() {
-        *out = dot_plain(qx, &w[j * n_in..(j + 1) * n_in]);
-    }
+    dequantize_body(acc, s, scale, bias, out)
 }
+
+// -- quantized linear layers ------------------------------------------------------
 
 /// `y = W x + b` with W as 8-bit rows and a scale per row.
 struct QLinear {
-    q: Vec<i8>,
+    w: Weights,
     scale: Vec<f32>,
     bias: Vec<f32>,
     n_in: usize,
@@ -198,20 +213,102 @@ struct QLinear {
 }
 
 impl QLinear {
-    /// One output per row of `x` (rows of `n_in`), appended to `out`.
-    fn apply(&self, x: &[f32], out: &mut Vec<f32>) {
-        out.clear();
-        let mut qx = vec![0i8; self.n_in];
-        let mut acc = vec![0i32; self.n_out];
-        for xs in x.chunks_exact(self.n_in) {
-            let sx = quantize(xs, &mut qx) as f64;
-            dots(&qx, &self.q, self.n_in, &mut acc);
-            for ((&a, &scale), &bias) in acc.iter().zip(&self.scale).zip(&self.bias) {
-                out.push((a as f64 * (sx * scale as f64) + bias as f64) as f32);
-            }
+    /// Quantize every row of `x` (rows of `n_in`): the 8-bit rows into `qx`,
+    /// one scale per row into `sx`.
+    fn quantize_rows(&self, x: &[f32], qx: &mut Vec<i8>, sx: &mut Vec<f64>) {
+        let m = x.len() / self.n_in;
+        qx.resize(m * self.n_in, 0);
+        sx.clear();
+        for (xs, q) in x.chunks_exact(self.n_in).zip(qx.chunks_exact_mut(self.n_in)) {
+            sx.push(quantize(xs, q) as f64);
         }
     }
+
+    /// One output per row of `x` (rows of `n_in`), into `out`. All rows go
+    /// through the integer product together: each weight row is read once.
+    fn apply(&self, x: &[f32], out: &mut Vec<f32>) {
+        let (mut qx, mut sx, mut acc) = (Vec::new(), Vec::new(), Vec::new());
+        self.quantize_rows(x, &mut qx, &mut sx);
+        let m = sx.len();
+        acc.resize(m * self.n_out, 0);
+        int8::matmul(int8::best(), &qx, m, &self.w, 0..self.n_out, &mut acc);
+        out.clear();
+        out.resize(m * self.n_out, 0.0);
+        for ((&s, row), o) in sx.iter().zip(acc.chunks_exact(self.n_out)).zip(out.chunks_exact_mut(self.n_out)) {
+            dequantize(row, s, &self.scale, &self.bias, o);
+        }
+    }
+
+    /// ln Σ exp(y) of every output row (`top + ln Σ exp(y − top)`, the sum in
+    /// numpy's pairwise order), for the output layer. With two threads each
+    /// does half of the outputs: half the integer products, then the half of
+    /// the sum that numpy's pairwise order adds up on its own (its first
+    /// split), so the result is the same.
+    fn log_sum_exp(&self, x: &[f32]) -> Vec<f64> {
+        let (mut qx, mut sx) = (Vec::new(), Vec::new());
+        self.quantize_rows(x, &mut qx, &mut sx);
+        let (m, n) = (sx.len(), self.n_out);
+        let mut acc = vec![0i32; m * n];
+        let mut logits = vec![0.0f32; m * n];
+        let (acc_p, logits_p) = (Shared(acc.as_mut_ptr()), Shared(logits.as_mut_ptr()));
+        let kernel = int8::best();
+        // Outputs `cols` of every row; the largest of them per row.
+        let part = |cols: std::ops::Range<usize>| -> Vec<f32> {
+            let (acc_p, logits_p) = (&acc_p, &logits_p);
+            let mut tops = vec![f32::NEG_INFINITY; m];
+            // SAFETY: the two parts write disjoint columns of buffers of m · n.
+            unsafe {
+                int8::matmul_raw(kernel, &qx, m, &self.w, cols.clone(), acc_p.0);
+                for (i, top) in tops.iter_mut().enumerate() {
+                    let a = std::slice::from_raw_parts(acc_p.0.add(i * n + cols.start), cols.len());
+                    let y = std::slice::from_raw_parts_mut(logits_p.0.add(i * n + cols.start), cols.len());
+                    dequantize(a, sx[i], &self.scale[cols.clone()], &self.bias[cols.clone()], y);
+                    *top = y.iter().fold(f32::NEG_INFINITY, |t, &v| t.max(v));
+                }
+            }
+            tops
+        };
+        // numpy's pairwise sum of more than 128 values adds its two halves
+        // (split at a multiple of 8) on their own.
+        let split = if n > 128 { n / 2 - n / 2 % 8 } else { n };
+        let pool = if split < n { Pool::get() } else { None };
+        let tops: Vec<f64> = match pool {
+            Some(pool) => {
+                let (mut left, mut right) = (Vec::new(), Vec::new());
+                pool.join(|| left = part(0..split), || right = part(split..n));
+                left.iter().zip(&right).map(|(&a, &b)| a.max(b) as f64).collect()
+            }
+            None => part(0..n).into_iter().map(f64::from).collect(),
+        };
+        let sum = |cols: std::ops::Range<usize>| -> Vec<f64> {
+            let mut exps = vec![0.0f64; cols.len()];
+            (0..m)
+                .map(|i| {
+                    for (e, &l) in exps.iter_mut().zip(&logits[i * n + cols.start..i * n + cols.end]) {
+                        *e = (l as f64 - tops[i]).exp();
+                    }
+                    pairwise_sum(&exps)
+                })
+                .collect()
+        };
+        let sums: Vec<f64> = match pool {
+            Some(pool) => {
+                let (mut left, mut right) = (Vec::new(), Vec::new());
+                pool.join(|| left = sum(0..split), || right = sum(split..n));
+                left.iter().zip(&right).map(|(a, b)| a + b).collect()
+            }
+            None => sum(0..n),
+        };
+        drop(acc);
+        sums.iter().zip(&tops).map(|(s, t)| s.ln() + t).collect()
+    }
 }
+
+/// A buffer two threads write disjoint parts of.
+struct Shared<T>(*mut T);
+// SAFETY: used only for disjoint writes while the owner waits (see log_sum_exp).
+unsafe impl<T> Send for Shared<T> {}
+unsafe impl<T> Sync for Shared<T> {}
 
 struct Block {
     norm1: (Vec<f32>, Vec<f32>),
@@ -222,14 +319,36 @@ struct Block {
     ff2: QLinear,
 }
 
-/// Keys and values of every layer and the final normalized output, per
-/// position of one sequence; log-sum-exp of the output once computed.
+/// One position of a sequence: its keys and values in every layer, the final
+/// normalized output, and the output's log-sum-exp once computed. It depends
+/// only on the tokens up to it, so sequences with the same start share it.
+struct Pos {
+    /// Layer after layer, `d` each.
+    k: Box<[f32]>,
+    v: Box<[f32]>,
+    x: Box<[f32]>,
+    lse: Cell<Option<f64>>,
+}
+
+/// A sequence kept for its prefix: the reference keeps the last 32 sequences
+/// and starts a new one from the closest; positions are shared, not copied.
 struct State {
     seq: Vec<u32>,
-    k: Vec<Vec<f32>>,
-    v: Vec<Vec<f32>>,
-    x: Vec<f32>,
-    lse: Vec<Option<f64>>,
+    pos: Vec<Rc<Pos>>,
+}
+
+/// A position while a batch is computed: done before, or new row `r` of the batch.
+#[derive(Clone)]
+enum Slot {
+    Done(Rc<Pos>),
+    New(usize),
+}
+
+/// A kept sequence as the batch plan sees it: in the cache, or planned in this batch.
+#[derive(Clone, Copy)]
+enum Kept {
+    Cache(usize),
+    Plan(usize),
 }
 
 /// The network: log-probabilities of token sequences (`NativeCharLM`).
@@ -301,7 +420,7 @@ impl Model {
         };
         let linear = |name: &str, n_out: usize, n_in: usize| -> io::Result<QLinear> {
             Ok(QLinear {
-                q: i8s(&format!("{name}.q"), &[n_out, n_in])?,
+                w: Weights::new(i8s(&format!("{name}.q"), &[n_out, n_in])?, n_out, n_in),
                 scale: f32s(&format!("{name}.scale"), &[n_out])?,
                 bias: f32s(&format!("{name}.b"), &[n_out])?,
                 n_in,
@@ -323,7 +442,7 @@ impl Model {
             });
         }
         let out = QLinear {
-            q: i8s("emb.q", &[n_chars, d])?,
+            w: Weights::new(i8s("emb.q", &[n_chars, d])?, n_chars, d),
             scale: f32s("emb.scale", &[n_chars])?,
             bias: f32s("out_bias", &[n_chars])?,
             n_in: d,
@@ -349,69 +468,113 @@ impl Model {
         self.cache.clear();
     }
 
-    /// The kept state sharing the longest prefix with `seq`, and that length.
-    fn closest(&self, seq: &[u32]) -> (Option<usize>, usize) {
-        let (mut best, mut n) = (None, 0);
-        for (i, st) in self.cache.iter().enumerate() {
-            let k = st.seq.iter().zip(seq).take_while(|(a, b)| a == b).count();
-            if k > n {
-                best = Some(i);
-                n = k;
-            }
-        }
-        (best, n)
+    fn embed(&self, id: u32, at: usize, x: &mut Vec<f32>) {
+        let d = self.d;
+        let id = id as usize;
+        let scale = self.out.scale[id];
+        let row = self.out.w.row(id);
+        x.extend(row.iter().zip(&self.pos[at * d..(at + 1) * d]).map(|(&q, &p)| q as f32 * scale + p));
     }
 
-    /// Index in the cache of the state for every position of `seq`.
-    fn extend(&mut self, seq: &[u32]) -> usize {
-        let (old, n) = self.closest(seq);
-        let n = n.min(seq.len());
-        if let Some(i) = old {
-            if n == seq.len() && self.cache[i].seq.len() == n {
-                return i;
-            }
-        }
+    /// The positions of every sequence of `seqs`, computing what no kept
+    /// sequence has, all sequences together layer by layer.
+    ///
+    /// The result is what computing the sequences one after another would
+    /// give (the reference): each starts from the kept sequence sharing the
+    /// longest prefix with it, among those kept before it, including the ones
+    /// earlier in the batch, and is kept itself afterwards (the last 32).
+    fn positions(&mut self, seqs: &[&[u32]]) -> Vec<Vec<Rc<Pos>>> {
         let (d, h) = (self.d, self.h);
         let dh = d / h;
-        let len = seq.len();
-        let m = len - n;
-        let mut x = Vec::with_capacity(m * d);
-        for (i, &id) in seq[n..].iter().enumerate() {
-            let id = id as usize;
-            let scale = self.out.scale[id];
-            let row = &self.out.q[id * d..(id + 1) * d];
-            let pos = &self.pos[(n + i) * d..(n + i + 1) * d];
-            x.extend(row.iter().zip(pos).map(|(&q, &p)| q as f32 * scale + p));
+        // -- plan: what each sequence starts from and which rows are new.
+        let mut kept: Vec<Kept> = (0..self.cache.len()).map(Kept::Cache).collect();
+        let mut plans: Vec<(usize, Vec<Slot>)> = Vec::new(); // (sequence, slots)
+        let mut result: Vec<Kept> = Vec::with_capacity(seqs.len());
+        let mut rows: Vec<(usize, usize)> = Vec::new(); // (plan, position) of each new row
+        for (q, seq) in seqs.iter().enumerate() {
+            let seq_of = |k: Kept| -> &[u32] {
+                match k {
+                    Kept::Cache(i) => &self.cache[i].seq,
+                    Kept::Plan(j) => seqs[plans[j].0],
+                }
+            };
+            let (mut best, mut n) = (None, 0);
+            for &k in &kept {
+                let shared = seq_of(k).iter().zip(seq.iter()).take_while(|(a, b)| a == b).count();
+                if shared > n {
+                    best = Some(k);
+                    n = shared;
+                }
+            }
+            let n = n.min(seq.len());
+            if let Some(k) = best {
+                if n == seq.len() && seq_of(k).len() == n {
+                    result.push(k);
+                    continue;
+                }
+            }
+            let mut slots: Vec<Slot> = match best {
+                Some(Kept::Cache(i)) => self.cache[i].pos[..n].iter().map(|p| Slot::Done(Rc::clone(p))).collect(),
+                Some(Kept::Plan(j)) => plans[j].1[..n].to_vec(),
+                None => Vec::new(),
+            };
+            let plan = plans.len();
+            for at in n..seq.len() {
+                slots.push(Slot::New(rows.len()));
+                rows.push((plan, at));
+            }
+            plans.push((q, slots));
+            kept.push(Kept::Plan(plan));
+            if kept.len() > PREFIX_CACHE {
+                kept.remove(0);
+            }
+            result.push(Kept::Plan(plan));
         }
-        let mut ks = Vec::with_capacity(self.blocks.len());
-        let mut vs = Vec::with_capacity(self.blocks.len());
+
+        // -- compute the new rows, all sequences together.
+        let m = rows.len();
+        let mut x = Vec::with_capacity(m * d);
+        for &(plan, at) in &rows {
+            self.embed(seqs[plans[plan].0][at], at, &mut x);
+        }
+        let layers = self.blocks.len();
+        let mut new_k = vec![0.0f32; m * layers * d];
+        let mut new_v = vec![0.0f32; m * layers * d];
         let (mut ln, mut qkv, mut tmp, mut ff) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let mut a = vec![0.0f32; m * d];
-        let mut scores = vec![0.0f64; len];
-        let mut e = vec![0.0f64; len];
+        let max_len = seqs.iter().map(|s| s.len()).max().unwrap_or(0);
+        let mut scores = vec![0.0f64; max_len];
+        let mut e = vec![0.0f64; max_len];
         let mut acc = vec![0.0f64; dh];
         for (li, blk) in self.blocks.iter().enumerate() {
             layer_norm(&x, &blk.norm1.0, &blk.norm1.1, self.eps, &mut ln);
             blk.qkv.apply(&ln, &mut qkv);
-            let mut k = Vec::with_capacity(len * d);
-            let mut v = Vec::with_capacity(len * d);
-            if let Some(o) = old {
-                k.extend_from_slice(&self.cache[o].k[li][..n * d]);
-                v.extend_from_slice(&self.cache[o].v[li][..n * d]);
+            for (r, row) in qkv.chunks_exact(3 * d).enumerate() {
+                let at = (r * layers + li) * d;
+                new_k[at..at + d].copy_from_slice(&row[d..2 * d]);
+                new_v[at..at + d].copy_from_slice(&row[2 * d..]);
             }
-            for row in qkv.chunks_exact(3 * d) {
-                k.extend_from_slice(&row[d..2 * d]);
-                v.extend_from_slice(&row[2 * d..]);
+            fn kv<'a>(slot: &'a Slot, new: (&'a [f32], &'a [f32]), li: usize, layers: usize, d: usize) -> (&'a [f32], &'a [f32]) {
+                match slot {
+                    Slot::Done(p) => (&p.k[li * d..(li + 1) * d], &p.v[li * d..(li + 1) * d]),
+                    Slot::New(r) => {
+                        let at = (r * layers + li) * d;
+                        (&new.0[at..at + d], &new.1[at..at + d])
+                    }
+                }
             }
-            for i in 0..m {
-                let at = n + i; // sees keys 0 ..= at
-                let q = &qkv[i * 3 * d..i * 3 * d + d];
+            let key = |slot| kv(slot, (&new_k, &new_v), li, layers, d);
+            for (r, &(plan, at)) in rows.iter().enumerate() {
+                // Row `at` of its sequence sees positions 0 ..= at; the softmax
+                // sums over the whole sequence (zeros after `at`), as the reference.
+                let slots = &plans[plan].1;
+                let len = slots.len();
+                let q = &qkv[r * 3 * d..r * 3 * d + d];
                 for hd in 0..h {
-                    let sl = hd * dh..(hd + 1) * dh;
-                    let qh = &q[sl.clone()];
+                    let qh = &q[hd * dh..(hd + 1) * dh];
                     let mut top = f64::NEG_INFINITY;
-                    for j in 0..=at {
-                        let kh = &k[j * d + hd * dh..j * d + (hd + 1) * dh];
+                    for (j, slot) in slots[..=at].iter().enumerate() {
+                        let kh = &key(slot).0[hd * dh..(hd + 1) * dh];
                         let mut dot = 0.0f64;
                         for t in 0..dh {
                             dot += qh[t] as f64 * kh[t] as f64;
@@ -423,17 +586,17 @@ impl Model {
                     for j in 0..len {
                         e[j] = if j <= at { (scores[j] - top).exp() as f32 as f64 } else { 0.0 };
                     }
-                    let total = pairwise_sum(&e);
-                    let out = &mut a[i * d + hd * dh..i * d + (hd + 1) * dh];
+                    let total = pairwise_sum(&e[..len]);
                     acc.fill(0.0);
-                    for j in 0..=at {
+                    for (j, slot) in slots[..=at].iter().enumerate() {
                         let p = (e[j] / total) as f32 as f64;
-                        let vh = &v[j * d + hd * dh..j * d + (hd + 1) * dh];
-                        for t in 0..acc.len() {
+                        let vh = &key(slot).1[hd * dh..(hd + 1) * dh];
+                        for t in 0..dh {
                             acc[t] += p * vh[t] as f64;
                         }
                     }
-                    for t in 0..acc.len() {
+                    let out = &mut a[r * d + hd * dh..r * d + (hd + 1) * dh];
+                    for t in 0..dh {
                         out[t] = acc[t] as f32;
                     }
                 }
@@ -449,80 +612,108 @@ impl Model {
             for (xv, &y) in x.iter_mut().zip(&tmp) {
                 *xv += y;
             }
-            ks.push(k);
-            vs.push(v);
             if let Some(t) = self.trace_layers.as_mut() {
                 t.push(x.clone());
             }
         }
         layer_norm(&x, &self.norm.0, &self.norm.1, self.eps, &mut ln);
-        let (mut xs, mut lse) = (Vec::with_capacity(len * d), Vec::with_capacity(len));
-        if let Some(o) = old {
-            xs.extend_from_slice(&self.cache[o].x[..n * d]);
-            lse.extend_from_slice(&self.cache[o].lse[..n]);
+        let done: Vec<Rc<Pos>> = (0..m)
+            .map(|r| {
+                let span = r * layers * d..(r + 1) * layers * d;
+                Rc::new(Pos {
+                    k: new_k[span.clone()].into(),
+                    v: new_v[span].into(),
+                    x: ln[r * d..(r + 1) * d].into(),
+                    lse: Cell::new(None),
+                })
+            })
+            .collect();
+        let finish = |slots: &[Slot]| -> Vec<Rc<Pos>> {
+            slots
+                .iter()
+                .map(|s| match s {
+                    Slot::Done(p) => Rc::clone(p),
+                    Slot::New(r) => Rc::clone(&done[*r]),
+                })
+                .collect()
+        };
+        let planned: Vec<Vec<Rc<Pos>>> = plans.iter().map(|(_, slots)| finish(slots)).collect();
+        let out = result
+            .iter()
+            .map(|&k| match k {
+                Kept::Cache(i) => self.cache[i].pos.clone(),
+                Kept::Plan(j) => planned[j].clone(),
+            })
+            .collect();
+        // Keep the new sequences, as the reference does after each.
+        for ((q, _), pos) in plans.iter().zip(planned) {
+            self.cache.push(State { seq: seqs[*q].to_vec(), pos });
+            if self.cache.len() > PREFIX_CACHE {
+                self.cache.remove(0);
+            }
         }
-        xs.extend_from_slice(&ln);
-        lse.resize(len, None);
-        self.cache.push(State { seq: seq.to_vec(), k: ks, v: vs, x: xs, lse });
-        if self.cache.len() > PREFIX_CACHE {
-            self.cache.remove(0);
+        out
+    }
+
+    /// Sum of ln P(seq[i + 1] | seq[..= i]) for i = first .. len - 2, for
+    /// each (seq, first), computed together.
+    pub fn logp_batch(&mut self, items: &[(&[u32], usize)]) -> Vec<f64> {
+        let seqs: Vec<&[u32]> = items.iter().map(|(s, _)| *s).collect();
+        let all = self.positions(&seqs);
+        let d = self.d;
+        let out = &self.out;
+        // The output layer for every position whose log-sum-exp is not known
+        // yet, all at once; a position shared by several sequences once.
+        let mut todo: Vec<Rc<Pos>> = Vec::new();
+        for ((seq, first), pos) in items.iter().zip(&all) {
+            for p in &pos[*first..seq.len().saturating_sub(1)] {
+                if p.lse.get().is_none() && !todo.iter().any(|t| Rc::ptr_eq(t, p)) {
+                    todo.push(Rc::clone(p));
+                }
+            }
         }
-        self.cache.len() - 1
+        if !todo.is_empty() {
+            let rows: Vec<f32> = todo.iter().flat_map(|p| p.x.iter().copied()).collect();
+            for (p, lse) in todo.iter().zip(out.log_sum_exp(&rows)) {
+                p.lse.set(Some(lse));
+            }
+        }
+        let mut qx = vec![0i8; d];
+        items
+            .iter()
+            .zip(&all)
+            .map(|((seq, first), pos)| {
+                let mut total = 0.0;
+                for i in *first..seq.len().saturating_sub(1) {
+                    let target = seq[i + 1] as usize;
+                    // One output of the same row: the same arithmetic as the full row.
+                    let sx = quantize(&pos[i].x, &mut qx) as f64;
+                    let acc = int8::dot_plain(&qx, out.w.row(target));
+                    let logit = (acc as f64 * (sx * out.scale[target] as f64) + out.bias[target] as f64) as f32;
+                    // Added in order, as the reference does.
+                    total += logit as f64 - pos[i].lse.get().unwrap_or(f64::NAN);
+                }
+                total
+            })
+            .collect()
     }
 
     /// Sum of ln P(seq[i + 1] | seq[..= i]) for i = first .. len - 2.
     pub fn logp(&mut self, seq: &[u32], first: usize) -> f64 {
-        let at = self.extend(seq);
-        let end = seq.len().saturating_sub(1);
-        let d = self.d;
-        let (out, cache) = (&self.out, &mut self.cache);
-        let st = &mut cache[at];
-        let mut qx = vec![0i8; d];
-        let mut logits = Vec::new();
-        let mut exps = vec![0.0f64; out.n_out];
-        let mut parts = Vec::with_capacity(end.saturating_sub(first));
-        for i in first..end {
-            let row = &st.x[i * d..(i + 1) * d];
-            let target = seq[i + 1] as usize;
-            let lse = match st.lse[i] {
-                Some(v) => v,
-                None => {
-                    out.apply(row, &mut logits);
-                    let top = logits.iter().fold(f64::NEG_INFINITY, |a, &l| a.max(l as f64));
-                    for (e, &l) in exps.iter_mut().zip(&logits) {
-                        *e = (l as f64 - top).exp();
-                    }
-                    let v = pairwise_sum(&exps).ln() + top;
-                    st.lse[i] = Some(v);
-                    v
-                }
-            };
-            // One output of the same row: the same arithmetic as the full row.
-            let sx = quantize(row, &mut qx) as f64;
-            let acc = dot_plain(&qx, &out.q[target * d..(target + 1) * d]);
-            let logit = (acc as f64 * (sx * out.scale[target] as f64) + out.bias[target] as f64) as f32;
-            parts.push(logit as f64 - lse);
-        }
-        // Added in order, as the reference does.
-        parts.iter().fold(0.0, |total, &p| total + p)
+        self.logp_batch(&[(seq, first)])[0]
     }
 
     /// The hidden vectors of `seq` after the embedding and after each block,
     /// computed from scratch (the test vectors' "trace").
     pub fn trace(&mut self, seq: &[u32]) -> Vec<Vec<f32>> {
         self.clear_cache();
-        let mut out = Vec::new();
-        let d = self.d;
-        let mut x: Vec<f32> = Vec::with_capacity(seq.len() * d);
-        for (i, &id) in seq.iter().enumerate() {
-            let id = id as usize;
-            let scale = self.out.scale[id];
-            let row = &self.out.q[id * d..(id + 1) * d];
-            x.extend(row.iter().zip(&self.pos[i * d..(i + 1) * d]).map(|(&q, &p)| q as f32 * scale + p));
+        let mut x = Vec::with_capacity(seq.len() * self.d);
+        for (at, &id) in seq.iter().enumerate() {
+            self.embed(id, at, &mut x);
         }
-        out.push(x);
+        let mut out = vec![x];
         self.trace_layers = Some(Vec::new());
-        self.extend(seq);
+        self.positions(&[seq]);
         out.extend(self.trace_layers.take().unwrap_or_default());
         self.clear_cache();
         out
@@ -687,9 +878,10 @@ impl CharLM {
                 missing.push(t);
             }
         }
-        for t in missing {
-            let (seq, first) = self.sequence(&context, t);
-            let score = self.model.logp(&seq, first);
+        let built: Vec<(Vec<u32>, usize)> = missing.iter().map(|t| self.sequence(&context, t)).collect();
+        let items: Vec<(&[u32], usize)> = built.iter().map(|(s, f)| (s.as_slice(), *f)).collect();
+        let scores = if items.is_empty() { Vec::new() } else { self.model.logp_batch(&items) };
+        for (t, score) in missing.into_iter().zip(scores) {
             self.touch((context.clone(), t.clone()), score);
         }
         let mut out = Vec::with_capacity(texts.len());
@@ -723,21 +915,36 @@ mod tests {
         // Small sums are sequential.
         assert_eq!(pairwise_sum(&a[..5]), a[..5].iter().fold(0.0, |s, v| s + v));
         assert!((pairwise_sum(&a) - a.iter().sum::<f64>()).abs() < 1e-12);
-        assert_eq!(round_half_away(2.5), 3.0);
-        assert_eq!(round_half_away(-2.5), -3.0);
-        assert_eq!(round_half_away(-0.4), 0.0);
+    }
+
+    /// The reference's quantization, step by step (charlm_native.py).
+    fn quantize_reference(x: &[f32]) -> (f32, Vec<i8>) {
+        let m = x.iter().fold(0.0f32, |a, v| a.max(v.abs()));
+        let scale = (m as f64 / 127.0) as f32;
+        let safe = if scale == 0.0 { 1.0 } else { scale as f64 };
+        let round_half_away = |v: f64| if v == 0.0 { 0.0 } else { v.signum() * (v.abs() + 0.5).floor() };
+        (scale, x.iter().map(|&v| round_half_away(v as f64 / safe).clamp(-127.0, 127.0) as i8).collect())
     }
 
     #[test]
-    fn dot_products_agree() {
-        let qx: Vec<i8> = (0..400).map(|i| ((i * 37) % 255 - 127) as i8).collect();
-        let w: Vec<i8> = (0..400 * 3).map(|i| ((i * 91) % 255 - 127) as i8).collect();
-        for n_in in [16, 48, 384, 400] {
-            let mut acc = vec![0; 3];
-            dots(&qx[..n_in], &w[..3 * n_in], n_in, &mut acc);
-            for j in 0..3 {
-                assert_eq!(acc[j], dot_plain(&qx[..n_in], &w[j * n_in..(j + 1) * n_in]));
-            }
+    fn quantization_matches_the_reference() {
+        let mut seed = 7u64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((seed >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0) as f32
+        };
+        let mut rows: Vec<Vec<f32>> = vec![vec![0.0; 40], vec![-0.0, 0.0, 1.0, -1.0, 0.5], vec![2.5, -2.5, 127.0, 0.25, -0.75, 63.5]];
+        for len in [1, 15, 16, 17, 384, 1536] {
+            rows.push((0..len).map(|_| next() * 10.0).collect());
+        }
+        for x in rows {
+            let (want_s, want_q) = quantize_reference(&x);
+            let mut q = vec![0i8; x.len()];
+            assert_eq!(quantize_body(&x, &mut q).to_bits(), want_s.to_bits());
+            assert_eq!(q, want_q);
+            let mut q = vec![0i8; x.len()];
+            assert_eq!(quantize(&x, &mut q).to_bits(), want_s.to_bits());
+            assert_eq!(q, want_q);
         }
     }
 }
