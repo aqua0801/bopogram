@@ -3,6 +3,13 @@
 Windows 端 2026-11-24 整理。E4（Rust 引擎接上 charlm）需要 ONNX Runtime，準備過程中遇到兩個問題：
 遙測，以及上游原始碼庫被下架。這份文件說明查到的事實、Windows 端做過的檢查，以及需要兩邊一起決定的事。
 
+## 使用者的決定（2026-11-24）
+
+1. charlm **照常使用 1.32.0**，並關閉遙測。
+2. 原型在 `charlm.py`、`neural.py` 加上 `ort.disable_telemetry_events()`（**WSL 端處理**）。
+3. Rust 引擎先做 E5（純 n-gram 接上前端），E4 之後再做：用 1.32.0，啟動時呼叫 `DisableTelemetryEvents`。
+4. neural 比照 charlm 處理。
+
 ## 目前進度（Rust 引擎）
 
 | 里程碑 | 狀態 |
