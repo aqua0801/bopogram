@@ -7,7 +7,8 @@ log-probability to the n-gram score of each of the decoder's `top` best results
 and shows the highest. It never adds a result the decoder did not produce, so
 dictionary words and the user's picks stay in control.
 
-Nothing here uses the network: the model is a local file run by ONNX Runtime.
+Nothing here uses the network: the model is a local file, run either in the
+engine's own format (charlm.bin, charlm_native.py) or by ONNX Runtime (.onnx).
 """
 
 from __future__ import annotations
@@ -24,18 +25,22 @@ CACHE_SIZE = 2000
 
 class CharLMScorer:
     def __init__(self, model_path: str | Path, threads: int = 2):
-        import onnxruntime as ort
-
-        # Official builds send usage events through Windows' event tracing; turn
-        # them off before any session exists (no network functions, CLAUDE.md).
-        ort.disable_telemetry_events()
-
         model_path = Path(model_path)
         meta = json.loads(model_path.with_name("charlm.json").read_text(encoding="utf-8"))
-        opts = ort.SessionOptions()
-        opts.intra_op_num_threads = threads
-        opts.inter_op_num_threads = 1
-        self._session = ort.InferenceSession(str(model_path), opts, providers=["CPUExecutionProvider"])
+        self._session = self._native = None
+        if model_path.suffix == ".bin":  # the engine's own format: no ONNX Runtime
+            from .charlm_native import NativeCharLM
+            self._native = NativeCharLM(model_path)
+        else:
+            import onnxruntime as ort
+
+            # Official builds send usage events through Windows' event tracing; turn
+            # them off before any session exists (no network functions, CLAUDE.md).
+            ort.disable_telemetry_events()
+            opts = ort.SessionOptions()
+            opts.intra_op_num_threads = threads
+            opts.inter_op_num_threads = 1
+            self._session = ort.InferenceSession(str(model_path), opts, providers=["CPUExecutionProvider"])
         self._char_id = {c: i for i, c in enumerate(meta["chars"])}
         self._bos = meta["bos"]
         self._eos = meta["eos"]
@@ -72,13 +77,17 @@ class CharLMScorer:
                 seq = (prefix + body)[-self._max_len:]
                 seqs.append(seq)
                 firsts.append(max(0, len(seq) - len(body) - 1))  # first scored output position
-            n = max(len(s) for s in seqs)
-            ids = np.zeros((len(seqs), n), dtype=np.int64)
-            for i, s in enumerate(seqs):
-                ids[i, : len(s)] = s
-            logp = self._session.run(None, {"ids": ids})[0]
-            for i, (t, s, a) in enumerate(zip(missing, seqs, firsts)):
-                self._cache[(context, t)] = float(logp[i, a: len(s) - 1].sum())
+            if self._native is not None:
+                for t, s, a in zip(missing, seqs, firsts):
+                    self._cache[(context, t)] = self._native.logp(s, a)
+            else:
+                n = max(len(s) for s in seqs)
+                ids = np.zeros((len(seqs), n), dtype=np.int64)
+                for i, s in enumerate(seqs):
+                    ids[i, : len(s)] = s
+                logp = self._session.run(None, {"ids": ids})[0]
+                for i, (t, s, a) in enumerate(zip(missing, seqs, firsts)):
+                    self._cache[(context, t)] = float(logp[i, a: len(s) - 1].sum())
         out = []
         for t in texts:
             key = (context, t)
