@@ -102,7 +102,7 @@ fn convert(args: &mut Args, config: Option<&str>) -> io::Result<ExitCode> {
         _ => return Ok(fail("give one of --keys, --bopomofo, --batch")),
     };
     let started = Instant::now();
-    let mut engine = Engine::load(&config_path(config))?;
+    let mut engine = Engine::load(&config_path(config), false)?;
     if let Some(style) = style {
         match Style::parse(&style) {
             Some(s) => engine.set_style(s),
@@ -191,12 +191,12 @@ fn serve(args: &mut Args, config: Option<&str>) -> io::Result<ExitCode> {
     let Some(layout) = layout(&layout_name) else {
         return Ok(fail(format!("unknown layout {layout_name:?}")));
     };
-    let engine = Engine::load(&config_path(config))?;
+    let engine = std::rc::Rc::new(Engine::load(&config_path(config), true)?);
     let trace: Option<Box<dyn Write>> = match trace {
         Some(path) => Some(Box::new(std::fs::OpenOptions::new().create(true).append(true).open(path)?)),
         None => None,
     };
-    bopogram::server::serve(&engine, layout, io::stdin().lock(), io::stdout().lock(), trace)?;
+    bopogram::server::serve(engine, layout, io::stdin().lock(), io::stdout().lock(), trace)?;
     Ok(ExitCode::SUCCESS)
 }
 

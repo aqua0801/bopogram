@@ -25,6 +25,9 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Map, Value};
 
+use std::rc::Rc;
+
+use crate::dictops::{self, Fields, OpError, OPS};
 use crate::engine::Engine;
 use crate::layout::Layout;
 use crate::session::Session;
@@ -111,6 +114,23 @@ fn handle(session: &mut Session, req: &Map<String, Value>) -> Result<Map<String,
         "learning" => session.learn = py_truthy(req.get("enabled"), true),
         "style" => ok = session.set_style(&py_str(req.get("style"), "")),
         "state" => {}
+        _ if OPS.contains(&op) => {
+            let text = |name: &str, default: &str| py_str(req.get(name), default);
+            let int = |name: &str, default: i64| {
+                py_int(req.get(name), default).ok_or_else(|| OpError::Bad(format!("ValueError: bad {name:?}")))
+            };
+            let fields = Fields { req, text: &text, int: &int };
+            let engine = Rc::clone(&session.engine);
+            match dictops::handle(&engine, session, op, &fields) {
+                Ok(out) => res.extend(out),
+                Err(OpError::Dict(err)) => {
+                    ok = false;
+                    res.insert("error".into(), Value::String(err.message));
+                    res.insert("reason".into(), Value::String(err.reason.into()));
+                }
+                Err(OpError::Bad(message)) => return Err(BadRequest(message)),
+            }
+        }
         _ => {
             let shown = req.get("op").map_or("None".to_owned(), |v| v.to_string());
             let mut out = Map::new();
@@ -164,7 +184,7 @@ fn clock() -> String {
 /// debugging aid for front-end work and records everything typed, so it is
 /// off unless asked for and must not be left on.
 pub fn serve(
-    engine: &Engine,
+    engine: Rc<Engine>,
     layout: &'static Layout,
     input: impl BufRead,
     mut out: impl Write,
@@ -195,13 +215,13 @@ pub fn serve(
                     None => Err(BadRequest("ValueError: bad \"sid\"".into())),
                     Some(sid) if req.get("op").and_then(Value::as_str) == Some("close") => {
                         sessions.remove(&sid);
+                        engine.save_user();
                         let mut res = Map::new();
                         res.insert("ok".into(), Value::Bool(true));
                         Ok(res)
                     }
                     Some(sid) => {
-                        let session =
-                            sessions.entry(sid).or_insert_with(|| Session::new(engine.new_decoder(), layout));
+                        let session = sessions.entry(sid).or_insert_with(|| Session::new(Rc::clone(&engine), layout));
                         handle(session, &req)
                     }
                 };
@@ -227,6 +247,7 @@ pub fn serve(
             t.flush()?;
         }
     }
+    engine.save_user();
     Ok(())
 }
 

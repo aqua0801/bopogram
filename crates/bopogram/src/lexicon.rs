@@ -9,6 +9,8 @@ use std::io;
 use std::path::Path;
 use std::rc::Rc;
 
+use crate::userdict::UserDict;
+
 pub const MAX_WORD_LEN: usize = 8;
 pub const READING_FLOOR: f64 = -8.0;
 
@@ -185,6 +187,44 @@ impl Lexicon {
             user.iter().cloned().chain(base.iter().filter(|w| !user.contains(w)).cloned()).collect()
         };
         words.into_iter().filter(|w| !self.blocked(w, syllables)).collect()
+    }
+
+    /// Rebuild the user's layer (words and exclusions) after the user's
+    /// dictionary changed; the base tables never change.
+    pub fn refresh(&mut self, user: Option<&UserDict>) {
+        self.user_by_reading.clear();
+        self.user_entries.clear();
+        self.user_readings.clear();
+        self.excluded.clear();
+        if let Some(u) = user {
+            for (word, readings) in &u.user {
+                self.user_readings.insert(word.clone(), readings.clone());
+                let shared: Word = Rc::from(word.as_str());
+                for syls in readings {
+                    self.user_entries.insert((word.clone(), syls.clone()));
+                    let key = self.intern(syls);
+                    self.user_by_reading.entry(key).or_default().push(Rc::clone(&shared));
+                }
+            }
+            for (text, readings) in &u.excluded {
+                if !readings.is_empty() {
+                    self.excluded.insert(text.clone(), readings.clone());
+                }
+            }
+        }
+        let mut lengths: Vec<usize> = self.excluded.keys().map(|t| t.chars().count()).collect();
+        lengths.sort_unstable();
+        lengths.dedup();
+        self.excluded_lengths = lengths;
+        self.excluded_prefixes = self
+            .excluded
+            .keys()
+            .flat_map(|t| {
+                let chars: Vec<char> = t.chars().collect();
+                (1..chars.len()).map(move |k| chars[..k].iter().collect::<String>())
+            })
+            .collect();
+        self.version += 1;
     }
 
     /// All (syllables, source tag) pairs of a word, the user's readings included.

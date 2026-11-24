@@ -125,6 +125,18 @@ Rust 版的首選正確率必須與 Python 版完全相同；不同就是移植�
 - 參考：對正式對照答案（含 charlm）同三輪有 3,133 個差異，全在 testset／devset，屬 E4 範圍。
 - 使用者詞庫、學習（`userdict`、`learning` 兩輪）屬 E3，尚未實作。
 
+### E3（2026-11-24）
+
+- 使用者詞庫（`userdict.rs`、`dictops.rs`，字典上的使用者層在 `lexicon.rs`）、個人化學習（`user.rs`）、
+  打字紀錄（`typing_log.rs`）。`close` 與結束時強制存 `user.json`，平常最多 30 秒存一次，與原型相同。
+- 對照答案（charlm 關閉）五輪全部 **0 差異**，含結束時的 `user.json`、`userdict.tsv`、`excluded.tsv`。
+- 打字紀錄不在對照答案裡：以同一串請求（上文含英數、手動選字、只有符號的送出）分別送給兩個引擎，
+  紀錄（`t` 以外）與 `user.json` 相同。
+- 打字紀錄的時間要本地時間，標準函式庫沒有時區：Windows 上呼叫 kernel32 的 `GetLocalTime`
+  （只此一處，非 Windows 平台用 UTC），引擎仍可在其他平台編譯。
+- `readings` 的逐字組合，原型以 Python `set` 迭代讀音，分數相同時順序會隨雜湊種子改變。
+  實測（種子 0～5、數個多音字組合）因讀音機率不同而沒有同分，Rust 以字典中讀音出現順序為準。
+
 ### 請 WSL 端處理（兩項都已在 02d8775 處理）
 
 WSL 端的處理結果：ARPA 改為最短的精確 float32 文字，back-off 以 KenLM 的分數解出；web 與 `.binary`

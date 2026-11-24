@@ -15,9 +15,18 @@ use std::rc::Rc;
 use serde_json::Value;
 
 use crate::context::context_state;
-use crate::decoder::{Decoder, Style};
+use crate::decoder::{Decoder, ExtraScore, Style};
 use crate::lexicon::Lexicon;
 use crate::lm::MixtureLM;
+use crate::typing_log::TypingLog;
+use crate::user::UserModel;
+use crate::userdict::UserDict;
+
+/// The user model's bonus as the decoder's extra score.
+fn extra_score(user: &Option<Rc<RefCell<UserModel>>>) -> Option<ExtraScore> {
+    let user = Rc::clone(user.as_ref()?);
+    Some(Rc::new(move |prev: Option<&str>, word: &str| user.borrow().bonus(prev, word)))
+}
 
 pub fn default_word_bias() -> HashMap<String, f64> {
     // The models pick 她 / 它 where 他 is meant about as often as the reverse;
@@ -63,10 +72,34 @@ pub fn model_file(path: &Path) -> PathBuf {
     }
 }
 
+/// Added to the score of every user word unless the config says otherwise.
+pub const USER_DICT_BONUS: f64 = 6.0;
+
+/// A path from the config: `~` is the home directory, relative paths are
+/// relative to the config's folder.
+fn user_path(value: &str, base: &Path) -> PathBuf {
+    let home = || std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from);
+    let path = match value.strip_prefix("~/").or_else(|| value.strip_prefix("~\\")) {
+        Some(rest) => home().map_or_else(|| PathBuf::from(value), |h| h.join(rest)),
+        None if value == "~" => home().unwrap_or_else(|| PathBuf::from(value)),
+        None => PathBuf::from(value),
+    };
+    if path.is_absolute() {
+        path
+    } else {
+        base.join(path)
+    }
+}
+
 pub struct Engine {
     pub lexicon: Rc<RefCell<Lexicon>>,
     pub lm: Rc<MixtureLM>,
     pub decoder: Decoder,
+    /// The user's dictionary (words and exclusions), if enabled.
+    pub userdict: Option<RefCell<UserDict>>,
+    /// Personal learning, if enabled.
+    pub user: Option<Rc<RefCell<UserModel>>>,
+    pub typing_log: Option<TypingLog>,
     beam: usize,
     max_candidates: usize,
     word_penalty: f64,
@@ -77,7 +110,9 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn load(config_file: &Path) -> io::Result<Engine> {
+    /// `use_user_model` false leaves out everything personal (user model, user
+    /// dictionary, typing log), as one-off conversions do.
+    pub fn load(config_file: &Path, use_user_model: bool) -> io::Result<Engine> {
         let cfg = read_config(config_file)?;
         let base = config_file.parent().unwrap_or(Path::new("."));
         let mut lexicon = load_lexicon(&cfg, base)?;
@@ -109,6 +144,31 @@ impl Engine {
             Some(Value::Object(map)) => map.iter().filter_map(|(k, v)| Some((k.clone(), v.as_f64()?))).collect(),
             _ => default_word_bias(),
         };
+        let text_of = |name: &str| cfg.get(name).and_then(Value::as_str).filter(|v| !v.is_empty());
+        let mut user = None;
+        let mut userdict = None;
+        let mut typing_log = None;
+        if use_user_model {
+            if let Some(p) = text_of("user_model") {
+                user = Some(Rc::new(RefCell::new(UserModel::load(Some(user_path(p, base)))?)));
+            }
+            // Each defaults to the path shown; null (or "") turns it off.
+            let file = |name: &str, default: &str| match cfg.get(name) {
+                None => Some(user_path(default, base)),
+                Some(Value::String(s)) if !s.is_empty() => Some(user_path(s, base)),
+                _ => None,
+            };
+            let files = (file("user_dict", "userdata/userdict.tsv"), file("excluded_words", "userdata/excluded.tsv"));
+            if files.0.is_some() || files.1.is_some() {
+                let ud = UserDict::new(files.0, files.1);
+                lexicon.user_bonus = cfg.get("user_dict_bonus").and_then(Value::as_f64).unwrap_or(USER_DICT_BONUS);
+                lexicon.refresh(Some(&ud));
+                userdict = Some(RefCell::new(ud));
+            }
+            if let Some(p) = text_of("typing_log") {
+                typing_log = Some(TypingLog::new(user_path(p, base)));
+            }
+        }
         let lexicon = Rc::new(RefCell::new(lexicon));
         let get_usize = |name: &str, default: usize| cfg.get(name).and_then(Value::as_u64).map_or(default, |v| v as usize);
         let get_f64 = |name: &str| cfg.get(name).and_then(Value::as_f64).unwrap_or(0.0);
@@ -120,7 +180,7 @@ impl Engine {
             Rc::clone(&lm),
             beam,
             max_candidates,
-            None,
+            extra_score(&user),
             word_penalty,
             eos_weight,
             style,
@@ -129,7 +189,34 @@ impl Engine {
         if cfg.get("charlm").is_some_and(|c| !c.is_null()) {
             eprintln!("warning: \"charlm\" in the config is not supported yet and is ignored");
         }
-        Ok(Engine { lexicon, lm, decoder, beam, max_candidates, word_penalty, eos_weight, style, word_bias, charlm_top: 5 })
+        Ok(Engine {
+            lexicon,
+            lm,
+            decoder,
+            userdict,
+            user,
+            typing_log,
+            beam,
+            max_candidates,
+            word_penalty,
+            eos_weight,
+            style,
+            word_bias,
+            charlm_top: 5,
+        })
+    }
+
+    /// Rebuild the dictionary's user layer after the user's dictionary changed.
+    pub fn refresh_lexicon(&self) {
+        let ud = self.userdict.as_ref().map(RefCell::borrow);
+        self.lexicon.borrow_mut().refresh(ud.as_deref());
+    }
+
+    /// Write the user model now (on `close` and when the engine stops).
+    pub fn save_user(&self) {
+        if let Some(user) = &self.user {
+            user.borrow_mut().save(true);
+        }
     }
 
     pub fn set_style(&mut self, style: Style) {
@@ -144,7 +231,7 @@ impl Engine {
             Rc::clone(&self.lm),
             self.beam,
             self.max_candidates,
-            None,
+            extra_score(&self.user),
             self.word_penalty,
             self.eos_weight,
             self.style,

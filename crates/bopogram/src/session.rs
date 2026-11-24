@@ -25,6 +25,8 @@ use std::rc::Rc;
 
 use crate::context::context_state;
 use crate::decoder::{is_literal, literal, Decoder, Style, LITERAL};
+use crate::engine::Engine;
+use crate::typing_log::Record;
 use crate::layout::{Layout, FINALS, INITIALS, MEDIALS, TONE_FIRST};
 use crate::lexicon::{Lexicon, Word, MAX_WORD_LEN};
 use crate::lm::MixtureLM;
@@ -49,6 +51,7 @@ fn last_chars(text: &str, max: usize) -> String {
 }
 
 pub struct Session {
+    pub engine: Rc<Engine>,
     pub decoder: Decoder,
     lexicon: Rc<RefCell<Lexicon>>,
     lm: Rc<MixtureLM>,
@@ -66,10 +69,12 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(decoder: Decoder, layout: &'static Layout) -> Session {
+    pub fn new(engine: Rc<Engine>, layout: &'static Layout) -> Session {
+        let decoder = engine.new_decoder();
         let lexicon = Rc::clone(&decoder.lexicon);
         let lm = Rc::clone(&decoder.lm);
         let mut session = Session {
+            engine,
             decoder,
             lexicon,
             lm,
@@ -352,6 +357,90 @@ impl Session {
 
     // -- output -------------------------------------------------------------------
 
+    /// Learn the words covering the first `count` items. Runs are cut at
+    /// literals, unconverted syllables and excluded text; words holding a pick
+    /// count as corrections.
+    fn learn_items(&self, count: usize) {
+        let Some(user) = self.engine.user.as_ref().filter(|_| self.learn) else { return };
+        let mut user = user.borrow_mut();
+        let lexicon = self.lexicon.borrow();
+        let buf = &self.decoder.syllables;
+        let items = self.decoder.best_items();
+        let items = &items[..count.min(items.len())];
+        let mut run: Vec<String> = Vec::new();
+        let mut picked: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut last = None;
+        for (text, a, b) in items {
+            let (a, b) = (*a, *b);
+            if last == Some((a, b)) {
+                continue;
+            }
+            last = Some((a, b));
+            let word: String = items[a.min(items.len())..b.min(items.len())].iter().map(|t| t.0.as_str()).collect();
+            let syls: Vec<&str> = buf[a..b.min(buf.len())].iter().map(String::as_str).collect();
+            if b > count
+                || is_literal(&buf[a])
+                || (b - a == 1 && text.chars().count() > 1)
+                || !lexicon.contains(&word)
+                || lexicon.blocked(&word, &syls)
+            {
+                if !run.is_empty() {
+                    user.learn(&run, &picked);
+                }
+                run.clear();
+                picked.clear();
+                continue;
+            }
+            run.push(word);
+            if self.decoder.pinned.iter().any(|((p, q), _)| a <= *p && *q <= b) {
+                picked.insert(run.len() - 1);
+            }
+        }
+        if !run.is_empty() {
+            user.learn(&run, &picked);
+        }
+        user.save(false);
+    }
+
+    /// Write the first `count` items to the typing log (if enabled and learning is on).
+    fn record(&self, count: usize, auto: bool) {
+        let Some(log) = self.engine.typing_log.as_ref() else { return };
+        if !self.learn || count == 0 {
+            return;
+        }
+        let dec = &self.decoder;
+        let texts: Vec<String> = dec.best_items().into_iter().map(|t| t.0).collect();
+        let first: Vec<String> = if dec.pinned.is_empty() {
+            texts.clone()
+        } else {
+            // What the engine would have chosen without the user's picks.
+            let mut plain = self.engine.new_decoder();
+            plain.style = dec.style;
+            plain.reset(Some(dec.start_state()));
+            for item in &dec.syllables {
+                plain.push(item.clone());
+            }
+            plain.best_items().into_iter().map(|t| t.0).collect()
+        };
+        let mut picked: Vec<(usize, usize, String)> = dec
+            .pinned
+            .iter()
+            .filter(|((_, b), _)| *b <= count)
+            .map(|((a, b), w)| (*a, b - a, w.to_string()))
+            .collect();
+        picked.sort();
+        let join = |t: &[String]| t[..count.min(t.len())].concat();
+        log.write(&Record {
+            items: &dec.syllables[..count.min(dec.syllables.len())],
+            first: &join(&first),
+            text: &join(&texts),
+            picked: &picked,
+            context: &self.context,
+            style: dec.style.name(),
+            auto,
+        });
+    }
+
     /// Commit the first words when the buffer is too long. Committed text is final.
     fn limit(&mut self) {
         if self.size() <= MAX_BUFFER {
@@ -365,6 +454,8 @@ impl Session {
         if count == 0 {
             return;
         }
+        self.learn_items(count);
+        self.record(count, true);
         let text: String = items[..count].iter().map(|t| t.0.as_str()).collect();
         self.flushed.push_str(&text);
         self.context = last_chars(&(self.context.clone() + &text), MAX_CONTEXT);
@@ -378,6 +469,10 @@ impl Session {
     pub fn commit(&mut self) -> String {
         self.sync();
         let text = self.decoder.best_text();
+        if !text.is_empty() {
+            self.learn_items(self.size());
+            self.record(self.size(), false);
+        }
         self.context = last_chars(&(self.context.clone() + &text), MAX_CONTEXT);
         self.clear();
         text
