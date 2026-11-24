@@ -227,15 +227,41 @@ impl QLinear {
     /// One output per row of `x` (rows of `n_in`), into `out`. All rows go
     /// through the integer product together: each weight row is read once.
     fn apply(&self, x: &[f32], out: &mut Vec<f32>) {
-        let (mut qx, mut sx, mut acc) = (Vec::new(), Vec::new(), Vec::new());
-        self.quantize_rows(x, &mut qx, &mut sx);
-        let m = sx.len();
-        acc.resize(m * self.n_out, 0);
-        int8::matmul(int8::best(), &qx, m, &self.w, 0..self.n_out, &mut acc);
-        out.clear();
-        out.resize(m * self.n_out, 0.0);
-        for ((&s, row), o) in sx.iter().zip(acc.chunks_exact(self.n_out)).zip(out.chunks_exact_mut(self.n_out)) {
-            dequantize(row, s, &self.scale, &self.bias, o);
+        self.apply_then(x, out, |_| {});
+    }
+
+    /// `apply`, then `then` on each row's outputs (in parts: it must work
+    /// value by value, like GELU). With two threads each computes half of the
+    /// outputs; every output is computed the same way either way.
+    fn apply_then(&self, x: &[f32], out: &mut Vec<f32>, then: impl Fn(&mut [f32]) + Sync) {
+        let mut scratch = Scratch::take();
+        let Scratch { qx, sx, acc, .. } = &mut *scratch;
+        self.quantize_rows(x, qx, sx);
+        let (m, n) = (sx.len(), self.n_out);
+        // Every value is written below; no need to clear.
+        acc.resize(m * n, 0);
+        out.resize(m * n, 0.0);
+        let (qx, sx) = (&*qx, &*sx);
+        let (acc_p, out_p) = (Shared(acc.as_mut_ptr()), Shared(out.as_mut_ptr()));
+        let kernel = int8::best();
+        let part = |cols: std::ops::Range<usize>| {
+            let (acc_p, out_p) = (&acc_p, &out_p);
+            // SAFETY: the parts write disjoint columns of buffers of m · n.
+            unsafe {
+                int8::matmul_raw(kernel, qx, m, &self.w, cols.clone(), acc_p.0);
+                for (i, &s) in sx.iter().enumerate() {
+                    let a = std::slice::from_raw_parts(acc_p.0.add(i * n + cols.start), cols.len());
+                    let y = std::slice::from_raw_parts_mut(out_p.0.add(i * n + cols.start), cols.len());
+                    dequantize(a, s, &self.scale[cols.clone()], &self.bias[cols.clone()], y);
+                    then(y);
+                }
+            }
+        };
+        // Two blocks of 16 outputs at a time in the VNNI kernel: split at a multiple of 32.
+        let mid = n / 2 / 32 * 32;
+        match Pool::get() {
+            Some(pool) if m * n * self.n_in >= PARALLEL_WORK && mid > 0 => pool.halves(mid, n, part),
+            _ => part(0..n),
         }
     }
 
@@ -245,12 +271,16 @@ impl QLinear {
     /// the sum that numpy's pairwise order adds up on its own (its first
     /// split), so the result is the same.
     fn log_sum_exp(&self, x: &[f32]) -> Vec<f64> {
-        let (mut qx, mut sx) = (Vec::new(), Vec::new());
-        self.quantize_rows(x, &mut qx, &mut sx);
+        let mut scratch = Scratch::take();
+        let Scratch { qx, sx, acc, logits } = &mut *scratch;
+        self.quantize_rows(x, qx, sx);
         let (m, n) = (sx.len(), self.n_out);
-        let mut acc = vec![0i32; m * n];
-        let mut logits = vec![0.0f32; m * n];
+        // Every value is written below; no need to clear.
+        acc.resize(m * n, 0);
+        logits.resize(m * n, 0.0);
+        let (qx, sx) = (&*qx, &*sx);
         let (acc_p, logits_p) = (Shared(acc.as_mut_ptr()), Shared(logits.as_mut_ptr()));
+        let logits = &*logits;
         let kernel = int8::best();
         // Outputs `cols` of every row; the largest of them per row.
         let part = |cols: std::ops::Range<usize>| -> Vec<f32> {
@@ -258,7 +288,7 @@ impl QLinear {
             let mut tops = vec![f32::NEG_INFINITY; m];
             // SAFETY: the two parts write disjoint columns of buffers of m · n.
             unsafe {
-                int8::matmul_raw(kernel, &qx, m, &self.w, cols.clone(), acc_p.0);
+                int8::matmul_raw(kernel, qx, m, &self.w, cols.clone(), acc_p.0);
                 for (i, top) in tops.iter_mut().enumerate() {
                     let a = std::slice::from_raw_parts(acc_p.0.add(i * n + cols.start), cols.len());
                     let y = std::slice::from_raw_parts_mut(logits_p.0.add(i * n + cols.start), cols.len());
@@ -299,10 +329,57 @@ impl QLinear {
             }
             None => sum(0..n),
         };
-        drop(acc);
         sums.iter().zip(&tops).map(|(s, t)| s.ln() + t).collect()
     }
 }
+
+/// Working buffers of the linear layers, kept between calls (no allocation
+/// on the hot path); one set per thread.
+#[derive(Default)]
+struct Scratch {
+    qx: Vec<i8>,
+    sx: Vec<f64>,
+    acc: Vec<i32>,
+    logits: Vec<f32>,
+}
+
+thread_local! {
+    static SCRATCH: std::cell::RefCell<Vec<Scratch>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A set of buffers on loan; handed back when dropped.
+struct Loan(Option<Scratch>);
+
+impl Scratch {
+    fn take() -> Loan {
+        Loan(Some(SCRATCH.with(|s| s.borrow_mut().pop()).unwrap_or_default()))
+    }
+}
+
+impl std::ops::Deref for Loan {
+    type Target = Scratch;
+    fn deref(&self) -> &Scratch {
+        self.0.as_ref().expect("on loan")
+    }
+}
+
+impl std::ops::DerefMut for Loan {
+    fn deref_mut(&mut self) -> &mut Scratch {
+        self.0.as_mut().expect("on loan")
+    }
+}
+
+impl Drop for Loan {
+    fn drop(&mut self) {
+        if let Some(s) = self.0.take() {
+            // While the thread ends there is nowhere to keep them: they are freed.
+            let _ = SCRATCH.try_with(|keep| keep.borrow_mut().push(s));
+        }
+    }
+}
+
+/// Products (inputs × outputs × rows) below which one thread does the work.
+const PARALLEL_WORK: usize = 300_000;
 
 /// A buffer two threads write disjoint parts of.
 struct Shared<T>(*mut T);
@@ -343,6 +420,20 @@ enum Slot {
     Done(Rc<Pos>),
     New(usize),
 }
+
+/// Where a position's keys and values are while a batch is computed: in a
+/// kept position (`layers` · d values each), or new row `r` of the batch.
+#[derive(Clone, Copy)]
+enum KeyRef {
+    Done(*const f32, *const f32),
+    New(usize),
+}
+
+/// The positions of every planned sequence, readable from both threads.
+struct KeyTable(Vec<Vec<KeyRef>>);
+// SAFETY: read only, while the positions pointed to are kept alive by the
+// batch's plans (see `positions`).
+unsafe impl Sync for KeyTable {}
 
 /// A kept sequence as the batch plan sees it: in the cache, or planned in this batch.
 #[derive(Clone, Copy)]
@@ -542,10 +633,23 @@ impl Model {
         let mut new_v = vec![0.0f32; m * layers * d];
         let (mut ln, mut qkv, mut tmp, mut ff) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let mut a = vec![0.0f32; m * d];
-        let max_len = seqs.iter().map(|s| s.len()).max().unwrap_or(0);
-        let mut scores = vec![0.0f64; max_len];
-        let mut e = vec![0.0f64; max_len];
-        let mut acc = vec![0.0f64; dh];
+        // Where each position's keys and values are, for the attention below,
+        // which may run on two threads (an Rc cannot be shared between
+        // threads; the plans keep every position alive meanwhile).
+        let keys = KeyTable(
+            plans
+                .iter()
+                .map(|(_, slots)| {
+                    slots
+                        .iter()
+                        .map(|s| match s {
+                            Slot::Done(p) => KeyRef::Done(p.k.as_ptr(), p.v.as_ptr()),
+                            Slot::New(r) => KeyRef::New(*r),
+                        })
+                        .collect()
+                })
+                .collect(),
+        );
         for (li, blk) in self.blocks.iter().enumerate() {
             layer_norm(&x, &blk.norm1.0, &blk.norm1.1, self.eps, &mut ln);
             blk.qkv.apply(&ln, &mut qkv);
@@ -554,60 +658,76 @@ impl Model {
                 new_k[at..at + d].copy_from_slice(&row[d..2 * d]);
                 new_v[at..at + d].copy_from_slice(&row[2 * d..]);
             }
-            fn kv<'a>(slot: &'a Slot, new: (&'a [f32], &'a [f32]), li: usize, layers: usize, d: usize) -> (&'a [f32], &'a [f32]) {
-                match slot {
-                    Slot::Done(p) => (&p.k[li * d..(li + 1) * d], &p.v[li * d..(li + 1) * d]),
-                    Slot::New(r) => {
-                        let at = (r * layers + li) * d;
-                        (&new.0[at..at + d], &new.1[at..at + d])
-                    }
-                }
-            }
-            let key = |slot| kv(slot, (&new_k, &new_v), li, layers, d);
-            for (r, &(plan, at)) in rows.iter().enumerate() {
-                // Row `at` of its sequence sees positions 0 ..= at; the softmax
-                // sums over the whole sequence (zeros after `at`), as the reference.
-                let slots = &plans[plan].1;
-                let len = slots.len();
-                let q = &qkv[r * 3 * d..r * 3 * d + d];
-                for hd in 0..h {
-                    let qh = &q[hd * dh..(hd + 1) * dh];
-                    let mut top = f64::NEG_INFINITY;
-                    for (j, slot) in slots[..=at].iter().enumerate() {
-                        let kh = &key(slot).0[hd * dh..(hd + 1) * dh];
-                        let mut dot = 0.0f64;
-                        for t in 0..dh {
-                            dot += qh[t] as f64 * kh[t] as f64;
-                        }
-                        let s = ((dot as f32) as f64 / (dh as f64).sqrt()) as f32 as f64;
-                        scores[j] = s;
-                        top = top.max(s);
-                    }
-                    for j in 0..len {
-                        e[j] = if j <= at { (scores[j] - top).exp() as f32 as f64 } else { 0.0 };
-                    }
-                    let total = pairwise_sum(&e[..len]);
-                    acc.fill(0.0);
-                    for (j, slot) in slots[..=at].iter().enumerate() {
-                        let p = (e[j] / total) as f32 as f64;
-                        let vh = &key(slot).1[hd * dh..(hd + 1) * dh];
-                        for t in 0..dh {
-                            acc[t] += p * vh[t] as f64;
+            let (new_k, new_v, qkv, keys, rows) = (&new_k, &new_v, &qkv, &keys, &rows);
+            let a_p = Shared(a.as_mut_ptr());
+            // Rows `range` of the batch; each row on its own, so the rows can be
+            // split between threads.
+            let attend = |range: std::ops::Range<usize>| {
+                let a_p = &a_p;
+                let kv = |key: &KeyRef| -> (*const f32, *const f32) {
+                    match *key {
+                        // SAFETY: k and v hold `layers` · d values (see Pos).
+                        KeyRef::Done(k, v) => unsafe { (k.add(li * d), v.add(li * d)) },
+                        KeyRef::New(r) => {
+                            let at = (r * layers + li) * d;
+                            (new_k[at..at + d].as_ptr(), new_v[at..at + d].as_ptr())
                         }
                     }
-                    let out = &mut a[r * d + hd * dh..r * d + (hd + 1) * dh];
-                    for t in 0..dh {
-                        out[t] = acc[t] as f32;
+                };
+                let longest = range.clone().map(|r| keys.0[rows[r].0].len()).max().unwrap_or(0);
+                let (mut scores, mut e, mut acc) = (vec![0.0f64; longest], vec![0.0f64; longest], vec![0.0f64; dh]);
+                for r in range {
+                    let (plan, at) = rows[r];
+                    // Row `at` of its sequence sees positions 0 ..= at; the softmax
+                    // sums over the whole sequence (zeros after `at`), as the reference.
+                    let slots = &keys.0[plan];
+                    let len = slots.len();
+                    let q = &qkv[r * 3 * d..r * 3 * d + d];
+                    // SAFETY: each row writes only its own d values of `a`.
+                    let out_row = unsafe { std::slice::from_raw_parts_mut(a_p.0.add(r * d), d) };
+                    for hd in 0..h {
+                        let qh = &q[hd * dh..(hd + 1) * dh];
+                        let mut top = f64::NEG_INFINITY;
+                        for (j, slot) in slots[..=at].iter().enumerate() {
+                            // SAFETY: dh values inside the slot's d.
+                            let kh = unsafe { std::slice::from_raw_parts(kv(slot).0.add(hd * dh), dh) };
+                            let mut dot = 0.0f64;
+                            for t in 0..dh {
+                                dot += qh[t] as f64 * kh[t] as f64;
+                            }
+                            let s = ((dot as f32) as f64 / (dh as f64).sqrt()) as f32 as f64;
+                            scores[j] = s;
+                            top = top.max(s);
+                        }
+                        for j in 0..len {
+                            e[j] = if j <= at { (scores[j] - top).exp() as f32 as f64 } else { 0.0 };
+                        }
+                        let total = pairwise_sum(&e[..len]);
+                        acc.fill(0.0);
+                        for (j, slot) in slots[..=at].iter().enumerate() {
+                            let p = (e[j] / total) as f32 as f64;
+                            // SAFETY: as above.
+                            let vh = unsafe { std::slice::from_raw_parts(kv(slot).1.add(hd * dh), dh) };
+                            for t in 0..dh {
+                                acc[t] += p * vh[t] as f64;
+                            }
+                        }
+                        for t in 0..dh {
+                            out_row[hd * dh + t] = acc[t] as f32;
+                        }
                     }
                 }
+            };
+            match Pool::get() {
+                Some(pool) if m >= 2 => pool.halves(m / 2, m, attend),
+                _ => attend(0..m),
             }
             blk.proj.apply(&a, &mut tmp);
             for (xv, &y) in x.iter_mut().zip(&tmp) {
                 *xv += y;
             }
             layer_norm(&x, &blk.norm2.0, &blk.norm2.1, self.eps, &mut ln);
-            blk.ff1.apply(&ln, &mut ff);
-            gelu(&mut ff);
+            blk.ff1.apply_then(&ln, &mut ff, gelu);
             blk.ff2.apply(&ff, &mut tmp);
             for (xv, &y) in x.iter_mut().zip(&tmp) {
                 *xv += y;
@@ -803,7 +923,7 @@ impl CharLM {
                 return Err(bad("max_len does not match the model"));
             }
         }
-        Ok(CharLM {
+        let mut lm = CharLM {
             num: sp("<n>")?,
             eng: sp("<e>")?,
             unk_han: sp("<x>")?,
@@ -815,7 +935,21 @@ impl CharLM {
             cache: HashMap::new(),
             order: BTreeMap::new(),
             clock: 0,
-        })
+        };
+        lm.warm_up();
+        Ok(lm)
+    }
+
+    /// One made-up re-ranking right after loading, so that the first real key
+    /// does not pay for page faults, cold caches and starting the helper
+    /// thread. What it leaves in the caches is forgotten: results stay
+    /// exactly as without it.
+    fn warm_up(&mut self) {
+        let texts: Vec<String> = ["我在家", "我再加", "臥在家裡。"].iter().map(|s| s.to_string()).collect();
+        self.score("今天", &texts);
+        self.cache.clear();
+        self.order.clear();
+        self.model.clear_cache();
     }
 
     /// Same encoding as training/neural/make_data.py.
