@@ -65,6 +65,8 @@ def main() -> None:
     # The exported model must agree with PyTorch.
     import numpy as np
     import onnxruntime as ort
+
+    ort.disable_telemetry_events()
     for name in ("charlm.onnx", "charlm.int8.onnx"):
         got = ort.InferenceSession(str(args.out_dir / name)).run(None, {"ids": example.numpy()})[0]
         print(f"{name}\t{(args.out_dir / name).stat().st_size / 1e6:.1f} MB\t"

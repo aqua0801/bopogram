@@ -25,6 +25,10 @@ class NeuralScorer:
     def __init__(self, model_path: str | Path, threads: int = 2):
         import onnxruntime as ort
 
+        # Official builds send usage events through Windows' event tracing; turn
+        # them off before any session exists (no network functions, CLAUDE.md).
+        ort.disable_telemetry_events()
+
         model_path = Path(model_path)
         meta = json.loads(model_path.with_name("neural.json").read_text(encoding="utf-8"))
         opts = ort.SessionOptions()
