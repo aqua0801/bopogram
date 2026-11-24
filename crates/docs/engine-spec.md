@@ -115,7 +115,11 @@ Rust 版的首選正確率必須與 Python 版完全相同；不同就是移植�
   **不是** ARPA 有沒有 back-off 欄（很多 n-gram 有 back-off 欄卻沒有後續）。以 `bopogram lm-probe`
   對 KenLM 的 `.binary` 逐詞比對，狀態完全一致。
 
-### 請 WSL 端處理
+### 請 WSL 端處理（兩項都已在 02d8775 處理）
+
+WSL 端的處理結果：ARPA 改為最短的精確 float32 文字，back-off 以 KenLM 的分數解出；web 與 `.binary`
+完全相同，ly、general、fineweb_small 各有 7～550 個詞差 1 個 float32 單位（見 `prototype/docs/lm-arpa.md`）。
+`nbest()` 已修正，對照答案重新產生，Rust 端同步移除這個行為。
 
 1. **ARPA 的數值要能精確還原 float32。** 目前 `export_arpa.py` 以 `.7g` 輸出，兩個不同的量化值可能印成
    同一個字串，分數因此有最多 5e-6 的差距（上面那 1 句就是這樣來的），對照答案可能因此出現名次互換。

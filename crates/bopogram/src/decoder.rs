@@ -589,14 +589,11 @@ impl Decoder {
     // -- results ----------------------------------------------------------------
 
     /// Up to n best segmentations of the whole buffer, with log scores.
-    pub fn nbest(&self, mut n: usize) -> Vec<(Vec<Word>, f64)> {
+    pub fn nbest(&self, n: usize) -> Vec<(Vec<Word>, f64)> {
         let mut out = Vec::new();
         let mut seen = std::collections::HashSet::new();
         let mut final_: Vec<Rc<Hyp>> = self.nodes.last().cloned().unwrap_or_default();
         if self.eos_weight != 0.0 && final_.len() > 1 {
-            // As the prototype does (its end-of-sentence code reuses the name `n`
-            // for the buffer length): the list then stops at that many results.
-            n = self.syllables.len();
             let w = self.eos_weight;
             let len = self.syllables.len();
             let lexicon = self.lexicon.borrow();
