@@ -146,6 +146,11 @@ class NativeCharLM:
         n = min(n, len(seq))
         if old is not None and n == len(seq) and len(old["x"]) == n:
             return old
+        # ln P(seq[i + 1] | seq[..i]) per position, NaN until needed: position i
+        # depends on seq[..i + 1] only, so those inside the shared prefix carry over.
+        lp = np.full(len(seq) - 1, np.nan)
+        if old is not None and n > 1:
+            lp[:n - 1] = old["lp"][:n - 1]
         d, h = self.d, self.h
         dh = d // h
         ids = np.array(seq[n:])
@@ -171,17 +176,25 @@ class NativeCharLM:
         xn = layer_norm(x, *self.norm, self.eps)
         if old is not None and n:
             xn = np.concatenate([old["x"][:n], xn])
-        st = {"k": ks, "v": vs, "x": xn}
+        st = {"k": ks, "v": vs, "x": xn, "lp": lp}
         self._cache.append((seq, st))
         if len(self._cache) > PREFIX_CACHE:
             self._cache.pop(0)
         return st
 
     def logp(self, seq: list[int], first: int) -> float:
-        """Sum of ln P(seq[i + 1] | seq[: i + 1]) for i = first .. len(seq) - 2."""
+        """Sum of ln P(seq[i + 1] | seq[: i + 1]) for i = first .. len(seq) - 2,
+        added in that order in float64. The output layer runs only for positions
+        whose value is not known from a cached sequence."""
         st = self._extend(tuple(seq))
-        logits = self.out(st["x"][first:len(seq) - 1]).astype(F64)
-        top = logits.max(axis=1, keepdims=True)
-        lse = np.log(np.exp(logits - top).sum(axis=1)) + top[:, 0]
-        target = logits[np.arange(len(lse)), np.array(seq[first + 1:])]
-        return float((target - lse).sum())
+        lp = st["lp"]
+        todo = [i for i in range(first, len(seq) - 1) if np.isnan(lp[i])]
+        if todo:
+            logits = self.out(st["x"][todo]).astype(F64)
+            top = logits.max(axis=1, keepdims=True)
+            lse = np.log(np.exp(logits - top).sum(axis=1)) + top[:, 0]
+            lp[todo] = logits[np.arange(len(todo)), [seq[i + 1] for i in todo]] - lse
+        total = 0.0
+        for i in range(first, len(seq) - 1):
+            total += float(lp[i])
+        return total
