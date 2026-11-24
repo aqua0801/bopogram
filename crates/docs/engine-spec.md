@@ -115,6 +115,16 @@ Rust 版的首選正確率必須與 Python 版完全相同；不同就是移植�
   **不是** ARPA 有沒有 back-off 欄（很多 n-gram 有 back-off 欄卻沒有後續）。以 `bopogram lm-probe`
   對 KenLM 的 `.binary` 逐詞比對，狀態完全一致。
 
+### E2（2026-11-24）
+
+- 組字區（`session.rs`）、符號（`symbols.rs`）、`serve` 協定（`server.rs`，含 `--trace`）。
+  請求欄位的寬鬆讀法（數字字串、真假值）照原型；讀不懂的請求回 `ok: false` 且不帶 `id`，與原型相同。
+- 模型改用 02d8775 的精確 ARPA 重新轉換。
+- 對照答案：以原型、`charlm: null` 在本機重新產生（`make_golden.py`，17 秒），
+  `testset`、`devset`、`editing` 共 46,585 個請求 **0 差異**，重播 6 秒。
+- 參考：對正式對照答案（含 charlm）同三輪有 3,133 個差異，全在 testset／devset，屬 E4 範圍。
+- 使用者詞庫、學習（`userdict`、`learning` 兩輪）屬 E3，尚未實作。
+
 ### 請 WSL 端處理（兩項都已在 02d8775 處理）
 
 WSL 端的處理結果：ARPA 改為最短的精確 float32 文字，back-off 以 KenLM 的分數解出；web 與 `.binary`

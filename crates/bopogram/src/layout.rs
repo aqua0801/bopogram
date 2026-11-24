@@ -1,9 +1,9 @@
 //! Keyboard layouts: keystrokes -> bopomofo syllables
 //! (`prototype/bopogram/layouts/`). The engine only ever sees syllables.
 
-const INITIALS: &str = "ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙ";
-const MEDIALS: &str = "ㄧㄨㄩ";
-const FINALS: &str = "ㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ";
+pub const INITIALS: &str = "ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙ";
+pub const MEDIALS: &str = "ㄧㄨㄩ";
+pub const FINALS: &str = "ㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦ";
 /// The first tone is typed with the space bar and written unmarked.
 pub const TONE_FIRST: &str = " ";
 pub const TONES: [char; 4] = ['ˊ', 'ˇ', 'ˋ', '˙'];

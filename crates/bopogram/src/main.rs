@@ -4,6 +4,7 @@
 //!     bopogram convert --bopomofo "ㄨㄛˇ ㄗㄞˋ ㄐㄧㄚ" --context "上文" --nbest 5
 //!     bopogram lookup 垃圾 行
 //!     bopogram lookup --bopomofo "ㄌㄜˋ ㄙㄜˋ"
+//!     bopogram serve [--trace FILE]    # JSON lines on stdin/stdout, see server.rs
 //!
 //! and, for this engine only:
 //!
@@ -20,7 +21,7 @@ use bopogram::engine::{config_path, load_lexicon, read_config, Engine};
 use bopogram::layout::layout;
 use bopogram::lm::build::build;
 
-const USAGE: &str = "usage: bopogram [--config FILE] {convert|lookup|build-lm} ...";
+const USAGE: &str = "usage: bopogram [--config FILE] {convert|lookup|serve|build-lm} ...";
 
 struct Args {
     rest: Vec<String>,
@@ -66,6 +67,7 @@ fn main() -> ExitCode {
     let result = match command.as_str() {
         "convert" => convert(&mut args, config.as_deref()),
         "lookup" => lookup(&mut args, config.as_deref()),
+        "serve" => serve(&mut args, config.as_deref()),
         "build-lm" => build_lm(&mut args),
         "lm-probe" => lm_probe(&mut args),
         _ => {
@@ -180,6 +182,21 @@ fn lookup(args: &mut Args, config: Option<&str>) -> io::Result<ExitCode> {
             }
         }
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn serve(args: &mut Args, config: Option<&str>) -> io::Result<ExitCode> {
+    let layout_name = args.take("--layout").unwrap_or_else(|| "dachen".into());
+    let trace = args.take("--trace");
+    let Some(layout) = layout(&layout_name) else {
+        return Ok(fail(format!("unknown layout {layout_name:?}")));
+    };
+    let engine = Engine::load(&config_path(config))?;
+    let trace: Option<Box<dyn Write>> = match trace {
+        Some(path) => Some(Box::new(std::fs::OpenOptions::new().create(true).append(true).open(path)?)),
+        None => None,
+    };
+    bopogram::server::serve(&engine, layout, io::stdin().lock(), io::stdout().lock(), trace)?;
     Ok(ExitCode::SUCCESS)
 }
 

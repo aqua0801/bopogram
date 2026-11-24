@@ -10,6 +10,8 @@
 //! - `context`: the text before the cursor, read into the model state.
 //! - `layout`: keystrokes -> syllables.
 //! - `engine`: the config and one-call conversion.
+//! - `session`, `symbols`: one composition with its editing rules.
+//! - `server`: the `serve` protocol for the front end.
 
 pub mod context;
 pub mod decoder;
@@ -17,3 +19,6 @@ pub mod engine;
 pub mod layout;
 pub mod lexicon;
 pub mod lm;
+pub mod server;
+pub mod session;
+pub mod symbols;
