@@ -16,7 +16,7 @@ dependencies = [
 requires-dist = [
     { name = "kenlm", specifier = ">=0.3.0" },
     { name = "numpy", specifier = ">=2.5.5" },
-    { name = "onnxruntime", specifier = ">=1.32.0" },
+    { name = "onnxruntime", specifier = "==1.32.0" },
 ]
 
 [[package]]
