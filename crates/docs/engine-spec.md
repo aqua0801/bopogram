@@ -137,6 +137,16 @@ Rust 版的首選正確率必須與 Python 版完全相同；不同就是移植�
 - `readings` 的逐字組合，原型以 Python `set` 迭代讀音，分數相同時順序會隨雜湊種子改變。
   實測（種子 0～5、數個多音字組合）因讀音機率不同而沒有同分，Rust 以字典中讀音出現順序為準。
 
+### E5（2026-11-24）
+
+- host 可選引擎：`bopogram-host.json` 有 `engine`（`bopogram.exe`）就用 Rust 引擎，沒有就用 Python。
+  `install.ps1 -Engine rust|python`（預設 rust），`switch-engine.ps1` 不必重裝即可切換。
+- Rust 引擎的模型檔不寫進執行包：`--models D:\bopogram-data\arpa`。模型檔比執行包的 `.binary` 舊時，
+  引擎在 `host.log` 警告，安裝與切換腳本則停止。
+- 單一請求出錯（panic）只回錯誤，不讓引擎結束。前端斷線時（寫回應失敗）也會先存 `user.json` 再結束，
+  沙盒試用時發現並以「關閉輸出管道」實測確認。
+- 沙盒：兩個引擎單獨執行、安裝、打字、詞庫、雙向切換都正常（使用者確認）。對照答案五輪仍 0 差異。
+
 ### 請 WSL 端處理（兩項都已在 02d8775 處理）
 
 WSL 端的處理結果：ARPA 改為最短的精確 float32 文字，back-off 以 KenLM 的分數解出；web 與 `.binary`

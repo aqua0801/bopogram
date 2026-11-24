@@ -9,8 +9,10 @@
 #
 # What it changes:
 #   - copies bopogram_ime.dll, bopogram-host.exe, bopogram-settings.exe,
-#     bopogram.ico and uninstall.ps1 (with common.ps1) to $Install, the 32-bit
-#     bopogram_ime.dll to $Install\x86, and writes bopogram-host.json there.
+#     bopogram.exe (the Rust engine), bopogram.ico, uninstall.ps1 and
+#     switch-engine.ps1 (with common.ps1) to $Install, the 32-bit
+#     bopogram_ime.dll to $Install\x86, and writes bopogram-host.json there
+#     (which engine runs: -Engine rust, the default, or python).
 #     Files in use are renamed (*.old-<time>) and deleted at the next restart
 #     (PendingFileRenameOperations) or by the next install.
 #   - regsvr32 (64- and 32-bit): HKLM\SOFTWARE\Classes\CLSID\{B6B6D901-...},
@@ -22,7 +24,14 @@
 #     value "Bopogram" (skip with -NoAutostart)
 # uninstall.ps1 reverses all of it.
 param(
-    # The Python that runs the engine (the prototype's virtual environment).
+    # Which engine the host runs: "rust" (bopogram.exe) or "python" (the
+    # prototype). Both are installed; switch-engine.ps1 changes it later.
+    [ValidateSet("rust", "python")]
+    [string]$Engine = "rust",
+    # The Rust engine's model files (*.bglm, from `bopogram build-lm`).
+    [string]$Models = "D:\bopogram-data\arpa",
+    # The prototype's Python: runs the Python engine, and the typing log
+    # review tool of the settings window.
     [string]$Python = "D:\bopogram\prototype\.venv\Scripts\python.exe",
     # config.json of the engine runtime bundle.
     [string]$Config = "D:\bopogram-data\bopogram-runtime\config.json",
@@ -46,20 +55,22 @@ $release = Join-Path $crates "target\release"
 $dll = Join-Path $release "bopogram_ime.dll"
 $hostExe = Join-Path $release "bopogram-host.exe"
 $settingsExe = Join-Path $release "bopogram-settings.exe"
+$engineExe = Join-Path $release "bopogram.exe"
 $dll32 = Join-Path $crates "target\i686-pc-windows-msvc\release\bopogram_ime.dll"
 $icon = Join-Path $crates "bopogram-ime\res\bopogram.ico"
-$scripts = (Join-Path $PSScriptRoot "uninstall.ps1"), (Join-Path $PSScriptRoot "common.ps1")
-foreach ($path in @($Python, $Config, $dll, $hostExe, $settingsExe, $icon) + $scripts) {
+$scripts = (Join-Path $PSScriptRoot "uninstall.ps1"), (Join-Path $PSScriptRoot "common.ps1"),
+    (Join-Path $PSScriptRoot "switch-engine.ps1")
+foreach ($path in @($Config, $dll, $hostExe, $settingsExe, $engineExe, $icon) + $scripts) {
     if (-not (Test-Path $path)) { throw "missing: $path (build with 'cargo build --release' in crates\)" }
 }
 if (-not (Test-Path $dll32)) {
     throw "missing: $dll32 (build with 'cargo build --release -p bopogram-ime --target i686-pc-windows-msvc' in crates\)"
 }
+if ($Engine -eq "python" -and -not (Test-Path $Python)) { throw "missing: $Python" }
 
 # 1. The engine must work before anything is registered.
-$converted = & $Python -X utf8 -m bopogram.cli --config $Config convert --keys "ji3y94ru8 " 2>&1
-if ($LASTEXITCODE -ne 0) { throw "the engine does not start:`n$($converted | Out-String)" }
-Write-Output "Engine check passed."
+Test-Engine $Engine $engineExe $Models $Python $Config
+Write-Output "Engine check passed ($Engine)."
 
 # 2. Files. A DLL that applications have loaded cannot be overwritten, but it
 #    can be renamed; the renamed copy goes at the next restart.
@@ -69,8 +80,8 @@ $install32 = Join-Path $Install "x86"
 New-Item -ItemType Directory -Force $Install, $install32 | Out-Null
 Get-ChildItem $Install, $install32 -Filter "*.old-*" | ForEach-Object { [void](Remove-OrSchedule $_.FullName) }
 $stamp = Get-Date -Format "yyyyMMddHHmmss"
-$pairs = @(@($dll, $Install), @($hostExe, $Install), @($settingsExe, $Install), @($icon, $Install),
-    @($dll32, $install32)) + @($scripts | ForEach-Object { , @($_, $Install) })
+$pairs = @(@($dll, $Install), @($hostExe, $Install), @($settingsExe, $Install), @($engineExe, $Install),
+    @($icon, $Install), @($dll32, $install32)) + @($scripts | ForEach-Object { , @($_, $Install) })
 foreach ($pair in $pairs) {
     $file, $folder = $pair
     $name = Split-Path -Leaf $file
@@ -85,10 +96,11 @@ foreach ($pair in $pairs) {
     }
     Copy-Item $file $target
 }
-$hostConfig = @{ python = $Python; config = $Config; review_tool = $ReviewTool }
+$hostConfig = @{ python = $Python; config = $Config; review_tool = $ReviewTool; models = $Models }
+if ($Engine -eq "rust") { $hostConfig.engine = Join-Path $Install "bopogram.exe" }
 if ($Trace) { $hostConfig.trace = $Trace }
 [IO.File]::WriteAllText((Join-Path $Install "bopogram-host.json"), ($hostConfig | ConvertTo-Json))
-Write-Output "Files installed in $Install."
+Write-Output "Files installed in $Install (engine: $Engine)."
 if ($Trace) { Write-Output "TRACE IS ON: everything typed is written to $Trace. Install again without -Trace to turn it off." }
 
 # 3. Register the text service.

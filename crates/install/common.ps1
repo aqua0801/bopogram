@@ -33,8 +33,9 @@ function Stop-Bopogram {
     Get-Process bopogram-host, bopogram-settings -ErrorAction SilentlyContinue | Stop-Process -Force
     $deadline = (Get-Date).AddSeconds(10)
     do {
-        $engines = @(Get-CimInstance Win32_Process -Filter "Name LIKE 'python%'" -ErrorAction SilentlyContinue |
-            Where-Object { $_.CommandLine -match 'bopogram\.cli' -and $_.CommandLine -match '\bserve\b' })
+        # The Python engine (python -m bopogram.cli ... serve) or the Rust one (bopogram.exe ... serve).
+        $engines = @(Get-CimInstance Win32_Process -Filter "Name LIKE 'python%' OR Name = 'bopogram.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { ($_.Name -eq 'bopogram.exe' -or $_.CommandLine -match 'bopogram\.cli') -and $_.CommandLine -match '\bserve\b' })
         if ($engines.Count -eq 0) { return }
         Start-Sleep -Milliseconds 200
     } while ((Get-Date) -lt $deadline)
@@ -60,6 +61,23 @@ function Remove-AtRestart([string]$Path) {
 function Remove-OrSchedule([string]$Path) {
     try { Remove-Item -LiteralPath $Path -Force -ErrorAction Stop; $true }
     catch { Remove-AtRestart $Path; $false }
+}
+
+# Convert one sentence with the engine the host will run, before anything
+# depends on it. Throws with the engine's output if it fails, or if a model
+# file of the Rust engine is older than the model it was built from.
+function Test-Engine([string]$Kind, [string]$EngineExe, [string]$Models, [string]$Python, [string]$Config) {
+    # Warnings on stderr are output here, not errors (Windows PowerShell turns
+    # each stderr line of a program into an error record).
+    $ErrorActionPreference = "Continue"
+    if ($Kind -eq "rust") {
+        $converted = & $EngineExe --config $Config --models $Models convert --keys "ji3y94ru8 " 2>&1
+    } else {
+        $converted = & $Python -X utf8 -m bopogram.cli --config $Config convert --keys "ji3y94ru8 " 2>&1
+    }
+    $text = $converted | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "the $Kind engine does not start:`n$text" }
+    if ($text -match "is newer than") { throw "a model file is out of date:`n$text" }
 }
 
 # Start a program as the signed-in user, not elevated: Explorer starts it.

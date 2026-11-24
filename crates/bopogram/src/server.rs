@@ -183,8 +183,23 @@ fn clock() -> String {
 /// `trace` receives every request and response with the time taken. It is a
 /// debugging aid for front-end work and records everything typed, so it is
 /// off unless asked for and must not be left on.
+///
+/// The user model is saved however serving ends: also when the front end goes
+/// away while a response is being written (the pipe then fails).
 pub fn serve(
     engine: Rc<Engine>,
+    layout: &'static Layout,
+    input: impl BufRead,
+    out: impl Write,
+    trace: Option<Box<dyn Write>>,
+) -> io::Result<()> {
+    let result = serve_lines(&engine, layout, input, out, trace);
+    engine.save_user();
+    result
+}
+
+fn serve_lines(
+    engine: &Rc<Engine>,
     layout: &'static Layout,
     input: impl BufRead,
     mut out: impl Write,
@@ -205,12 +220,16 @@ pub fn serve(
             Ok(_) => Err(BadRequest("AttributeError: the request is not an object".into())),
             Err(e) => Err(BadRequest(format!("JSONDecodeError: {e}"))),
         };
-        let res = match parsed {
+        if let Ok(req) = &parsed {
+            if req.get("op").and_then(Value::as_str) == Some("quit") {
+                break;
+            }
+        }
+        // A bug must not take the engine down with every session in it: the
+        // request gets an error, as the prototype answers its exceptions.
+        let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match parsed {
             Err(BadRequest(message)) => error(message),
             Ok(req) => {
-                if req.get("op").and_then(Value::as_str) == Some("quit") {
-                    break;
-                }
                 let outcome = match py_int(req.get("sid"), 0) {
                     None => Err(BadRequest("ValueError: bad \"sid\"".into())),
                     Some(sid) if req.get("op").and_then(Value::as_str) == Some("close") => {
@@ -221,7 +240,7 @@ pub fn serve(
                         Ok(res)
                     }
                     Some(sid) => {
-                        let session = sessions.entry(sid).or_insert_with(|| Session::new(Rc::clone(&engine), layout));
+                        let session = sessions.entry(sid).or_insert_with(|| Session::new(Rc::clone(engine), layout));
                         handle(session, &req)
                     }
                 };
@@ -237,7 +256,8 @@ pub fn serve(
                     Err(BadRequest(message)) => error(message),
                 }
             }
-        };
+        }));
+        let res = answer.unwrap_or_else(|_| error("InternalError: the engine failed on this request".into()));
         let text = Value::Object(res).to_string();
         writeln!(out, "{text}")?;
         out.flush()?;
@@ -247,7 +267,6 @@ pub fn serve(
             t.flush()?;
         }
     }
-    engine.save_user();
     Ok(())
 }
 

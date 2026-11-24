@@ -10,6 +10,8 @@ param(
     [string]$Python = (& py -3.12 -c "import sys; print(sys.base_prefix)"),
     # The engine runtime bundle (dictionary and models).
     [string]$Runtime = "D:\bopogram-data\bopogram-runtime",
+    # The Rust engine's model files (*.bglm), mapped read-only.
+    [string]$Models = "D:\bopogram-data\arpa",
     # Where the sandbox files go. Must be outside the repository.
     [string]$Work = "D:\bopogram-data\sandbox"
 )
@@ -20,7 +22,7 @@ $repo = Split-Path -Parent $crates
 $prototype = Join-Path $repo "prototype"
 $release = Join-Path $crates "target\release"
 
-foreach ($path in $Python, $Runtime, $prototype, (Join-Path $prototype ".venv\Lib\site-packages")) {
+foreach ($path in $Python, $Runtime, $Models, $prototype, (Join-Path $prototype ".venv\Lib\site-packages")) {
     if (-not (Test-Path $path)) { throw "missing: $path" }
 }
 
@@ -44,8 +46,9 @@ New-Item -ItemType Directory -Force $stage, $out | Out-Null
 Remove-Item (Join-Path $stage "crates"), (Join-Path $stage "x86") -Recurse -Force -ErrorAction SilentlyContinue
 Get-ChildItem $stage -File | Where-Object { $_.Extension -in ".dll", ".exe", ".ico" } | Remove-Item -Force
 foreach ($file in "target\release\bopogram_ime.dll", "target\release\bopogram-host.exe",
-        "target\release\bopogram-settings.exe", "target\i686-pc-windows-msvc\release\bopogram_ime.dll",
-        "bopogram-ime\res\bopogram.ico", "install\install.ps1", "install\uninstall.ps1", "install\common.ps1") {
+        "target\release\bopogram-settings.exe", "target\release\bopogram.exe",
+        "target\i686-pc-windows-msvc\release\bopogram_ime.dll", "bopogram-ime\res\bopogram.ico",
+        "install\install.ps1", "install\uninstall.ps1", "install\common.ps1", "install\switch-engine.ps1") {
     $target = Join-Path $stage "crates\$file"
     New-Item -ItemType Directory -Force (Split-Path -Parent $target) | Out-Null
     Copy-Item (Join-Path $crates $file) $target -Force
@@ -88,6 +91,7 @@ $folders = @(
     (Folder $Python "C:\Python312" "true"),
     (Folder $prototype "C:\bopogram-prototype" "true"),
     (Folder $runtimeCopy "C:\bopogram-runtime" "false"),
+    (Folder $Models "C:\bopogram-models" "true"),
     (Folder $out "C:\out" "false")
 ) -join "`n"
 $wsb = @"

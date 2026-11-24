@@ -21,7 +21,7 @@ use bopogram::engine::{config_path, load_lexicon, read_config, Engine};
 use bopogram::layout::layout;
 use bopogram::lm::build::build;
 
-const USAGE: &str = "usage: bopogram [--config FILE] {convert|lookup|serve|build-lm} ...";
+const USAGE: &str = "usage: bopogram [--config FILE] [--models DIR] {convert|lookup|serve|build-lm} ...";
 
 struct Args {
     rest: Vec<String>,
@@ -59,15 +59,17 @@ fn fail(message: impl std::fmt::Display) -> ExitCode {
 fn main() -> ExitCode {
     let mut args = Args { rest: std::env::args().skip(1).collect() };
     let config = args.take("--config");
+    // Folder of our model files (*.bglm), when not beside the config's models.
+    let models = args.take("--models").map(std::path::PathBuf::from);
     if args.rest.is_empty() {
         eprintln!("{USAGE}");
         return ExitCode::from(2);
     }
     let command = args.rest.remove(0);
     let result = match command.as_str() {
-        "convert" => convert(&mut args, config.as_deref()),
+        "convert" => convert(&mut args, config.as_deref(), models.as_deref()),
         "lookup" => lookup(&mut args, config.as_deref()),
-        "serve" => serve(&mut args, config.as_deref()),
+        "serve" => serve(&mut args, config.as_deref(), models.as_deref()),
         "build-lm" => build_lm(&mut args),
         "lm-probe" => lm_probe(&mut args),
         _ => {
@@ -81,7 +83,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn convert(args: &mut Args, config: Option<&str>) -> io::Result<ExitCode> {
+fn convert(args: &mut Args, config: Option<&str>, models: Option<&Path>) -> io::Result<ExitCode> {
     let keys = args.take("--keys");
     let bopomofo = args.take("--bopomofo");
     let batch = args.flag("--batch");
@@ -102,7 +104,7 @@ fn convert(args: &mut Args, config: Option<&str>) -> io::Result<ExitCode> {
         _ => return Ok(fail("give one of --keys, --bopomofo, --batch")),
     };
     let started = Instant::now();
-    let mut engine = Engine::load(&config_path(config), false)?;
+    let mut engine = Engine::load(&config_path(config), false, models)?;
     if let Some(style) = style {
         match Style::parse(&style) {
             Some(s) => engine.set_style(s),
@@ -185,13 +187,13 @@ fn lookup(args: &mut Args, config: Option<&str>) -> io::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn serve(args: &mut Args, config: Option<&str>) -> io::Result<ExitCode> {
+fn serve(args: &mut Args, config: Option<&str>, models: Option<&Path>) -> io::Result<ExitCode> {
     let layout_name = args.take("--layout").unwrap_or_else(|| "dachen".into());
     let trace = args.take("--trace");
     let Some(layout) = layout(&layout_name) else {
         return Ok(fail(format!("unknown layout {layout_name:?}")));
     };
-    let engine = std::rc::Rc::new(Engine::load(&config_path(config), true)?);
+    let engine = std::rc::Rc::new(Engine::load(&config_path(config), true, models)?);
     let trace: Option<Box<dyn Write>> = match trace {
         Some(path) => Some(Box::new(std::fs::OpenOptions::new().create(true).append(true).open(path)?)),
         None => None,

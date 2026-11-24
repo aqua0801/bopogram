@@ -4,7 +4,8 @@
 //! The config is the runtime bundle's `config.json`, shared with the Python
 //! engine. Model paths there name KenLM files (`*.binary`); this engine reads
 //! its own format, from the file of the same name with the extension `.bglm`
-//! (built by `bopogram build-lm`). A path that already ends in `.bglm` is used as is.
+//! (built by `bopogram build-lm`), beside the config's file or in the folder
+//! given with `--models`. A path that already ends in `.bglm` is used as is.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -63,13 +64,22 @@ pub fn load_lexicon(config: &Value, base: &Path) -> io::Result<Lexicon> {
     Lexicon::load(&base.join(dict))
 }
 
-/// Our model file for a model path in the config.
-pub fn model_file(path: &Path) -> PathBuf {
-    if path.extension().is_some_and(|e| e == "bglm") {
-        path.to_path_buf()
-    } else {
-        path.with_extension("bglm")
+/// Our model file for a model path in the config: the same name with the
+/// extension `.bglm`, beside it or in `models` if given (so the runtime bundle
+/// itself need not be written to).
+pub fn model_file(path: &Path, models: Option<&Path>) -> PathBuf {
+    let file = if path.extension().is_some_and(|e| e == "bglm") { path.to_path_buf() } else { path.with_extension("bglm") };
+    match (models, file.file_name()) {
+        (Some(dir), Some(name)) => dir.join(name),
+        _ => file,
     }
+}
+
+/// True if the model the config names (a KenLM file) was changed after our
+/// file was built from it: our file then no longer gives the same scores.
+fn stale(source: &Path, ours: &Path) -> bool {
+    let modified = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    source != ours && matches!((modified(source), modified(ours)), (Some(s), Some(o)) if s > o)
 }
 
 /// Added to the score of every user word unless the config says otherwise.
@@ -111,8 +121,9 @@ pub struct Engine {
 
 impl Engine {
     /// `use_user_model` false leaves out everything personal (user model, user
-    /// dictionary, typing log), as one-off conversions do.
-    pub fn load(config_file: &Path, use_user_model: bool) -> io::Result<Engine> {
+    /// dictionary, typing log), as one-off conversions do. `models` is the
+    /// folder with our model files when they are not beside the config's.
+    pub fn load(config_file: &Path, use_user_model: bool, model_dir: Option<&Path>) -> io::Result<Engine> {
         let cfg = read_config(config_file)?;
         let base = config_file.parent().unwrap_or(Path::new("."));
         let mut lexicon = load_lexicon(&cfg, base)?;
@@ -125,12 +136,20 @@ impl Engine {
         let mut weights = Vec::new();
         for m in models {
             let path = m.get("path").and_then(Value::as_str).ok_or_else(|| invalid("config: a model without \"path\"".into()))?;
-            let file = model_file(&base.join(path));
+            let source = base.join(path);
+            let file = model_file(&source, model_dir);
             if !file.exists() {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
                     format!("{}: missing; build it from the model's ARPA file with `bopogram build-lm`", file.display()),
                 ));
+            }
+            if stale(&source, &file) {
+                eprintln!(
+                    "warning: {} is newer than {}; build it again from the new ARPA file (`bopogram build-lm`)",
+                    source.display(),
+                    file.display()
+                );
             }
             paths.push(file);
             weights.push(m.get("weight").and_then(Value::as_f64).unwrap_or(1.0));

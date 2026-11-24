@@ -1,6 +1,6 @@
 # Bopogram 注音（試用版）：安裝、移除與回報
 
-這是第 4 階段的試用版：Python 原型引擎加上最小的 TSF 前端，目的是實際打字評估選字。
+這是試用版：最小的 TSF 前端，引擎可選 Rust 正式版引擎（預設）或 Python 原型，目的是實際打字評估選字。
 它不是正式版，沒有數位簽章，只供自己的機器使用，不可散布（執行包內的字典為 CC BY-ND）。
 
 ## 安裝前的條件
@@ -19,7 +19,11 @@
 powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\install.ps1
 ```
 
+預設使用 Rust 引擎（`bopogram.exe`），加 `-Engine python` 則用 Python 原型。兩個引擎都會安裝，
+之後可以隨時切換（見下方「切換引擎」）。
+
 Python 或執行包不在預設位置時，加上 `-Python <python.exe>`、`-Config <config.json>`。
+Rust 引擎的模型檔（`*.bglm`）預設在 `D:\bopogram-data\arpa`，放在別處時加 `-Models <資料夾>`。
 不想讓腳本動語言清單時加 `-NoKeyboard`，之後到「設定 → 時間與語言 → 語言與地區 →
 中文（繁體，台灣）→ 語言選項 → 新增鍵盤」自行加入。
 
@@ -27,8 +31,8 @@ Python 或執行包不在預設位置時，加上 `-Python <python.exe>`、`-Con
 
 | 步驟 | 動到的地方 |
 |---|---|
-| 1. 先單獨執行引擎確認可用 | 無 |
-| 2. 結束 host（等引擎存好個人化資料），複製 `bopogram_ime.dll`、`bopogram-host.exe`、`bopogram-settings.exe`、`bopogram.ico`、`uninstall.ps1`（含 `common.ps1`），32 位元 DLL 放進 `x86\`，寫入 `bopogram-host.json` | `C:\Program Files\Bopogram\`；使用中的舊檔排入重開機刪除（`HKLM\SYSTEM\CurrentControlSet\Control\Session Manager` 的 `PendingFileRenameOperations`） |
+| 1. 先單獨執行選定的引擎確認可用（Rust 引擎的模型檔比執行包的模型舊時也會停止） | 無 |
+| 2. 結束 host（等引擎存好個人化資料），複製 `bopogram_ime.dll`、`bopogram-host.exe`、`bopogram-settings.exe`、`bopogram.exe`、`bopogram.ico`、`uninstall.ps1`、`switch-engine.ps1`（含 `common.ps1`），32 位元 DLL 放進 `x86\`，寫入 `bopogram-host.json` | `C:\Program Files\Bopogram\`；使用中的舊檔排入重開機刪除（`HKLM\SYSTEM\CurrentControlSet\Control\Session Manager` 的 `PendingFileRenameOperations`） |
 | 3. `regsvr32` 註冊文字服務（64 與 32 位元各一次） | `HKLM\SOFTWARE\Classes\CLSID\{B6B6D901-0BBF-4287-A302-F265DBE9A46C}`、其 32 位元版 `HKLM\SOFTWARE\WOW6432Node\Classes\CLSID\{…}`、`HKLM\SOFTWARE\Microsoft\CTF\TIP\{B6B6D901-0BBF-4287-A302-F265DBE9A46C}` |
 | 4. 把輸入法加進目前使用者的「中文（繁體，台灣）」鍵盤 | 目前使用者的語言清單（`Set-WinUserLanguageList`，存在 `HKCU`） |
 | 5. 開始功能表捷徑「Bopogram 設定」 | `C:\ProgramData\Microsoft\Windows\Start Menu\Programs\` |
@@ -49,6 +53,36 @@ Python 或執行包不在預設位置時，加上 `-Python <python.exe>`、`-Con
   結束 `SearchHost.exe`（會自動再起來）即換成新版。
 - 引擎 host 會重新啟動；舊版 DLL 與新版 host 使用同一份協定，可以一起運作。
 - 輸入法清單（Win+空白鍵）裡的圖示由 Windows 快取，換圖示時可能要等下次登入才更新。
+
+## 切換引擎
+
+不必重新安裝。以系統管理員身分執行：
+
+```
+powershell -ExecutionPolicy Bypass -File "C:\Program Files\Bopogram\switch-engine.ps1" python
+powershell -ExecutionPolicy Bypass -File "C:\Program Files\Bopogram\switch-engine.ps1" rust
+```
+
+腳本會先確認該引擎能轉換一句話，再結束 host（引擎會先存好個人化資料）、改寫 `bopogram-host.json`
+的 `engine`，然後重新啟動 host。`host.log` 會記下 `engine ready (native)` 或 `engine ready (python)`。
+兩個引擎讀同一份 `config.json`、同一份詞庫與個人化資料，切換後學到的東西都還在。
+
+兩個引擎目前的差別：
+
+| | Rust 引擎 | Python 原型 |
+|---|---|---|
+| 選字 | n-gram、詞庫、個人化學習，結果與原型關掉 charlm 時相同 | 另外用 charlm 重新排序前幾名 |
+| charlm | 還沒有（第 6 階段 E4）；`config.json` 裡有設定時，`host.log` 會出現一行警告 | 有 |
+| 啟動 | 約 1 秒 | 數秒 |
+| 需要 | 只需要 `bopogram.exe` 與模型檔 | `prototype\.venv` |
+
+執行包的模型（`*.binary`）更新時，要用 WSL 匯出的新 ARPA 重新轉換 Rust 引擎的模型檔：
+
+```
+D:\bopogram\crates\target\release\bopogram.exe build-lm <模型>.arpa D:\bopogram-data\arpa\<模型>.bglm
+```
+
+忘了轉換時，Rust 引擎照常啟動，但 `host.log` 會警告哪個模型檔過期；安裝與切換腳本則會停下來。
 
 ## 移除
 
@@ -80,12 +114,13 @@ powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\uninstall.ps
 
 | 項目 | 位置 |
 |---|---|
-| 前端 DLL、host、設定程式 | `C:\Program Files\Bopogram\` |
-| 引擎程式 | `D:\bopogram\prototype`（`git pull` 後，結束 `bopogram-host.exe` 即使用新版） |
+| 前端 DLL、host、設定程式、Rust 引擎 | `C:\Program Files\Bopogram\` |
+| Python 引擎 | `D:\bopogram\prototype`（`git pull` 後，結束 `bopogram-host.exe` 即使用新版） |
 | 字典、模型、設定 | `D:\bopogram-data\bopogram-runtime\` |
+| Rust 引擎的模型檔 | `D:\bopogram-data\arpa\*.bglm` |
 | 個人化資料、打字紀錄 | 同上的 `userdata\` |
 
-全部在本機，沒有任何網路連線。引擎由 `bopogram-host.exe` 在登入時啟動（沒有設定時則在第一次打字時），常駐約 470 MB 記憶體；
+全部在本機，沒有任何網路連線。引擎由 `bopogram-host.exe` 在登入時啟動（沒有設定時則在第一次打字時），常駐記憶體 Python 版約 470 MB；
 要重新啟動引擎，在工作管理員結束 `bopogram-host.exe` 即可，下次打字會自動再起來。
 
 ## 工具列圖示與設定

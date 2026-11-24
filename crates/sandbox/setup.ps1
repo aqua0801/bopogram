@@ -43,10 +43,15 @@ Set-Content -Path (Join-Path $sitePackages "bopogram.pth") -Encoding ASCII -Valu
 $python = Join-Path $venv "Scripts\python.exe"
 $config = "C:\bopogram-runtime\config.json"
 
-# 1. The engine on its own.
+$models = "C:\bopogram-models"
+
+# 1. Both engines on their own.
 $converted = & $python -X utf8 -m bopogram.cli --config $config convert --keys "ji3y94ru8 " 2>&1
 [IO.File]::WriteAllLines("C:\out\engine.txt", [string[]]@($converted), (New-Object Text.UTF8Encoding($false)))
-Log "engine exit code: $LASTEXITCODE (output in engine.txt)"
+Log "python engine exit code: $LASTEXITCODE (output in engine.txt)"
+$converted = & "C:\stage\crates\target\release\bopogram.exe" --config $config --models $models convert --keys "ji3y94ru8 " 2>&1
+[IO.File]::WriteAllLines("C:\out\engine-rust.txt", [string[]]@($converted), (New-Object Text.UTF8Encoding($false)))
+Log "rust engine exit code: $LASTEXITCODE (output in engine-rust.txt)"
 
 # 2. Traditional Chinese (Taiwan) in the language list, as on the main system.
 try {
@@ -61,10 +66,10 @@ try {
 
 # 3. The real install script, and shortcuts on the desktop to run it again
 #    (an update) and to run the uninstall script. Each writes its output to C:\out.
-$arguments = "-Python `"$python`" -Config `"$config`" -ReviewTool `"C:\bopogram-prototype\tools\review_log.py`""
+$arguments = "-Models `"$models`" -Python `"$python`" -Config `"$config`" -ReviewTool `"C:\bopogram-prototype\tools\review_log.py`""
 $installScript = "C:\stage\crates\install\install.ps1"
 try {
-    & $installScript -Python $python -Config $config -ReviewTool "C:\bopogram-prototype\tools\review_log.py" *>&1 |
+    & $installScript -Models $models -Python $python -Config $config -ReviewTool "C:\bopogram-prototype\tools\review_log.py" *>&1 |
         Tee-Object C:\out\install.log
     Log "install finished (output in install.log)"
 } catch {
@@ -80,6 +85,10 @@ $update = "powershell -ExecutionPolicy Bypass -Command `"& '$installScript' $($a
 $remove = "powershell -ExecutionPolicy Bypass -Command `"& '$install\uninstall.ps1' *>&1 | Tee-Object C:\out\uninstall.log`"`r`npause"
 [IO.File]::WriteAllText((Join-Path $desktop "update.cmd"), "@echo off`r`n$update`r`n")
 [IO.File]::WriteAllText((Join-Path $desktop "uninstall.cmd"), "@echo off`r`n$remove`r`n")
+foreach ($to in "python", "rust") {
+    $switch = "powershell -ExecutionPolicy Bypass -Command `"& '$install\switch-engine.ps1' $to *>&1 | Tee-Object C:\out\switch-$to.log`"`r`npause"
+    [IO.File]::WriteAllText((Join-Path $desktop "switch-to-$to.cmd"), "@echo off`r`n$switch`r`n")
+}
 
 # Sample phrases for the phrase menu (Alt+`): one line, a long one, and one
 # with line breaks, which is refused (phrases are one line). Written as JSON escapes so this script stays ASCII.
@@ -114,7 +123,8 @@ Start-Process powershell.exe -ArgumentList "-STA", "-WindowStyle", "Hidden", "-E
 # every few seconds so that the main system can read it.
 $until = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 86400
 [IO.File]::WriteAllText((Join-Path $local "timing-until.txt"), "$until")
-$copy = "while (`$true) { Copy-Item '$local\timing.log' C:\out\timing.log -ErrorAction SilentlyContinue; Start-Sleep 3 }"
+$copy = "while (`$true) { Copy-Item '$local\timing.log' C:\out\timing.log -ErrorAction SilentlyContinue; " +
+    "Copy-Item '$local\host.log' C:\out\host.log -ErrorAction SilentlyContinue; Start-Sleep 3 }"
 Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-Command", $copy
 # A 32-bit application.
 Start-Process "$env:SystemRoot\SysWOW64\notepad.exe"

@@ -6,9 +6,11 @@
 //! syllable per character, syllables separated by one space; blank lines and
 //! lines starting with "#" are skipped):
 //!
-//!     userdict.tsv   word <Tab> reading <Tab> user
-//!     excluded.tsv   text <Tab> reading      (only that reading)
-//!                    text                    (every reading)
+//! ```text
+//! userdict.tsv   word <Tab> reading <Tab> user
+//! excluded.tsv   text <Tab> reading      (only that reading)
+//!                text                    (every reading)
+//! ```
 //!
 //! Only the engine writes them. Each change is written at once through a
 //! temporary file, and takes effect in memory only once it is on disk. Lines

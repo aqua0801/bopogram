@@ -25,9 +25,17 @@ use crate::log::log;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+/// Which engine runs: both speak the same protocol and take the same config.
+pub enum EngineKind {
+    /// The Rust engine (`bopogram.exe`), with the folder of its model files
+    /// if they are not beside the config's models.
+    Native { exe: PathBuf, models: Option<PathBuf> },
+    /// The Python prototype: an interpreter that has the `bopogram` package.
+    Python(PathBuf),
+}
+
 pub struct EngineConfig {
-    /// Python interpreter that has the `bopogram` package installed.
-    pub python: PathBuf,
+    pub kind: EngineKind,
     /// `config.json` of the runtime bundle.
     pub config: PathBuf,
     /// Debugging: the engine appends every request and response to this
@@ -114,9 +122,23 @@ fn read_line(reader: &mut impl BufRead) -> Option<String> {
 /// Start the engine and wait until it reports that the models are loaded.
 fn spawn(cfg: &EngineConfig) -> io::Result<Engine> {
     let stderr = crate::log::handle().map(Stdio::from).unwrap_or_else(Stdio::null);
-    let mut command = Command::new(&cfg.python);
-    // Without -X utf8, Python uses the ANSI code page for piped stdio.
-    command.args(["-X", "utf8", "-m", "bopogram.cli", "--config"]).arg(&cfg.config).arg("serve");
+    let mut command = match &cfg.kind {
+        EngineKind::Native { exe, models } => {
+            let mut command = Command::new(exe);
+            command.arg("--config").arg(&cfg.config);
+            if let Some(models) = models {
+                command.arg("--models").arg(models);
+            }
+            command
+        }
+        EngineKind::Python(python) => {
+            let mut command = Command::new(python);
+            // Without -X utf8, Python uses the ANSI code page for piped stdio.
+            command.args(["-X", "utf8", "-m", "bopogram.cli", "--config"]).arg(&cfg.config);
+            command
+        }
+    };
+    command.arg("serve");
     if let Some(trace) = &cfg.trace {
         log!("TRACE IS ON: everything typed is written to {}", trace.display());
         command.arg("--trace").arg(trace);
@@ -166,7 +188,11 @@ pub fn start(cfg: EngineConfig) -> Arc<Router> {
                     std::process::exit(1);
                 }
             };
-            log!("{}", if restarted { "engine restarted" } else { "engine ready" });
+            let which = match &cfg.kind {
+                EngineKind::Native { .. } => "native",
+                EngineKind::Python(_) => "python",
+            };
+            log!("{} ({which})", if restarted { "engine restarted" } else { "engine ready" });
             let Engine { mut child, stdin, mut stdout } = engine;
             *shared.stdin.lock().unwrap() = Some(stdin);
             while let Some(line) = read_line(&mut stdout) {
