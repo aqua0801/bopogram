@@ -178,41 +178,46 @@ fn clock() -> String {
     format!("{:02}:{:02}:{:02}Z", secs / 3600 % 24, secs / 60 % 60, secs % 60)
 }
 
-/// Serve requests until `quit` or the end of the input.
+/// What one request line gives.
+pub enum Reply {
+    /// The response line.
+    Line(String),
+    /// A blank line: no response.
+    Nothing,
+    /// `quit`: stop serving.
+    Quit,
+}
+
+/// The protocol over one engine: the sessions by sid, and the optional trace.
+/// `serve` drives it from stdin; the host drives it from its own thread.
 ///
 /// `trace` receives every request and response with the time taken. It is a
 /// debugging aid for front-end work and records everything typed, so it is
 /// off unless asked for and must not be left on.
-///
-/// The user model is saved however serving ends: also when the front end goes
-/// away while a response is being written (the pipe then fails).
-pub fn serve(
+pub struct Server {
     engine: Rc<Engine>,
     layout: &'static Layout,
-    input: impl BufRead,
-    out: impl Write,
+    sessions: HashMap<i64, Session>,
     trace: Option<Box<dyn Write>>,
-) -> io::Result<()> {
-    let result = serve_lines(&engine, layout, input, out, trace);
-    engine.save_user();
-    result
 }
 
-fn serve_lines(
-    engine: &Rc<Engine>,
-    layout: &'static Layout,
-    input: impl BufRead,
-    mut out: impl Write,
-    mut trace: Option<Box<dyn Write>>,
-) -> io::Result<()> {
-    let mut sessions: HashMap<i64, Session> = HashMap::new();
-    writeln!(out, "{}", json!({"ok": true, "ready": true}))?;
-    out.flush()?;
-    for line in input.lines() {
-        let line = line?;
+impl Server {
+    /// The line that says the engine is ready.
+    pub const READY: &'static str = r#"{"ok":true,"ready":true}"#;
+
+    pub fn new(engine: Rc<Engine>, layout: &'static Layout, trace: Option<Box<dyn Write>>) -> Server {
+        Server { engine, layout, sessions: HashMap::new(), trace }
+    }
+
+    pub fn engine(&self) -> &Rc<Engine> {
+        &self.engine
+    }
+
+    /// Answer one request line.
+    pub fn handle_line(&mut self, line: &str) -> Reply {
         let line = line.trim();
         if line.is_empty() {
-            continue;
+            return Reply::Nothing;
         }
         let started = Instant::now();
         let parsed: Result<Map<String, Value>, BadRequest> = match serde_json::from_str::<Value>(line) {
@@ -222,9 +227,10 @@ fn serve_lines(
         };
         if let Ok(req) = &parsed {
             if req.get("op").and_then(Value::as_str) == Some("quit") {
-                break;
+                return Reply::Quit;
             }
         }
+        let (engine, layout, sessions) = (&self.engine, self.layout, &mut self.sessions);
         // A bug must not take the engine down with every session in it: the
         // request gets an error, as the prototype answers its exceptions.
         let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match parsed {
@@ -259,12 +265,43 @@ fn serve_lines(
         }));
         let res = answer.unwrap_or_else(|_| error("InternalError: the engine failed on this request".into()));
         let text = Value::Object(res).to_string();
-        writeln!(out, "{text}")?;
-        out.flush()?;
-        if let Some(t) = trace.as_mut() {
+        if let Some(t) = self.trace.as_mut() {
             let ms = started.elapsed().as_secs_f64() * 1000.0;
-            write!(t, "{} {ms:.1}ms > {line}\n          < {text}\n", clock())?;
-            t.flush()?;
+            // A trace that cannot be written does not stop the engine.
+            let _ = write!(t, "{} {ms:.1}ms > {line}\n          < {text}\n", clock()).and_then(|_| t.flush());
+        }
+        Reply::Line(text)
+    }
+}
+
+/// Serve requests from `input` until `quit` or the end of the input.
+///
+/// The user model is saved however serving ends: also when the front end goes
+/// away while a response is being written (the pipe then fails).
+pub fn serve(
+    engine: Rc<Engine>,
+    layout: &'static Layout,
+    input: impl BufRead,
+    out: impl Write,
+    trace: Option<Box<dyn Write>>,
+) -> io::Result<()> {
+    let mut server = Server::new(Rc::clone(&engine), layout, trace);
+    let result = serve_lines(&mut server, input, out);
+    engine.save_user();
+    result
+}
+
+fn serve_lines(server: &mut Server, input: impl BufRead, mut out: impl Write) -> io::Result<()> {
+    writeln!(out, "{}", Server::READY)?;
+    out.flush()?;
+    for line in input.lines() {
+        match server.handle_line(&line?) {
+            Reply::Line(text) => {
+                writeln!(out, "{text}")?;
+                out.flush()?;
+            }
+            Reply::Nothing => {}
+            Reply::Quit => break,
         }
     }
     Ok(())

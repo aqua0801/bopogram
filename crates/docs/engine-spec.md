@@ -40,7 +40,7 @@
 - 接上前端分兩步：
   1. host 改成啟動 `bopogram.exe serve`，取代現在的 `python -m bopogram serve`，管線協定不變。
      `bopogram-host.json` 設定用哪一個，可以隨時切回 Python 版。
-  2. 穩定之後，host 直接連結引擎函式庫，少掉一個行程與一次管線往返。
+  2. 穩定之後，host 直接連結引擎函式庫，少掉一個行程與一次管線往返（E6 已完成）。
 
 ## n-gram 模型：自有格式（已定）
 
@@ -178,6 +178,23 @@ Rust 版的首選正確率必須與 Python 版完全相同；不同就是移植�
   | charlm，口語 | 93.76% | 4.2／6.6 ms | 23.6／32.3 ms |
   | 不用 charlm | 91.62% | 0.10／0.32 ms | 0.38／1.33 ms |
   | word-unigram 對照組 | 55.95% | 0.008／0.021 ms | |
+
+### E6（2026-11-24）
+
+- host 直接連結引擎函式庫：Rust 引擎在 `bopogram-host.exe` 裡的專用執行緒上執行（引擎的資料不跨執行緒共用），
+  管線連線把請求經由 channel 交給它，`sid` 的路由不變。不再另開 `bopogram.exe` 行程，少一次管線往返。
+- 協定處理抽成 `bopogram::server::Server`（`handle_line`），`bopogram serve` 與 host 共用同一份程式；
+  對照答案兩組五輪仍 0 差異。
+- Python 原型仍可選（`"engine": "python"`），留作與參考實作比對；打字不再需要 Python。
+- 結束：引擎在 host 裡，強制結束 host 會失去上次存檔後的學習。改為 host 建立停止事件
+  `Local\bopogram-host-stop-<SID>`（預設安全性：只有該使用者與 SYSTEM 能設定，低完整性程序不能寫），
+  安裝、切換、移除腳本設定它，引擎存好 `user.json` 後 host 自行結束；10 秒內沒結束才強制結束。
+  沒有停止事件的舊版 host 照舊強制結束（其引擎子行程看到輸入結束會自行存檔）。
+- 引擎的警告（模型檔過期、找不到 `charlm.bin`、詞庫略過的行）原本經由子行程的 stderr 寫進 `host.log`；
+  host 是 GUI 程式沒有 stderr，改為把自己的 stderr 指到 `host.log`。
+- 沙盒：打字、只有 host 一個行程、切換引擎時先存檔再結束、學習在切換後保留，都正常（使用者確認）。
+- `bopogram-host.json` 的 `engine` 改為 `"rust"` 或 `"python"`（不再是執行檔路徑）。
+  `bopogram.exe` 仍會安裝：安裝與切換前用它確認引擎可用，也提供 `eval`、`convert`、`build-lm`。
 
 ### 請 WSL 端處理（兩項都已在 02d8775 處理）
 

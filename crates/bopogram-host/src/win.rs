@@ -75,6 +75,40 @@ pub fn single_instance(sid: &str) -> io::Result<Option<HANDLE>> {
     }
 }
 
+/// The name of the event that asks the host of the user `sid` to stop.
+/// The install and switch scripts set it (common.ps1, `Stop-Bopogram`).
+pub fn stop_event_name(sid: &str) -> String {
+    format!(r"Local\bopogram-host-stop-{sid}")
+}
+
+/// Create the stop event and wait for it on a thread of its own; `on_stop`
+/// runs once it is set. With the default security only this user (and
+/// SYSTEM) may set it; sandboxed processes cannot (no write up).
+pub fn on_stop_event(sid: &str, on_stop: impl FnOnce() + Send + 'static) -> io::Result<()> {
+    use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject, INFINITE};
+    let name = wide(&stop_event_name(sid));
+    let event = unsafe { CreateEventW(None, true, false, PCWSTR(name.as_ptr()))? };
+    // A handle is a plain value; the event lives as long as the process.
+    let raw = event.0 as usize;
+    std::thread::spawn(move || {
+        unsafe { WaitForSingleObject(HANDLE(raw as *mut c_void), INFINITE) };
+        on_stop();
+    });
+    Ok(())
+}
+
+/// Make this process's standard error (where the engine writes its warnings)
+/// go to `file`. A GUI program has none otherwise.
+pub fn set_stderr(file: File) {
+    use std::os::windows::io::IntoRawHandle;
+    use windows::Win32::System::Console::{SetStdHandle, STD_ERROR_HANDLE};
+    // The handle stays open for the life of the process.
+    let handle = file.into_raw_handle();
+    unsafe {
+        let _ = SetStdHandle(STD_ERROR_HANDLE, HANDLE(handle));
+    }
+}
+
 /// A named pipe server that only the given user (and SYSTEM) may open,
 /// and only from this machine.
 pub struct PipeListener {

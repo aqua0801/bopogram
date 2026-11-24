@@ -13,6 +13,7 @@ dependencies = [
 name = "bopogram-host"
 version = "0.0.0"
 dependencies = [
+ "bopogram",
  "bopogram-protocol",
  "serde_json",
  "windows",

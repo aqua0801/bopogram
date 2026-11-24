@@ -26,21 +26,40 @@ function Get-ImeUsers {
         Sort-Object -Unique)
 }
 
-# Stop the host and the settings window, and wait for the engine: when the
-# host goes away the engine sees the end of its input, saves the personal
-# model and exits. Starting a new one before that could read a stale model.
+# Stop the host and the settings window, and wait until the personal model is
+# saved; starting a new engine before that could read a stale model.
+#
+# The host is asked to stop through its stop event (Local\bopogram-host-stop-
+# <user SID>): its engine saves the personal model and the host exits. A host
+# that cannot be asked (an older version, or one of another account) is ended,
+# as before; a Python engine it ran then sees the end of its input, saves and exits.
 function Stop-Bopogram {
-    Get-Process bopogram-host, bopogram-settings -ErrorAction SilentlyContinue | Stop-Process -Force
+    Get-Process bopogram-settings -ErrorAction SilentlyContinue | Stop-Process -Force
+    $hosts = @(Get-CimInstance Win32_Process -Filter "Name = 'bopogram-host.exe'" -ErrorAction SilentlyContinue)
+    foreach ($process in $hosts) {
+        $asked = $false
+        try {
+            $sid = (Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop).Sid
+            $event = [Threading.EventWaitHandle]::OpenExisting("Local\bopogram-host-stop-$sid")
+            $asked = $event.Set()
+            $event.Dispose()
+        } catch { }
+        if (-not $asked) { Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue }
+    }
     $deadline = (Get-Date).AddSeconds(10)
     do {
-        # The Python engine (python -m bopogram.cli ... serve) or the Rust one (bopogram.exe ... serve).
-        $engines = @(Get-CimInstance Win32_Process -Filter "Name LIKE 'python%' OR Name = 'bopogram.exe'" -ErrorAction SilentlyContinue |
+        $left = @(Get-Process bopogram-host -ErrorAction SilentlyContinue)
+        # A Python engine (python -m bopogram.cli ... serve), or the Rust one of an older host (bopogram.exe ... serve).
+        $left += @(Get-CimInstance Win32_Process -Filter "Name LIKE 'python%' OR Name = 'bopogram.exe'" -ErrorAction SilentlyContinue |
             Where-Object { ($_.Name -eq 'bopogram.exe' -or $_.CommandLine -match 'bopogram\.cli') -and $_.CommandLine -match '\bserve\b' })
-        if ($engines.Count -eq 0) { return }
+        if ($left.Count -eq 0) { return }
         Start-Sleep -Milliseconds 200
     } while ((Get-Date) -lt $deadline)
     Write-Output "The engine did not stop within 10 seconds; stopping it (unsaved learning since its last save is lost)."
-    $engines | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Get-Process bopogram-host -ErrorAction SilentlyContinue | Stop-Process -Force
+    Get-CimInstance Win32_Process -Filter "Name LIKE 'python%' OR Name = 'bopogram.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { ($_.Name -eq 'bopogram.exe' -or $_.CommandLine -match 'bopogram\.cli') -and $_.CommandLine -match '\bserve\b' } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 
 Add-Type -Namespace Bopogram -Name Native -MemberDefinition @'

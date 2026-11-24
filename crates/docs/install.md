@@ -8,7 +8,8 @@
 - 64 位元 Windows，Smart App Control 為關閉（開啟時會擋下未簽章的 DLL）。
 - 已在 `crates\` 執行過 `cargo build --release` 與
   `cargo build --release -p bopogram-ime --target i686-pc-windows-msvc`（32 位元版）。
-- 引擎可在本機執行：`prototype\.venv` 已建立，執行包在 `D:\bopogram-data\bopogram-runtime`。
+- 執行包在 `D:\bopogram-data\bopogram-runtime`，Rust 引擎的模型檔在 `D:\bopogram-data\arpa`。
+  `prototype\.venv` 只在要用 Python 原型引擎或打字紀錄審核工具時才需要。
 - 已在 Windows Sandbox 測過同一版（`crates\sandbox\prepare.ps1`）。
 
 ## 安裝
@@ -19,8 +20,9 @@
 powershell -ExecutionPolicy Bypass -File D:\bopogram\crates\install\install.ps1
 ```
 
-預設使用 Rust 引擎（`bopogram.exe`），加 `-Engine python` 則用 Python 原型。兩個引擎都會安裝，
-之後可以隨時切換（見下方「切換引擎」）。
+預設使用 Rust 引擎：它直接內建在 `bopogram-host.exe` 裡，不另外開引擎行程。
+加 `-Engine python` 則改用 Python 原型（另開 Python 行程），之後可以隨時切換（見下方「切換引擎」）。
+`bopogram.exe` 是同一個引擎的命令列版，安裝與切換前用它確認引擎可用，也可以拿來做 `eval`、`convert`。
 
 Python 或執行包不在預設位置時，加上 `-Python <python.exe>`、`-Config <config.json>`。
 Rust 引擎的模型檔（`*.bglm`）預設在 `D:\bopogram-data\arpa`，放在別處時加 `-Models <資料夾>`。
@@ -64,8 +66,12 @@ powershell -ExecutionPolicy Bypass -File "C:\Program Files\Bopogram\switch-engin
 ```
 
 腳本會先確認該引擎能轉換一句話，再結束 host（引擎會先存好個人化資料）、改寫 `bopogram-host.json`
-的 `engine`，然後重新啟動 host。`host.log` 會記下 `engine ready (native)` 或 `engine ready (python)`。
-兩個引擎讀同一份 `config.json`、同一份詞庫與個人化資料，切換後學到的東西都還在。
+的 `engine`（`rust` 或 `python`），然後重新啟動 host。`host.log` 會記下 `engine ready (builtin)`
+或 `engine ready (python)`。兩個引擎讀同一份 `config.json`、同一份詞庫與個人化資料，切換後學到的東西都還在。
+
+結束 host 的方式：腳本設定 host 的停止事件（`Local\bopogram-host-stop-<使用者 SID>`），
+引擎存好個人化資料後 host 自行結束，`host.log` 會記下 `stop requested` 與 `engine stopped; personal model saved`。
+10 秒內沒結束才強制結束。
 
 兩個引擎目前的差別：
 
@@ -73,8 +79,9 @@ powershell -ExecutionPolicy Bypass -File "C:\Program Files\Bopogram\switch-engin
 |---|---|---|
 | 選字 | n-gram、詞庫、個人化學習、charlm 重新排序 | 相同 |
 | charlm | 自有格式 `charlm.bin`（執行包 `charlm\` 裡），不需要 ONNX Runtime；找不到時 `host.log` 警告並只用 n-gram | ONNX 版（`config.json` 指向的 `.onnx`） |
+| 執行方式 | 內建在 `bopogram-host.exe`，同一個行程 | host 另開 Python 行程，透過管線溝通 |
 | 啟動 | 約 1 秒 | 數秒 |
-| 需要 | 只需要 `bopogram.exe` 與模型檔 | `prototype\.venv` |
+| 需要 | 只需要模型檔 | `prototype\.venv` |
 
 執行包的模型（`*.binary`）更新時，要用 WSL 匯出的新 ARPA 重新轉換 Rust 引擎的模型檔：
 

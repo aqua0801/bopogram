@@ -32,7 +32,8 @@ pub fn init() {
     }
 }
 
-/// A second handle to the log file, for the engine's stderr.
+/// A second handle to the log file, for the engine's stderr (the Python
+/// engine's, and this process's own for the built-in engine).
 pub fn handle() -> Option<File> {
     LOG.lock().unwrap().as_ref().and_then(|f| f.try_clone().ok())
 }
@@ -43,9 +44,13 @@ pub fn write(message: &str) {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let line = format!("[{secs}] {message}\n");
-    eprint!("{line}");
-    if let Some(file) = LOG.lock().unwrap().as_mut() {
-        let _ = file.write_all(line.as_bytes());
+    // Once the log is open, standard error goes to it too (the engine's
+    // warnings): write the line once.
+    match LOG.lock().unwrap().as_mut() {
+        Some(file) => {
+            let _ = file.write_all(line.as_bytes());
+        }
+        None => eprint!("{line}"),
     }
 }
 

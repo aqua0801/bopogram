@@ -8,11 +8,13 @@
 # them); everything started afterwards gets the new one.
 #
 # What it changes:
-#   - copies bopogram_ime.dll, bopogram-host.exe, bopogram-settings.exe,
-#     bopogram.exe (the Rust engine), bopogram.ico, uninstall.ps1 and
-#     switch-engine.ps1 (with common.ps1) to $Install, the 32-bit
-#     bopogram_ime.dll to $Install\x86, and writes bopogram-host.json there
-#     (which engine runs: -Engine rust, the default, or python).
+#   - copies bopogram_ime.dll, bopogram-host.exe (which has the Rust engine
+#     built in), bopogram-settings.exe, bopogram.exe (the engine's command
+#     line: checks the engine before install, and eval, convert, build-lm),
+#     bopogram.ico, uninstall.ps1 and switch-engine.ps1 (with common.ps1) to
+#     $Install, the 32-bit bopogram_ime.dll to $Install\x86, and writes
+#     bopogram-host.json there (which engine runs: -Engine rust, the default,
+#     or python, the prototype, kept to compare with).
 #     Files in use are renamed (*.old-<time>) and deleted at the next restart
 #     (PendingFileRenameOperations) or by the next install.
 #   - regsvr32 (64- and 32-bit): HKLM\SOFTWARE\Classes\CLSID\{B6B6D901-...},
@@ -24,14 +26,15 @@
 #     value "Bopogram" (skip with -NoAutostart)
 # uninstall.ps1 reverses all of it.
 param(
-    # Which engine the host runs: "rust" (bopogram.exe) or "python" (the
-    # prototype). Both are installed; switch-engine.ps1 changes it later.
+    # Which engine the host runs: "rust" (built into the host) or "python"
+    # (the prototype). switch-engine.ps1 changes it later.
     [ValidateSet("rust", "python")]
     [string]$Engine = "rust",
     # The Rust engine's model files (*.bglm, from `bopogram build-lm`).
     [string]$Models = "D:\bopogram-data\arpa",
     # The prototype's Python: runs the Python engine, and the typing log
-    # review tool of the settings window.
+    # review tool of the settings window. Not needed for typing with the
+    # Rust engine; if it is missing, only those two are unavailable.
     [string]$Python = "D:\bopogram\prototype\.venv\Scripts\python.exe",
     # config.json of the engine runtime bundle.
     [string]$Config = "D:\bopogram-data\bopogram-runtime\config.json",
@@ -96,8 +99,7 @@ foreach ($pair in $pairs) {
     }
     Copy-Item $file $target
 }
-$hostConfig = @{ python = $Python; config = $Config; review_tool = $ReviewTool; models = $Models }
-if ($Engine -eq "rust") { $hostConfig.engine = Join-Path $Install "bopogram.exe" }
+$hostConfig = @{ engine = $Engine; python = $Python; config = $Config; review_tool = $ReviewTool; models = $Models }
 if ($Trace) { $hostConfig.trace = $Trace }
 [IO.File]::WriteAllText((Join-Path $Install "bopogram-host.json"), ($hostConfig | ConvertTo-Json))
 Write-Output "Files installed in $Install (engine: $Engine)."

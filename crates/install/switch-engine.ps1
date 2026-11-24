@@ -5,7 +5,8 @@
 #   powershell -ExecutionPolicy Bypass -File "C:\Program Files\Bopogram\switch-engine.ps1" python
 #   powershell -ExecutionPolicy Bypass -File "C:\Program Files\Bopogram\switch-engine.ps1" rust
 #
-# It checks that the chosen engine converts a sentence, then stops the host
+# It checks that the chosen engine converts a sentence (the Rust engine with
+# bopogram.exe, the same engine the host has built in), then stops the host
 # (the running engine saves the personal model first), changes the "engine"
 # entry of bopogram-host.json and starts the host again. Both engines read the
 # same config.json and the same personal files. Nothing else is changed.
@@ -35,7 +36,7 @@ Write-Output "Engine check passed ($To)."
 $hostConfig = @{}
 foreach ($property in $settings.PSObject.Properties) { $hostConfig[$property.Name] = $property.Value }
 $hostConfig.models = $models
-if ($To -eq "rust") { $hostConfig.engine = $engineExe } else { $hostConfig.Remove("engine") }
+$hostConfig.engine = $To
 
 Stop-Bopogram
 [IO.File]::WriteAllText($hostJson, ($hostConfig | ConvertTo-Json))
