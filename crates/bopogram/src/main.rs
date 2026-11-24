@@ -308,6 +308,22 @@ fn charlm_check(args: &mut Args) -> io::Result<ExitCode> {
         let context = rec["context"].as_str().unwrap_or("");
         let texts: Vec<String> = rec["texts"].as_array().into_iter().flatten().filter_map(|t| t.as_str().map(str::to_owned)).collect();
         calls += 1;
+        if let Some(trace) = rec.get("trace").and_then(|t| t.as_array()) {
+            // Hidden vectors after the embedding and each block, to 6 digits (numpy's round).
+            let want_seq: Vec<u32> = rec["seqs"][0].as_array().into_iter().flatten().filter_map(|v| v.as_u64().map(|v| v as u32)).collect();
+            let got = lm.model.trace(&want_seq);
+            let d = got.first().map_or(1, |x| x.len() / want_seq.len().max(1));
+            let mut differ = 0;
+            for (step, (g, w)) in got.iter().zip(trace).enumerate() {
+                let w: Vec<f64> = w.as_array().into_iter().flatten().flat_map(|row| row.as_array().into_iter().flatten().filter_map(|v| v.as_f64())).collect();
+                let g: Vec<f64> = g.iter().map(|&v| (v as f64 * 1e6).round_ties_even() / 1e6).collect();
+                if g.len() != w.len() || g.iter().zip(&w).any(|(a, b)| a != b) {
+                    differ += 1;
+                    eprintln!("line {}: trace differs at step {step} (d {d})", n + 1);
+                }
+            }
+            println!("trace: {} steps compared, {differ} differ", got.len().min(trace.len()));
+        }
         for (i, text) in texts.iter().enumerate() {
             seqs += 1;
             let (seq, first) = lm.sequence(context, text);
@@ -322,7 +338,7 @@ fn charlm_check(args: &mut Args) -> io::Result<ExitCode> {
             let want = rec["logp"][i].as_f64().unwrap_or(f64::NAN);
             if got.to_bits() == want.to_bits() {
                 exact += 1;
-            } else {
+            } else if (got - want).abs() > 1e-9 {
                 eprintln!("line {}: {text:?} {got:?} != {want:?} ({:.3e})", n + 1, got - want);
             }
             worst = worst.max((got - want).abs());
@@ -338,7 +354,10 @@ fn charlm_check(args: &mut Args) -> io::Result<ExitCode> {
         }
     }
     let cached = started.elapsed().as_secs_f64();
-    println!("{calls} calls, {seqs} sequences: encoding differs {bad_seq}, scores exact {exact}, largest difference {worst:.3e}");
+    println!(
+        "{calls} calls, {seqs} sequences: encoding differs {bad_seq}, scores exact {exact}, largest difference {worst:.3e} ({})",
+        if worst <= 1e-9 { "within 1e-9" } else { "OVER 1e-9" }
+    );
     println!("through the prefix cache: {cached_bad} differ from the reference");
     println!("from scratch {:.1} ms per sequence; with the cache {:.1} ms", fresh * 1e3 / seqs as f64, cached * 1e3 / all.len().max(1) as f64);
     Ok(ExitCode::SUCCESS)

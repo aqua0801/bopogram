@@ -245,6 +245,8 @@ pub struct Model {
     blocks: Vec<Block>,
     norm: (Vec<f32>, Vec<f32>),
     cache: Vec<State>,
+    /// Testing (`trace`): the hidden vectors after each block.
+    trace_layers: Option<Vec<Vec<f32>>>,
 }
 
 impl Model {
@@ -338,6 +340,7 @@ impl Model {
             blocks,
             norm: norm("norm")?,
             cache: Vec::new(),
+            trace_layers: None,
         })
     }
 
@@ -448,6 +451,9 @@ impl Model {
             }
             ks.push(k);
             vs.push(v);
+            if let Some(t) = self.trace_layers.as_mut() {
+                t.push(x.clone());
+            }
         }
         layer_norm(&x, &self.norm.0, &self.norm.1, self.eps, &mut ln);
         let (mut xs, mut lse) = (Vec::with_capacity(len * d), Vec::with_capacity(len));
@@ -497,7 +503,29 @@ impl Model {
             let logit = (acc as f64 * (sx * out.scale[target] as f64) + out.bias[target] as f64) as f32;
             parts.push(logit as f64 - lse);
         }
-        pairwise_sum(&parts)
+        // Added in order, as the reference does.
+        parts.iter().fold(0.0, |total, &p| total + p)
+    }
+
+    /// The hidden vectors of `seq` after the embedding and after each block,
+    /// computed from scratch (the test vectors' "trace").
+    pub fn trace(&mut self, seq: &[u32]) -> Vec<Vec<f32>> {
+        self.clear_cache();
+        let mut out = Vec::new();
+        let d = self.d;
+        let mut x: Vec<f32> = Vec::with_capacity(seq.len() * d);
+        for (i, &id) in seq.iter().enumerate() {
+            let id = id as usize;
+            let scale = self.out.scale[id];
+            let row = &self.out.q[id * d..(id + 1) * d];
+            x.extend(row.iter().zip(&self.pos[i * d..(i + 1) * d]).map(|(&q, &p)| q as f32 * scale + p));
+        }
+        out.push(x);
+        self.trace_layers = Some(Vec::new());
+        self.extend(seq);
+        out.extend(self.trace_layers.take().unwrap_or_default());
+        self.clear_cache();
+        out
     }
 }
 

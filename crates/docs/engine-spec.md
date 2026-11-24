@@ -161,6 +161,11 @@ Rust 版的首選正確率必須與 Python 版完全相同；不同就是移植�
 - `charlm.bin` 在 `--models` 資料夾或 config 指向的模型旁；沒有時警告並只用 n-gram。
 - 測試向量（`bopogram charlm-check`）：1,498 個序列編碼全同，1,496 個分數逐位元相同；
   剩下 2 個，Windows 上的 Python 參考實作也算出與 Rust 相同的值，差異來自 WSL 與 Windows 的數學函式庫。
+- 92ee5ea 起，參考實作把每個序列的總分改成依位置順序相加（原本是 numpy 的 pairwise），Rust 跟進。
+  以新參考實作在 Windows 重新產生測試向量：1,498 個分數全部逐位元相同（含經過前綴快取），
+  `trace`（每層之後的 `x`，6 位小數）7 步全同。`charlm-check` 依新的驗收標準：`logp` 差 ≤ 1e-9。
+- 優化（`prototype/docs/charlm-optimization.md`）：前綴快取與每個位置的輸出層結果、(前文, 文字) 快取、
+  AVX2 的 `vpmaddwd` 精確整數內積已經有；候選併批、權重重排、VNNI、輸出層多執行緒、冷快取量測尚未做。
 - 發現：serde_json 預設的浮點數解析可能差最後 1 位，改開 `float_roundtrip`（同一個 crate 的功能，不是新依賴）。
 - 對照答案：以原型、`charlm` 指向 `charlm.bin` 在本機重新產生（原型 5.2 分鐘），五輪 **0 差異**；
   charlm 關閉的五輪仍 0 差異。
