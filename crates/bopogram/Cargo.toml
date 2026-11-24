@@ -14,4 +14,6 @@ name = "bopogram"
 path = "src/main.rs"
 
 [dependencies]
-serde_json.workspace = true
+# float_roundtrip: numbers read exactly as Python reads them (config weights,
+# test vectors); the default parser can be one unit in the last place off.
+serde_json = { workspace = true, features = ["float_roundtrip"] }

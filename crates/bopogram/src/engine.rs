@@ -6,6 +6,10 @@
 //! its own format, from the file of the same name with the extension `.bglm`
 //! (built by `bopogram build-lm`), beside the config's file or in the folder
 //! given with `--models`. A path that already ends in `.bglm` is used as is.
+//!
+//! The character model ("charlm") likewise runs from our format, `charlm.bin`
+//! (exported by `training/neural/export_charlm_native.py`), found in the
+//! `--models` folder or beside the model file the config names; no ONNX Runtime.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -15,6 +19,7 @@ use std::rc::Rc;
 
 use serde_json::Value;
 
+use crate::charlm::CharLM;
 use crate::context::context_state;
 use crate::decoder::{Decoder, ExtraScore, Style};
 use crate::lexicon::Lexicon;
@@ -22,6 +27,76 @@ use crate::lm::MixtureLM;
 use crate::typing_log::TypingLog;
 use crate::user::UserModel;
 use crate::userdict::UserDict;
+
+/// The character model and how it re-ranks ("charlm" in the config).
+pub struct Rerank {
+    pub lm: RefCell<CharLM>,
+    pub weight: f64,
+    pub top: usize,
+}
+
+impl Rerank {
+    /// Pick among the decoder's `top` best results (`Engine.rescore` in engine.py).
+    pub fn rescore(&self, decoder: &mut Decoder, context: &str) {
+        if decoder.syllables.is_empty() {
+            return;
+        }
+        let mut hyps = decoder.nbest(self.top);
+        // The character model does not know the user's words and must not overrule
+        // them: it only chooses among results that keep those of the best path.
+        if hyps.len() > 1 && decoder.lexicon.borrow().is_user_active() {
+            let keep = decoder.user_words(&hyps[0].0);
+            if !keep.is_empty() {
+                hyps.retain(|(words, _)| {
+                    let have = decoder.user_words(words);
+                    keep.iter().all(|k| have.contains(k))
+                });
+            }
+        }
+        if hyps.len() > 1 {
+            let texts: Vec<String> = hyps.iter().map(|(words, _)| words.iter().map(|w| &**w).collect()).collect();
+            let lm = self.lm.borrow_mut().score(context, &texts);
+            let total = |i: usize| hyps[i].1 + self.weight * lm[i];
+            let mut best = 0;
+            for i in 1..hyps.len() {
+                if total(i) > total(best) {
+                    best = i;
+                }
+            }
+            decoder.choice = Some(hyps.swap_remove(best).0);
+        }
+    }
+}
+
+/// The character model named by the config: our format (`charlm.bin`) as
+/// given, else `charlm.bin` in `models` or beside the file named; its
+/// `charlm.json` beside it.
+fn load_charlm(cfg: &Value, base: &Path, models: Option<&Path>) -> io::Result<Option<Rerank>> {
+    let Some(c) = cfg.get("charlm").filter(|c| !c.is_null()) else { return Ok(None) };
+    let model = c.get("model").and_then(Value::as_str).ok_or_else(|| invalid("config: \"charlm\" without \"model\"".into()))?;
+    let named = base.join(model);
+    let candidates: Vec<PathBuf> = if named.extension().is_some_and(|e| e == "bin") {
+        vec![named.clone()]
+    } else {
+        models.map(|m| m.join("charlm.bin")).into_iter().chain([named.with_file_name("charlm.bin")]).collect()
+    };
+    let Some(file) = candidates.into_iter().find(|p| p.exists()) else {
+        eprintln!(
+            "warning: no charlm.bin for {}; the character model is off (export it with training/neural/export_charlm_native.py)",
+            named.display()
+        );
+        return Ok(None);
+    };
+    let mut meta = file.with_file_name("charlm.json");
+    if !meta.exists() {
+        meta = named.with_file_name("charlm.json");
+    }
+    Ok(Some(Rerank {
+        lm: RefCell::new(CharLM::load(&file, &meta)?),
+        weight: c.get("weight").and_then(Value::as_f64).unwrap_or(0.5),
+        top: c.get("top").and_then(Value::as_u64).map_or(5, |v| v as usize),
+    }))
+}
 
 /// The user model's bonus as the decoder's extra score.
 fn extra_score(user: &Option<Rc<RefCell<UserModel>>>) -> Option<ExtraScore> {
@@ -116,7 +191,8 @@ pub struct Engine {
     eos_weight: f64,
     style: Style,
     word_bias: Rc<HashMap<String, f64>>,
-    pub charlm_top: usize,
+    /// The character model, if the config names one.
+    pub charlm: Option<Rc<Rerank>>,
 }
 
 impl Engine {
@@ -194,7 +270,8 @@ impl Engine {
         let (beam, max_candidates) = (get_usize("beam", 16), get_usize("max_candidates", 40));
         let (word_penalty, eos_weight) = (get_f64("word_penalty"), get_f64("eos_weight"));
         let word_bias = Rc::new(word_bias);
-        let decoder = Decoder::new(
+        let charlm = load_charlm(&cfg, base, model_dir)?.map(Rc::new);
+        let mut decoder = Decoder::new(
             Rc::clone(&lexicon),
             Rc::clone(&lm),
             beam,
@@ -205,9 +282,9 @@ impl Engine {
             style,
             Rc::clone(&word_bias),
         );
-        if cfg.get("charlm").is_some_and(|c| !c.is_null()) {
-            eprintln!("warning: \"charlm\" in the config is not supported yet and is ignored");
-        }
+        // Merging hypotheses with equal n-gram state leaves near-identical results in
+        // nbest(); without merging the top few are real alternatives worth re-ranking.
+        decoder.merge = charlm.is_none();
         Ok(Engine {
             lexicon,
             lm,
@@ -221,8 +298,20 @@ impl Engine {
             eos_weight,
             style,
             word_bias,
-            charlm_top: 5,
+            charlm,
         })
+    }
+
+    /// How many results the re-ranker chooses from (5 without one, as in engine.py).
+    pub fn charlm_top(&self) -> usize {
+        self.charlm.as_ref().map_or(5, |c| c.top)
+    }
+
+    /// Refresh a decoder's model scores after its buffer changed (no-op without models).
+    pub fn rescore(&self, decoder: &mut Decoder, context: &str) {
+        if let Some(c) = &self.charlm {
+            c.rescore(decoder, context);
+        }
     }
 
     /// Rebuild the dictionary's user layer after the user's dictionary changed.
@@ -245,7 +334,7 @@ impl Engine {
 
     /// A decoder with its own buffer, sharing this engine's dictionary and models.
     pub fn new_decoder(&self) -> Decoder {
-        Decoder::new(
+        let mut decoder = Decoder::new(
             Rc::clone(&self.lexicon),
             Rc::clone(&self.lm),
             self.beam,
@@ -255,7 +344,9 @@ impl Engine {
             self.eos_weight,
             self.style,
             Rc::clone(&self.word_bias),
-        )
+        );
+        decoder.merge = self.charlm.is_none();
+        decoder
     }
 
     /// Begin a composition; `context` is the text before the cursor (never modified).
@@ -269,9 +360,13 @@ impl Engine {
         for s in syllables {
             self.decoder.push(s.clone());
         }
+        if let Some(c) = self.charlm.clone() {
+            c.rescore(&mut self.decoder, context);
+        }
+        let top = self.charlm_top();
         let decoder = &self.decoder;
         let mut out: Vec<(String, f64)> = Vec::new();
-        for (words, score) in decoder.nbest(nbest.max(self.charlm_top)) {
+        for (words, score) in decoder.nbest(nbest.max(top)) {
             let text: String = decoder.show(&words).iter().map(|w| &**w).collect();
             // Casual 地/得 -> 的 can make two results equal.
             if !out.iter().any(|(t, _)| *t == text) {

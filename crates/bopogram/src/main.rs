@@ -72,6 +72,7 @@ fn main() -> ExitCode {
         "serve" => serve(&mut args, config.as_deref(), models.as_deref()),
         "build-lm" => build_lm(&mut args),
         "lm-probe" => lm_probe(&mut args),
+        "charlm-check" => charlm_check(&mut args),
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
@@ -229,6 +230,62 @@ fn lm_probe(args: &mut Args) -> io::Result<ExitCode> {
         }
         writeln!(out, "{}", parts.join(" "))?;
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Development: check the character model against the reference's test
+/// vectors (`prototype/tools/charlm_vectors.py`): the encoding, and the scores
+/// computed from scratch, which must be the same to the last bit; then the
+/// same scores again through the prefix cache, timed.
+fn charlm_check(args: &mut Args) -> io::Result<ExitCode> {
+    use bopogram::charlm::CharLM;
+    let [model, vectors] = args.rest.as_slice() else {
+        return Ok(fail("usage: bopogram charlm-check MODEL_DIR VECTORS.jsonl"));
+    };
+    let dir = Path::new(model);
+    let mut lm = CharLM::load(&dir.join("charlm.bin"), &dir.join("charlm.json"))?;
+    let (mut calls, mut seqs, mut bad_seq, mut exact, mut worst) = (0, 0, 0, 0, 0.0f64);
+    let mut cached_bad = 0;
+    let mut all = Vec::new();
+    let started = Instant::now();
+    for (n, line) in std::fs::read_to_string(vectors)?.lines().enumerate() {
+        let rec: serde_json::Value = serde_json::from_str(line).map_err(io::Error::other)?;
+        let context = rec["context"].as_str().unwrap_or("");
+        let texts: Vec<String> = rec["texts"].as_array().into_iter().flatten().filter_map(|t| t.as_str().map(str::to_owned)).collect();
+        calls += 1;
+        for (i, text) in texts.iter().enumerate() {
+            seqs += 1;
+            let (seq, first) = lm.sequence(context, text);
+            let want_seq: Vec<u32> = rec["seqs"][i].as_array().into_iter().flatten().filter_map(|v| v.as_u64().map(|v| v as u32)).collect();
+            if seq != want_seq || Some(first as u64) != rec["firsts"][i].as_u64() {
+                bad_seq += 1;
+                eprintln!("line {}: encoding of {text:?} differs", n + 1);
+                continue;
+            }
+            lm.model.clear_cache();
+            let got = lm.model.logp(&seq, first);
+            let want = rec["logp"][i].as_f64().unwrap_or(f64::NAN);
+            if got.to_bits() == want.to_bits() {
+                exact += 1;
+            } else {
+                eprintln!("line {}: {text:?} {got:?} != {want:?} ({:.3e})", n + 1, got - want);
+            }
+            worst = worst.max((got - want).abs());
+            all.push((seq, first, want));
+        }
+    }
+    let fresh = started.elapsed().as_secs_f64();
+    lm.model.clear_cache();
+    let started = Instant::now();
+    for (seq, first, want) in &all {
+        if lm.model.logp(seq, *first).to_bits() != want.to_bits() {
+            cached_bad += 1;
+        }
+    }
+    let cached = started.elapsed().as_secs_f64();
+    println!("{calls} calls, {seqs} sequences: encoding differs {bad_seq}, scores exact {exact}, largest difference {worst:.3e}");
+    println!("through the prefix cache: {cached_bad} differ from the reference");
+    println!("from scratch {:.1} ms per sequence; with the cache {:.1} ms", fresh * 1e3 / seqs as f64, cached * 1e3 / all.len().max(1) as f64);
     Ok(ExitCode::SUCCESS)
 }
 

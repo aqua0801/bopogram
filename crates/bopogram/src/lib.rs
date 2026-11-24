@@ -7,6 +7,7 @@
 //! - `lm`: the n-gram models (own file format, built from ARPA) and their mixture.
 //! - `lexicon`: the pronunciation dictionary.
 //! - `decoder`: the lattice and its decoding.
+//! - `charlm`: the character model that re-ranks the decoder's best results.
 //! - `context`: the text before the cursor, read into the model state.
 //! - `layout`: keystrokes -> syllables.
 //! - `engine`: the config and one-call conversion.
@@ -15,6 +16,7 @@
 //! - `userdict`, `dictops`: the user's own words and exclusions.
 //! - `user`: personal learning; `typing_log`: the optional local record.
 
+pub mod charlm;
 pub mod context;
 pub mod decoder;
 pub mod dictops;

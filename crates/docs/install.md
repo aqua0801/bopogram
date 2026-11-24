@@ -71,8 +71,8 @@ powershell -ExecutionPolicy Bypass -File "C:\Program Files\Bopogram\switch-engin
 
 | | Rust 引擎 | Python 原型 |
 |---|---|---|
-| 選字 | n-gram、詞庫、個人化學習，結果與原型關掉 charlm 時相同 | 另外用 charlm 重新排序前幾名 |
-| charlm | 還沒有（第 6 階段 E4）；`config.json` 裡有設定時，`host.log` 會出現一行警告 | 有 |
+| 選字 | n-gram、詞庫、個人化學習、charlm 重新排序 | 相同 |
+| charlm | 自有格式 `charlm.bin`（執行包 `charlm\` 裡），不需要 ONNX Runtime；找不到時 `host.log` 警告並只用 n-gram | ONNX 版（`config.json` 指向的 `.onnx`） |
 | 啟動 | 約 1 秒 | 數秒 |
 | 需要 | 只需要 `bopogram.exe` 與模型檔 | `prototype\.venv` |
 

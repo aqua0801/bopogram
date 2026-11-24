@@ -82,6 +82,17 @@ if (-not (Test-Path (Join-Path $runtimeCopy "config.json"))) {
     Copy-Item $Runtime $runtimeCopy -Recurse
     Remove-Item (Join-Path $runtimeCopy "userdata") -Recurse -Force -ErrorAction SilentlyContinue
 }
+# Model files added to the bundle after the copy was made (the character model
+# in the engine's own format); nothing in the copy is overwritten.
+Get-ChildItem $Runtime -Recurse -File |
+    Where-Object { $_.FullName -notmatch '\\userdata\\' } |
+    ForEach-Object {
+        $target = Join-Path $runtimeCopy $_.FullName.Substring($Runtime.TrimEnd('\').Length + 1)
+        if (-not (Test-Path $target)) {
+            New-Item -ItemType Directory -Force (Split-Path $target) | Out-Null
+            Copy-Item $_.FullName $target
+        }
+    }
 
 function Folder($hostPath, $sandboxPath, $readOnly) {
     "    <MappedFolder>`n      <HostFolder>$hostPath</HostFolder>`n      <SandboxFolder>$sandboxPath</SandboxFolder>`n      <ReadOnly>$readOnly</ReadOnly>`n    </MappedFolder>"

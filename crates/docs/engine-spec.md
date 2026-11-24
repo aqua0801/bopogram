@@ -27,7 +27,7 @@
 | `user.py` | 個人化學習（`user.json`） | 是，檔案格式不變 |
 | `userdict.py`、`dictops.py` | 使用者詞庫與 `dict_*` 操作 | 是，檔案格式不變 |
 | `typing_log.py` | 打字紀錄 | 是，檔案格式不變 |
-| `charlm.py` | 字級語言模型重排（ONNX） | 是（需要 ONNX Runtime，見下文） |
+| `charlm.py`、`charlm_native.py` | 字級語言模型重排 | 是，自有格式 `charlm.bin`，不用 ONNX Runtime（見下文） |
 | `server.py`、`cli.py` | 協定迴圈、命令列 | 是 |
 | `neural.py` | 逐位置神經評分 | 否：目前執行包沒有啟用。之後啟用時再移植 |
 | `evaluate.py` | 評估 | 是（`eval` 命令，用來比對正確率與延遲） |
@@ -61,9 +61,14 @@
 - 匯出的值與 `.binary` 的分數差在 5e-6 以內（float 加法順序造成）。Rust 端照 KenLM 計分時的加法順序實作；
   若對照答案仍因此出現名次互換，逐一確認並與 WSL 端討論。
 
-## 待決定 2：字級語言模型（charlm）用什麼執行
+## 字級語言模型（charlm）：自有格式（已定，2026-11-24）
 
-- 建議：`ort` crate（MIT OR Apache-2.0），呼叫 ONNX Runtime（MIT，已登記於 `THIRD_PARTY.md`）。
+ONNX Runtime 上游 repo 被移除（`onnxruntime-handoff.md`）後，WSL 端改出自有格式 `charlm.bin`
+與逐步的計算規格（`prototype/docs/charlm-native.md`，參考實作 `charlm_native.py`）。
+Rust 照規格實作（`crates/bopogram/src/charlm.rs`），不需要 ONNX Runtime、`ort` 或任何新依賴。
+以下為原本的提案，留作紀錄。
+
+- 原建議：`ort` crate（MIT OR Apache-2.0），呼叫 ONNX Runtime（MIT，已登記於 `THIRD_PARTY.md`）。
   以動態載入方式使用官方發行的 `onnxruntime.dll`，放進執行包；建置時不讓 `ort` 自己下載任何東西。
 - 替代方案：純 Rust 推論（例如 `tract`），不必帶 DLL，但 int8 量化模型的支援與速度要先驗證。
 - 依 `golden.md`，charlm 是唯一可接受的差異來源：浮點數的極小差異可能讓分數幾乎相同的兩個結果互換名次。
@@ -146,6 +151,22 @@ Rust 版的首選正確率必須與 Python 版完全相同；不同就是移植�
 - 單一請求出錯（panic）只回錯誤，不讓引擎結束。前端斷線時（寫回應失敗）也會先存 `user.json` 再結束，
   沙盒試用時發現並以「關閉輸出管道」實測確認。
 - 沙盒：兩個引擎單獨執行、安裝、打字、詞庫、雙向切換都正常（使用者確認）。對照答案五輪仍 0 差異。
+
+### E4（2026-11-24）
+
+- charlm（`charlm.rs`）：照 `charlm-native.md` 實作。f64 的加總（平均、softmax 與 log-sum-exp 的分母、
+  最後的總和）照 numpy 的 pairwise 順序；矩陣乘法以 8 位元整數精確累加（AVX2，沒有時用一般迴圈）。
+  前綴快取與 (上文, 文字) 分數快取的大小、淘汰順序都與原型相同，所以快取狀態也一致。
+  每個位置的 log-sum-exp 記在快取裡，同一前綴的候選只算一次輸出層。
+- `charlm.bin` 在 `--models` 資料夾或 config 指向的模型旁；沒有時警告並只用 n-gram。
+- 測試向量（`bopogram charlm-check`）：1,498 個序列編碼全同，1,496 個分數逐位元相同；
+  剩下 2 個，Windows 上的 Python 參考實作也算出與 Rust 相同的值，差異來自 WSL 與 Windows 的數學函式庫。
+- 發現：serde_json 預設的浮點數解析可能差最後 1 位，改開 `float_roundtrip`（同一個 crate 的功能，不是新依賴）。
+- 對照答案：以原型、`charlm` 指向 `charlm.bin` 在本機重新產生（原型 5.2 分鐘），五輪 **0 差異**；
+  charlm 關閉的五輪仍 0 差異。
+- 效能：每個音節約 3～4 ms（不含 charlm 時 < 0.2 ms）；載入 0.4 秒。
+  記憶體：工作集 498 MB、尖峰 509 MB（charlm 約 +20 MB；n-gram 模型本來就有 481 MB），略超過 500 MB 目標。
+- 尚未做：`eval` 命令。
 
 ### 請 WSL 端處理（兩項都已在 02d8775 處理）
 

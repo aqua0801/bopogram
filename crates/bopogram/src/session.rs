@@ -123,8 +123,11 @@ impl Session {
         format!("{}{}{}", self.initial, self.medial, self.fin)
     }
 
-    /// Model re-scoring after the buffer changed (the character model, later).
-    fn rescore(&mut self) {}
+    /// Model re-scoring after the buffer changed (the character model).
+    fn rescore(&mut self) {
+        let engine = Rc::clone(&self.engine);
+        engine.rescore(&mut self.decoder, &self.context);
+    }
 
     /// If the user's dictionary changed, decode the buffer again with it. Called
     /// before anything that changes or commits the buffer, so that a change
