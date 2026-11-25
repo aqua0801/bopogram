@@ -74,14 +74,17 @@ impl Rerank {
 fn load_charlm(cfg: &Value, base: &Path, models: Option<&Path>) -> io::Result<Option<Rerank>> {
     let Some(c) = cfg.get("charlm").filter(|c| !c.is_null()) else { return Ok(None) };
     let model = c.get("model").and_then(Value::as_str).ok_or_else(|| invalid("config: \"charlm\" without \"model\"".into()))?;
-    let weight = c.get("weight").and_then(Value::as_f64).unwrap_or(0.5);
-    let top = c.get("top").and_then(Value::as_u64).map_or(5, |v| v as usize);
+    // Normally only in the model's table (its tier's tuned values); given here,
+    // they override it (for experiments).
+    let weight = c.get("weight").and_then(Value::as_f64);
+    let top = c.get("top").and_then(Value::as_u64).map(|v| v as usize);
     load_rerank(&base.join(model), models, weight, top)
 }
 
 /// A character model from a model path as `load_charlm` finds it; `None`
-/// (with a warning) if there is no `charlm.bin` for it.
-pub fn load_rerank(named: &Path, models: Option<&Path>, weight: f64, top: usize) -> io::Result<Option<Rerank>> {
+/// (with a warning) if there is no `charlm.bin` for it. `weight` and `top`
+/// as given, else the model's own (`rerank` in its table), else 0.5 and 5.
+pub fn load_rerank(named: &Path, models: Option<&Path>, weight: Option<f64>, top: Option<usize>) -> io::Result<Option<Rerank>> {
     let named = named.to_path_buf();
     let candidates: Vec<PathBuf> = if named.extension().is_some_and(|e| e == "bin") {
         vec![named.clone()]
@@ -95,11 +98,14 @@ pub fn load_rerank(named: &Path, models: Option<&Path>, weight: f64, top: usize)
         );
         return Ok(None);
     };
-    let mut meta = file.with_file_name("charlm.json");
+    let mut meta = crate::charlm::table_path(&file);
     if !meta.exists() {
-        meta = named.with_file_name("charlm.json");
+        meta = crate::charlm::table_path(&named);
     }
-    Ok(Some(Rerank { lm: RefCell::new(CharLM::load(&file, &meta)?), weight, top }))
+    let lm = CharLM::load(&file, &meta)?;
+    let weight = weight.or(lm.rerank_weight).unwrap_or(0.5);
+    let top = top.or(lm.rerank_top).unwrap_or(5);
+    Ok(Some(Rerank { lm: RefCell::new(lm), weight, top }))
 }
 
 /// The user model's bonus as the decoder's extra score.

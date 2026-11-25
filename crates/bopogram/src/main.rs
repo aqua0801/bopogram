@@ -150,11 +150,9 @@ fn eval(args: &mut Args, config: Option<&str>, models: Option<&Path>) -> io::Res
     let char_freq = args.take("--char-freq");
     let style_name = args.take("--style").unwrap_or_else(|| "formal".into());
     let charlm_model = args.take("--charlm-model");
-    let parse_f64 = |v: Option<String>, name: &str, default: f64| -> Result<f64, String> {
-        v.map_or(Ok(default), |v| v.parse().map_err(|_| format!("{name}: not a number")))
-    };
-    let charlm_weight = parse_f64(args.take("--charlm-weight"), "--charlm-weight", 0.5);
-    let charlm_top = args.take("--charlm-top").map_or(Ok(5), |v| v.parse::<usize>().map_err(|_| "--charlm-top: not a number".to_owned()));
+    // Default: the model's own settings, else 0.5 and 5.
+    let charlm_weight = args.take("--charlm-weight").map(|v| v.parse::<f64>()).transpose();
+    let charlm_top = args.take("--charlm-top").map(|v| v.parse::<usize>()).transpose();
     let no_charlm = args.flag("--no-charlm");
     let errors = args.take("--errors");
     let json = args.take("--json");
@@ -296,10 +294,10 @@ fn lm_probe(args: &mut Args) -> io::Result<ExitCode> {
 fn charlm_check(args: &mut Args) -> io::Result<ExitCode> {
     use bopogram::charlm::CharLM;
     let [model, vectors] = args.rest.as_slice() else {
-        return Ok(fail("usage: bopogram charlm-check MODEL_DIR VECTORS.jsonl"));
+        return Ok(fail("usage: bopogram charlm-check MODEL VECTORS.jsonl"));
     };
-    let dir = Path::new(model);
-    let mut lm = CharLM::load(&dir.join("charlm.bin"), &dir.join("charlm.json"))?;
+    let file = bopogram::charlm::model_in(Path::new(model));
+    let mut lm = CharLM::load(&file, &bopogram::charlm::table_path(&file))?;
     let (mut calls, mut seqs, mut bad_seq, mut exact, mut worst) = (0, 0, 0, 0, 0.0f64);
     let mut cached_bad = 0;
     let mut all = Vec::new();
@@ -401,7 +399,7 @@ fn charlm_bench(args: &mut Args) -> io::Result<ExitCode> {
     let cold = args.flag("--cold");
     let scores_out = args.take("--scores");
     let [model, calls] = args.rest.as_slice() else {
-        return Ok(fail("usage: bopogram charlm-bench MODEL_DIR CALLS.jsonl [--cold] [--scores OUT]"));
+        return Ok(fail("usage: bopogram charlm-bench MODEL CALLS.jsonl [--cold] [--scores OUT]"));
     };
     let mut calls_v = Vec::new();
     for line in std::fs::read_to_string(calls)?.lines() {
@@ -411,9 +409,9 @@ fn charlm_bench(args: &mut Args) -> io::Result<ExitCode> {
         calls_v.push((context, texts));
     }
     let before = working_set().0;
-    let dir = Path::new(model);
+    let file = bopogram::charlm::model_in(Path::new(model));
     let started = Instant::now();
-    let mut lm = CharLM::load(&dir.join("charlm.bin"), &dir.join("charlm.json"))?;
+    let mut lm = CharLM::load(&file, &bopogram::charlm::table_path(&file))?;
     let loaded = started.elapsed().as_secs_f64();
     let after_load = working_set().0;
     let mut flush = if cold { vec![0u8; 512 << 20] } else { Vec::new() };

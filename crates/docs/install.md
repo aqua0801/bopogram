@@ -78,7 +78,8 @@ powershell -ExecutionPolicy Bypass -File "C:\Program Files\Bopogram\switch-engin
 | | Rust 引擎 | Python 原型 |
 |---|---|---|
 | 選字 | n-gram、詞庫、個人化學習、charlm 重新排序 | 相同 |
-| charlm | 自有格式 `charlm.bin`（執行包 `charlm\` 裡），不需要 ONNX Runtime；找不到時 `host.log` 警告並只用 n-gram | ONNX 版（`config.json` 指向的 `.onnx`） |
+| charlm | 自有格式 `.bin`（執行包 `charlm\` 裡，`config.json` 的 `charlm.model` 指定等級，例如 `charlm/charlm-lite.bin`），不需要 ONNX Runtime；找不到時 `host.log` 警告並只用 n-gram | 相同的 `.bin`，或 ONNX 版 |
+| charlm 等級 | 字表 `<模型名>.json`（沒有才用 `charlm.json`），重排權重與候選數取自其中的 `rerank`；`config.json` 寫了 `weight`／`top` 才覆寫 | 相同 |
 | 執行方式 | 內建在 `bopogram-host.exe`，同一個行程 | host 另開 Python 行程，透過管線溝通 |
 | 啟動 | 約 1 秒 | 數秒 |
 | 需要 | 只需要模型檔 | `prototype\.venv` |

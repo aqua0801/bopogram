@@ -248,6 +248,33 @@ charlm 測試向量 1,498 個逐位元相同、測試句集 93.0%）：
 整體（`serve`，charlm 開啟，測試句集與開發集各打兩遍）：載入後工作集 479 → **422 MB**，
 打字後 551 → **441 MB**，之後不再增長。其餘主要是 n-gram 模型（ly 127 MB、fineweb_small 185 MB、web 8 MB）。
 
+### charlm 分級（2026-11-25，`prototype/docs/charlm-tiers.md`）
+
+- 字表：與模型同名的 `.json`（`charlm-lite.bin` → `charlm-lite.json`），沒有才用同資料夾的 `charlm.json`
+  （`charlm::table_path`）。字表的 `rerank.weight`／`rerank.top` 是該級的重排設定；`config.json` 的 `charlm`
+  寫了 `weight`／`top` 才覆寫，都沒有時用 0.5 與 5。`eval` 的 `--charlm-weight`／`--charlm-top` 同樣可省略。
+- `charlm-check`、`charlm-bench` 改為接受模型檔（或含 `charlm.bin` 的資料夾）。
+- 維度、層數、head 數本來就從檔頭讀；運算核心不分等級。
+- 前綴快取：最多 32 個序列，且保留的位置（共用的前綴只算一次）不超過 20 MB，大的等級保留較少序列；不影響分數。
+- 驗證：
+  - 輕量級測試向量（Windows 上以參考實作重新產生）1,498 個逐位元相同，經前綴快取也相同。
+    WSL 產生的 `charlm_vectors_lite.jsonl` 有 13 個序列差 1e-14 級，與先前標準級一樣來自 WSL 的數學函式庫。
+  - 標準級向量逐位元相同；對照答案（`config.json` 不寫權重，由字表提供 0.5／5）五輪 0 差異。
+  - 輕量級測試句集 92.8%（權重 0.3，取自字表），錯誤清單與原型逐句相同。
+- 量測（同 `charlm-optimization.md` 的方式，Rust 2 個執行緒）：
+
+  | 條件 | 等級 | 每次呼叫 熱 P50／P95 | 冷 P50／P95 | 每個按鍵 P50／P95 |
+  |---|---|---|---|---|
+  | CCD0 | 輕量 | 0.47／0.75 ms | 0.88／1.40 ms | 0.61／1.02 ms |
+  | CCD0 | 標準 | 0.94／1.74 ms | 1.66／2.56 ms | 1.23／2.13 ms |
+  | CCD1 | 輕量 | 0.46／0.77 ms | 0.79／1.26 ms | 0.66／1.13 ms |
+  | CCD1 | 標準 | 1.07／1.77 ms | 1.55／2.33 ms | 1.44／2.25 ms |
+  | CCD1＋搶快取 | 輕量 | 0.46／0.76 ms | 0.89／1.33 ms | 0.71／1.22 ms |
+  | CCD1＋搶快取 | 標準 | 1.16／1.99 ms | 1.60／2.33 ms | 1.47／2.30 ms |
+
+  charlm 的記憶體（載入並跑完全部呼叫後增加的工作集）：輕量 +16 MB、標準 +28 MB。
+  原型（numpy）每個按鍵 P50：輕量 7.2 ms。
+
 ### 請 WSL 端處理（兩項都已在 02d8775 處理）
 
 WSL 端的處理結果：ARPA 改為最短的精確 float32 文字，back-off 以 KenLM 的分數解出；web 與 `.binary`

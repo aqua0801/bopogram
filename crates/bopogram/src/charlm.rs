@@ -19,7 +19,7 @@
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use serde_json::Value;
@@ -29,8 +29,11 @@ use crate::pool::Pool;
 
 const MAGIC: &[u8; 8] = b"BPCLM\x00\x00\x01";
 const ALIGN: usize = 64;
-/// Sequences whose state is kept.
+/// Sequences whose state is kept, at most; and at most this many bytes of
+/// positions (a position's size grows with layers and width, so the larger
+/// tiers keep fewer). Which sequences are kept changes no score.
 const PREFIX_CACHE: usize = 32;
+const PREFIX_BYTES: usize = 20 << 20;
 /// Characters of context the model reads.
 pub const MAX_CONTEXT: usize = 40;
 /// (context, text) scores kept.
@@ -773,7 +776,19 @@ impl Model {
                 self.cache.remove(0);
             }
         }
+        while self.cache.len() > 1 && self.prefix_bytes() > PREFIX_BYTES {
+            self.cache.remove(0);
+        }
         out
+    }
+
+    /// Bytes held by the kept positions, each counted once (sequences share
+    /// their common prefixes).
+    fn prefix_bytes(&self) -> usize {
+        let per = (2 * self.blocks.len() * self.d + self.d) * std::mem::size_of::<f32>();
+        let distinct: std::collections::HashSet<*const Pos> =
+            self.cache.iter().flat_map(|s| s.pos.iter().map(Rc::as_ptr)).collect();
+        distinct.len() * per
     }
 
     /// Sum of ln P(seq[i + 1] | seq[..= i]) for i = first .. len - 2, for
@@ -868,6 +883,27 @@ const SPACES: &[(u32, u32)] = &[
     (0x202F, 0x202F), (0x205F, 0x205F), (0x3000, 0x3000),
 ];
 
+/// A model's character table: `<model name>.json` beside it
+/// (`charlm-lite.bin` -> `charlm-lite.json`), else `charlm.json` in the same
+/// folder (`prototype/docs/charlm-tiers.md`).
+pub fn table_path(model: &Path) -> PathBuf {
+    let own = model.with_extension("json");
+    if own.exists() {
+        own
+    } else {
+        model.with_file_name("charlm.json")
+    }
+}
+
+/// A model file given as itself or as the folder holding `charlm.bin`.
+pub fn model_in(path: &Path) -> PathBuf {
+    if path.is_dir() {
+        path.join("charlm.bin")
+    } else {
+        path.to_path_buf()
+    }
+}
+
 fn in_ranges(ranges: &[(u32, u32)], ch: char) -> bool {
     let c = ch as u32;
     ranges.iter().any(|&(a, b)| a <= c && c <= b)
@@ -877,6 +913,10 @@ fn in_ranges(ranges: &[(u32, u32)], ch: char) -> bool {
 /// (`CharLMScorer` in charlm.py).
 pub struct CharLM {
     pub model: Model,
+    /// This model's own re-ranking weight and number of results ("rerank" in
+    /// its table; one per tier), if it has them.
+    pub rerank_weight: Option<f64>,
+    pub rerank_top: Option<usize>,
     char_id: HashMap<char, u32>,
     num: u32,
     eng: u32,
@@ -891,7 +931,8 @@ pub struct CharLM {
 }
 
 impl CharLM {
-    /// `meta` is the model's `charlm.json` (character list, `bos`, `eos`).
+    /// `meta` is the model's character table (character list, `bos`, `eos`,
+    /// and optionally the tier's `rerank` settings); see `table_path`.
     pub fn load(model: &Path, meta: &Path) -> io::Result<CharLM> {
         let model = Model::load(model)?;
         let text = std::fs::read_to_string(meta).map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", meta.display())))?;
@@ -924,7 +965,12 @@ impl CharLM {
                 return Err(bad("max_len does not match the model"));
             }
         }
+        let rerank = meta_v.get("rerank");
+        let rerank_weight = rerank.and_then(|r| r.get("weight")).and_then(Value::as_f64);
+        let rerank_top = rerank.and_then(|r| r.get("top")).and_then(Value::as_u64).map(|v| v as usize);
         let mut lm = CharLM {
+            rerank_weight,
+            rerank_top,
             num: sp("<n>")?,
             eng: sp("<e>")?,
             unk_han: sp("<x>")?,
