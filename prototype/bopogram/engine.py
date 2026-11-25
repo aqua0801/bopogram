@@ -115,11 +115,15 @@ class Engine:
         self.neural = NeuralScorer(model, threads)
         self.neural_weight, self.neural_floor = weight, floor
 
-    def set_charlm(self, model, weight: float = 0.5, top: int = 5, threads: int = 2) -> None:
+    def set_charlm(self, model, weight: float | None = None, top: int | None = None, threads: int = 2) -> None:
+        """Weight and number of results re-ranked: as given, else the model's own
+        settings ("rerank" in its table, one per tier), else 0.5 and 5."""
         from .charlm import CharLMScorer  # imported only when used: ONNX Runtime is optional
 
         self.charlm = CharLMScorer(model, threads)
-        self.charlm_weight, self.charlm_top = weight, top
+        own = self.charlm.rerank
+        self.charlm_weight = weight if weight is not None else own.get("weight", 0.5)
+        self.charlm_top = top if top is not None else own.get("top", 5)
         # Merging hypotheses with equal n-gram state leaves near-identical results in
         # nbest(); without merging the top few are real alternatives worth re-ranking.
         if hasattr(self, "decoder"):
