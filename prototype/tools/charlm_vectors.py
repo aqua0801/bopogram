@@ -2,9 +2,10 @@
 engine's own format (prototype/docs/charlm-native.md).
 
 Usage (WSL):
-    uv run python tools/charlm_vectors.py MODEL_DIR TESTSET OUT_JSONL [--limit 300]
+    uv run python tools/charlm_vectors.py MODEL TESTSET OUT_JSONL [--limit 300]
 
-MODEL_DIR holds charlm.bin and charlm.json. Each output line is one call of the
+MODEL is a model file in the engine's format (its table is found as charlm.py
+finds it), or a folder holding charlm.bin. Each output line is one call of the
 re-ranker, made from a test sentence: its context, and the sentence with a few
 variants (two characters swapped, one dropped, a full stop added, cut in half):
 
@@ -47,12 +48,12 @@ def variants(text: str, rng: random.Random) -> list[str]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("model_dir", type=Path)
+    ap.add_argument("model", type=Path)
     ap.add_argument("testset", type=Path)
     ap.add_argument("out", type=Path)
     ap.add_argument("--limit", type=int, default=300)
     args = ap.parse_args()
-    path = args.model_dir / "charlm.bin"
+    path = args.model / "charlm.bin" if args.model.is_dir() else args.model
     scorer = CharLMScorer(path)
     rng = random.Random(0)
     with open(args.testset, encoding="utf-8", newline="") as fh:

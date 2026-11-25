@@ -23,10 +23,18 @@ MAX_CONTEXT = 40
 CACHE_SIZE = 2000
 
 
+def table_path(model_path: Path) -> Path:
+    """The model's character table: <model name>.json beside it (charlm-lite.bin ->
+    charlm-lite.json), else charlm.json in the same folder."""
+    own = model_path.with_suffix(".json")
+    return own if own.exists() else model_path.with_name("charlm.json")
+
+
 class CharLMScorer:
     def __init__(self, model_path: str | Path, threads: int = 2):
         model_path = Path(model_path)
-        meta = json.loads(model_path.with_name("charlm.json").read_text(encoding="utf-8"))
+        meta = json.loads(table_path(model_path).read_text(encoding="utf-8"))
+        self.rerank: dict = meta.get("rerank", {})  # this model's tuned weight and top
         self._session = self._native = None
         if model_path.suffix == ".bin":  # the engine's own format: no ONNX Runtime
             from .charlm_native import NativeCharLM
