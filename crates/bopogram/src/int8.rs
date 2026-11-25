@@ -61,7 +61,18 @@ impl Weights {
         Weights { q, k, n, packed }
     }
 
+    /// The same weights for a matrix only ever multiplied with `best()`:
+    /// when that kernel reads the packed copy, the plain one is dropped
+    /// (`row` and the other kernels then cannot be used).
+    pub fn packed_only(mut self) -> Weights {
+        if self.packed.is_some() && best() == Kernel::Avx512Vnni {
+            self.q = Vec::new();
+        }
+        self
+    }
+
     pub fn row(&self, j: usize) -> &[i8] {
+        assert!(!self.q.is_empty(), "the plain weights were dropped (packed_only)");
         &self.q[j * self.k..(j + 1) * self.k]
     }
 }

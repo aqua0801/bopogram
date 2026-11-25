@@ -21,6 +21,10 @@ const PARTICLE_CASUAL: &str = "的";
 const PARTICLE_FORMAL: [&str; 2] = ["地", "得"];
 pub const LITERAL: char = '=';
 
+/// Candidate lists kept per decoder before the cache is emptied. One buffer
+/// asks for at most MAX_BUFFER · MAX_WORD_LEN keys (30 · 8).
+const CAND_CACHE_SIZE: usize = 4096;
+
 /// Tone sandhi: 一 and 不 typed with their spoken tone are valid only before
 /// a syllable whose tone causes the change; until it arrives the choice
 /// carries SANDHI_PENALTY.
@@ -277,6 +281,11 @@ impl Decoder {
             cands = user.iter().cloned().chain(rest.into_iter().take(room).map(|r| r.0)).collect();
         }
         drop(lexicon);
+        // Only a cache: emptying it changes no result, and keeps memory from
+        // growing with everything typed since the dictionary last changed.
+        if self.cand_cache.len() >= CAND_CACHE_SIZE {
+            self.cand_cache = HashMap::new();
+        }
         self.cand_cache.insert(key.to_vec(), cands.clone());
         cands
     }

@@ -511,7 +511,8 @@ impl Model {
         };
         let linear = |name: &str, n_out: usize, n_in: usize| -> io::Result<QLinear> {
             Ok(QLinear {
-                w: Weights::new(i8s(&format!("{name}.q"), &[n_out, n_in])?, n_out, n_in),
+                // Only multiplied (with `int8::best()`), never read by row.
+                w: Weights::new(i8s(&format!("{name}.q"), &[n_out, n_in])?, n_out, n_in).packed_only(),
                 scale: f32s(&format!("{name}.scale"), &[n_out])?,
                 bias: f32s(&format!("{name}.b"), &[n_out])?,
                 n_in,

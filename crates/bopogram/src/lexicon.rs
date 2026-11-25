@@ -24,11 +24,18 @@ pub fn reading_alias(syllable: &str) -> &str {
 
 pub type Word = Rc<str>;
 
+/// A dictionary reading: syllable ids and the source tag's index.
+type Reading = (Box<[u32]>, u16);
+
 pub struct Lexicon {
-    /// Syllable -> id, for the keys below.
+    /// Syllable -> id, for the keys below, and back.
     syllables: HashMap<String, u32>,
+    names: Vec<Box<str>>,
     by_reading: HashMap<Box<[u32]>, Vec<Word>>,
-    readings: HashMap<String, Vec<(Vec<String>, String)>>,
+    /// Word -> its readings as syllable ids, each with its source tag (an
+    /// index into `tags`). Kept compact: the dictionary has some 200,000 readings.
+    readings: HashMap<Word, Vec<Reading>>,
+    tags: Vec<Box<str>>,
     reading_logp: HashMap<(String, String), f64>,
     /// Goes up with every change of the user's dictionary, so decoders know
     /// their results are stale.
@@ -48,8 +55,10 @@ impl Lexicon {
         let text = fs::read_to_string(path).map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", path.display())))?;
         let mut lexicon = Lexicon {
             syllables: HashMap::new(),
+            names: Vec::new(),
             by_reading: HashMap::new(),
             readings: HashMap::new(),
+            tags: Vec::new(),
             reading_logp: HashMap::new(),
             version: 0,
             user_bonus: 0.0,
@@ -67,27 +76,46 @@ impl Lexicon {
                 continue;
             }
             let word = parts[0];
-            let syls: Vec<String> = parts[1].split_whitespace().map(str::to_owned).collect();
-            let tag = parts.get(2).copied().unwrap_or("").to_owned();
+            let syls: Vec<&str> = parts[1].split_whitespace().collect();
+            let tag = parts.get(2).copied().unwrap_or("");
+            let tag = match lexicon.tags.iter().position(|t| **t == *tag) {
+                Some(i) => i,
+                None => {
+                    lexicon.tags.push(tag.into());
+                    lexicon.tags.len() - 1
+                }
+            };
             let key = lexicon.intern(&syls);
             let shared = words.entry(word.to_owned()).or_insert_with(|| Rc::from(word)).clone();
-            let list = lexicon.by_reading.entry(key).or_default();
+            let list = lexicon.by_reading.entry(key.clone()).or_default();
             if !list.iter().any(|w| **w == *word) {
-                list.push(shared);
+                list.push(Rc::clone(&shared));
             }
-            lexicon.readings.entry(word.to_owned()).or_default().push((syls, tag));
+            lexicon.readings.entry(shared).or_default().push((key, tag as u16));
         }
+        lexicon.by_reading.values_mut().for_each(Vec::shrink_to_fit);
+        lexicon.readings.values_mut().for_each(Vec::shrink_to_fit);
         Ok(lexicon)
     }
 
-    fn intern(&mut self, syllables: &[String]) -> Box<[u32]> {
+    fn intern<S: AsRef<str>>(&mut self, syllables: &[S]) -> Box<[u32]> {
         syllables
             .iter()
             .map(|s| {
-                let next = self.syllables.len() as u32;
-                *self.syllables.entry(s.clone()).or_insert(next)
+                let s = s.as_ref();
+                if let Some(&id) = self.syllables.get(s) {
+                    return id;
+                }
+                let id = self.names.len() as u32;
+                self.syllables.insert(s.to_owned(), id);
+                self.names.push(s.into());
+                id
             })
             .collect()
+    }
+
+    fn name(&self, id: u32) -> &str {
+        &self.names[id as usize]
     }
 
     /// The key of `syllables`, if every one of them is in the dictionary.
@@ -114,7 +142,7 @@ impl Lexicon {
         for (ch, seen) in &probs {
             let Some(readings) = self.readings.get(*ch) else { continue };
             for (syls, _) in readings {
-                let syl = reading_alias(&syls[0]);
+                let syl = reading_alias(self.name(syls[0]));
                 let p = seen.get(syl).copied().unwrap_or(0.0);
                 let logp = if p > 0.0 { p.ln() } else { READING_FLOOR };
                 self.reading_logp.insert(((*ch).to_owned(), syl.to_owned()), weight * READING_FLOOR.max(logp));
@@ -169,7 +197,7 @@ impl Lexicon {
     pub fn in_base(&self, word: &str, syllables: Option<&[&str]>) -> bool {
         self.readings
             .get(word)
-            .is_some_and(|r| r.iter().any(|(s, _)| syllables.is_none_or(|want| s.iter().map(String::as_str).eq(want.iter().copied()))))
+            .is_some_and(|r| r.iter().any(|(s, _)| syllables.is_none_or(|want| s.iter().map(|&id| self.name(id)).eq(want.iter().copied()))))
     }
 
     /// Words pronounced exactly as `syllables` (one syllable per character):
@@ -229,7 +257,9 @@ impl Lexicon {
 
     /// All (syllables, source tag) pairs of a word, the user's readings included.
     pub fn readings(&self, word: &str) -> Vec<(Vec<String>, String)> {
-        let base = self.readings.get(word).cloned().unwrap_or_default();
+        let base: Vec<(Vec<String>, String)> = self.readings.get(word).map_or_else(Vec::new, |r| {
+            r.iter().map(|(s, tag)| (s.iter().map(|&id| self.name(id).to_owned()).collect(), self.tags[*tag as usize].to_string())).collect()
+        });
         let Some(user) = self.user_readings.get(word) else { return base };
         let mut out = base.clone();
         for s in user {

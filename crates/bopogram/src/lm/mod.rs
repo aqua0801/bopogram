@@ -66,7 +66,10 @@ pub struct MixtureLM {
 }
 
 const LN_10: f64 = std::f64::consts::LN_10;
-const CACHE_LIMIT: usize = 300_000;
+/// Scores kept before the cache is emptied. One keystroke asks for a few
+/// thousand; each entry costs about 130 bytes with its state, so 300,000 kept
+/// some 40 MB without making typing faster.
+const CACHE_LIMIT: usize = 50_000;
 const UNIGRAM_LIMIT: usize = 500_000;
 
 impl MixtureLM {
