@@ -200,13 +200,32 @@ def main() -> None:
             ("editing", run_editing(), {}),
             ("userdict", run_userdict(), {"userdict": USERDICT, "excluded": EXCLUDED}),
             ("learning", run_learning(), {})]
-    args.out_dir.mkdir(parents=True, exist_ok=True)
+    # Checkpoint: each finished run is kept in parts/ and skipped when the command is
+    # run again with the same config; the parts are joined at the end.
+    parts = args.out_dir / "parts"
+    parts.mkdir(parents=True, exist_ok=True)
+    stamp = json.dumps(config, sort_keys=True, ensure_ascii=False) + f"\ndev={args.dev}"
+    stamp_file = parts / "config.txt"
+    if not stamp_file.exists() or stamp_file.read_text(encoding="utf-8") != stamp:
+        for f in parts.glob("*.jsonl"):
+            f.unlink()
+        stamp_file.write_text(stamp, encoding="utf-8")
+    for name, reqs, setup in runs:
+        part = parts / f"{name}.jsonl"
+        if part.exists():
+            print(f"{name}: already done", flush=True)
+            continue
+        tmp = parts / f"{name}.jsonl.tmp"
+        with open(tmp, "w", encoding="utf-8", newline="\n") as out:
+            n = record(name, reqs, config, base, out, setup)
+        tmp.replace(part)
+        print(f"{name}: {n} requests", flush=True)
     tmp = args.out_dir / "golden.jsonl.tmp"
     with open(tmp, "w", encoding="utf-8", newline="\n") as out:
-        for name, reqs, setup in runs:
-            n = record(name, reqs, config, base, out, setup)
-            print(f"{name}: {n} requests", flush=True)
+        for name, _, _ in runs:
+            out.write((parts / f"{name}.jsonl").read_text(encoding="utf-8"))
     tmp.replace(args.out_dir / "golden.jsonl")
+    shutil.rmtree(parts)
     shutil.copy(__file__, args.out_dir / "make_golden.py")  # how it was made, next to the data
 
 

@@ -4,7 +4,7 @@
 
 | 檔案 | 位置 | 說明 |
 |---|---|---|
-| `ly.arpa`、`general.arpa`、`web.arpa`、`fineweb_small.arpa` | `~/bopogram-data/dist/arpa/`（Windows 端複製到 `D:\bopogram-data\arpa\`） | 執行包 `config.json` 的 `models` 四個模型，檔名對應同名的 `.binary` |
+| `ly.arpa`、`web.arpa`、`fineweb_small.arpa` | `~/bopogram-data/dist/arpa/`（Windows 端複製到 `D:\bopogram-data\arpa\`） | 執行包 `config.json` 的 `models` 三個模型（general 已於 2026-11-25 移除，見下），檔名對應同名的 `.binary` |
 | `training/lm/export_arpa.py` | repo | 產生上面的檔案 |
 
 語料授權的關係，這些檔案和執行包一樣不進 git、不散布。
@@ -44,3 +44,9 @@ n-gram 與原始檔完全相同、順序相同。2 階以上的數值以「讀�
   順序不同，結果可能差 1 個 float32 單位。
 - 四個模型怎麼合併、權重、`<s>`／`</s>`、符號與英數字如何對應成模型的 token，以 Python 原型
   （`prototype/bopogram/lm.py`、`decoder.py`）為準。
+
+## 2026-11-25：移除 general
+
+general 的混合權重只有 2.4%，卻占全部 n-gram 約 10%（720 萬／7,340 萬）。
+拿掉它、其餘三個權重按比例放大後，測試集 93.2%、開發集 91.1%，與原本完全相同（EM 重新估的權重也一樣），
+開發集困惑度 609.6 → 595.7。目的是讓 Rust 引擎的記憶體低於 500 MB。

@@ -58,4 +58,6 @@ cd ~/bopogram/eval
 uv run --project ../prototype python tools/make_golden.py ~/bopogram-data/dist/bopogram-runtime/config.json ~/bopogram-data/golden
 ```
 
-約 10 分鐘。標準答案綁定執行包裡的字典與模型；執行包更新後要重新產生。
+charlm 用自有格式（numpy 參考實作）時約 15–20 分鐘。每一輪完成就存在 `golden/parts/`，中斷後以同一個指令重跑，
+已完成的輪次會略過（設定改變時自動從頭開始）；全部完成才合併成 `golden.jsonl`。
+標準答案綁定執行包裡的字典與模型；執行包更新後要重新產生。
