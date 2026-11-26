@@ -42,6 +42,15 @@ from bopogram.charlm import sequence  # noqa: E402
 from charlm import BOS, load_lm  # noqa: E402
 
 
+DE = set("的地得")
+
+
+def de_only(gold: str, text: str) -> bool:
+    """`text` differs from `gold` only where both have one of 的 / 地 / 得."""
+    return len(gold) == len(text) and gold != text and all(
+        a == b or (a in DE and b in DE) for a, b in zip(gold, text))
+
+
 def read(data_dir: Path) -> list[dict]:
     return [json.loads(line) for p in sorted(data_dir.glob("shard-*.jsonl")) for line in open(p, encoding="utf-8")]
 
@@ -115,6 +124,9 @@ def main() -> None:
     ap.add_argument("--lm", type=float, default=1.0, help="weight of the next-character loss")
     ap.add_argument("--eval-every", type=int, default=1000)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--drop-de", action="store_true",
+                    help="leave out examples where a candidate differs from the right one only in 的/地/得: "
+                         "blogs write 的 for all three, and the model should not learn that")
     args = ap.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.seed)
@@ -124,6 +136,10 @@ def main() -> None:
     cid = {c: i for i, c in enumerate(chars)}
     bos, max_len = chars.index(BOS), model.cfg.max_len
     train, val = read(args.data_dir), read(args.val)
+    if args.drop_de:
+        n = len(train)
+        train = [ex for ex in train if not any(de_only(ex["gold"], h["text"]) for h in ex["hyps"])]
+        print(f"--drop-de: {n - len(train)} examples left out", flush=True)
     print(f"{len(train)} training examples, {len(val)} for validation "
           f"({sum(ex['label'] != 0 for ex in train)} where the n-gram's first is wrong)", flush=True)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01, betas=(0.9, 0.98))
