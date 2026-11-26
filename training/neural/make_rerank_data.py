@@ -123,17 +123,22 @@ def sample(data_dir: Path, sources: dict[str, int], exclude: list[str], seed: in
     return out
 
 
+def engine_config(cfg_path: Path) -> Path:
+    """The runtime config without the character and neural models, written once by the
+    main process (the workers only read it)."""
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg.pop("charlm", None)
+    cfg.pop("neural", None)
+    out = cfg_path.with_name(".rerank-data-config.json")
+    out.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+    return out
+
+
 def _init(cfg_path: str) -> None:
     global _engine
     from bopogram.engine import Engine
 
-    cfg = json.loads(Path(cfg_path).read_text(encoding="utf-8"))
-    cfg.pop("charlm", None)
-    cfg.pop("neural", None)
-    tmp = Path(cfg_path).with_name(".rerank-data-config.json")
-    if not tmp.exists():
-        tmp.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
-    _engine = Engine(tmp, use_user_model=False)
+    _engine = Engine(Path(cfg_path), use_user_model=False)
     _engine.typing_log = None
 
 
@@ -189,10 +194,11 @@ def main() -> None:
         if not path.exists():
             jobs.append((path, rows[n:n + SHARD]))
     print(f"{len(rows)} sentences, {len(jobs)} shards to do", flush=True)
-    with Pool(args.workers, initializer=_init, initargs=(str(args.config.resolve()),)) as pool:
+    cfg = engine_config(args.config.resolve())
+    with Pool(args.workers, initializer=_init, initargs=(str(cfg),)) as pool:
         for name, n, kept, top1 in pool.imap_unordered(_shard, jobs):
             print(f"{name}: {n} sentences, {kept} kept, n-gram right first in {top1}", flush=True)
-    args.config.resolve().with_name(".rerank-data-config.json").unlink(missing_ok=True)
+    cfg.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
