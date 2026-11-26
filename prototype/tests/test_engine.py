@@ -381,3 +381,13 @@ class ProtocolTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OnlyDeTest(unittest.TestCase):
+    def test_differs_only_in_de(self):
+        from bopogram.engine import only_de
+        self.assertTrue(only_de("慢慢地走", "慢慢的走"))
+        self.assertTrue(only_de("說得好的", "說的好地"))
+        self.assertFalse(only_de("慢慢地走", "慢慢地走"))   # the same text
+        self.assertFalse(only_de("慢慢地走", "曼曼的走"))   # differs elsewhere too
+        self.assertFalse(only_de("地走", "的走路"))

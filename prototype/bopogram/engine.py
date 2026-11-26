@@ -29,6 +29,14 @@ def config_path(explicit: str | None = None) -> Path:
     return Path(explicit or os.environ.get("BOPOGRAM_CONFIG") or DEFAULT_CONFIG)
 
 
+DE = frozenset("的地得")
+
+
+def only_de(a: str, b: str) -> bool:
+    """`b` differs from `a` only where both have one of 的 / 地 / 得."""
+    return len(a) == len(b) and a != b and all(x == y or (x in DE and y in DE) for x, y in zip(a, b))
+
+
 class Engine:
     """Config JSON (paths relative to the file):
 
@@ -143,9 +151,16 @@ class Engine:
                 if keep:
                     hyps = [h for h in hyps if keep <= decoder.user_words(h[0])]
             if len(hyps) > 1:
-                lm = self.charlm.score(context, ["".join(words) for words, _ in hyps])
+                texts = ["".join(words) for words, _ in hyps]
+                lm = self.charlm.score(context, texts)
                 w = self.charlm_weight
-                decoder.choice = max(zip(hyps, lm), key=lambda hl: hl[0][1] + w * hl[1])[0][0]
+                pick = max(range(len(hyps)), key=lambda i: hyps[i][1] + w * lm[i])
+                # Formal style: 的 / 地 / 得 stay as the n-gram model has them. The character
+                # model learned from blogs, which write 的 for all three; in casual style the
+                # three are shown as 的 anyway.
+                if decoder.style == "formal" and only_de(texts[0], texts[pick]):
+                    pick = 0
+                decoder.choice = hyps[pick][0]
 
     def set_style(self, style: str) -> None:
         """Style for this engine's own decoder and for decoders created afterwards."""
