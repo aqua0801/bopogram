@@ -23,6 +23,33 @@ MAX_CONTEXT = 40
 CACHE_SIZE = 2000
 
 
+def encode(text: str, cid: dict[str, int]) -> list[int]:
+    """Character ids, as training/neural/make_data.py writes them: a run of digits is
+    one <n>, a run of Latin letters one <e>, spaces are dropped, an unknown Chinese
+    character is <x> and anything else unknown <p>."""
+    out, run = [], None
+    for ch in text:
+        kind = "<n>" if ch.isdigit() else "<e>" if ch.isascii() and ch.isalpha() else None
+        if kind:
+            if run != kind:
+                out.append(cid[kind])
+            run = kind
+            continue
+        run = None
+        if not ch.isspace():
+            out.append(cid.get(ch, cid["<x>"] if "一" <= ch <= "鿿" else cid["<p>"]))
+    return out
+
+
+def sequence(context: str, text: str, cid: dict[str, int], bos: int, eos: bool, max_len: int) -> tuple[list[int], int]:
+    """The ids scored for `text` after `context`, and the first scored output position:
+    the sum of ln P(seq[i + 1] | seq[..i]) from that position on is the text's score."""
+    prefix = [bos] + encode(context[-MAX_CONTEXT:], cid)
+    body = encode(text, cid) + ([bos] if eos else [])
+    seq = (prefix + body)[-max_len:]
+    return seq, max(0, len(seq) - len(body) - 1)
+
+
 def table_path(model_path: Path) -> Path:
     """The model's character table: <model name>.json beside it (charlm-lite.bin ->
     charlm-lite.json), else charlm.json in the same folder."""
@@ -58,33 +85,18 @@ class CharLMScorer:
         self._cache: OrderedDict[tuple[str, str], float] = OrderedDict()
 
     def encode(self, text: str) -> list[int]:
-        """Same encoding as training/neural/make_data.py."""
-        cid, out, run = self._char_id, [], None
-        for ch in text:
-            kind = "<n>" if ch.isdigit() else "<e>" if ch.isascii() and ch.isalpha() else None
-            if kind:
-                if run != kind:
-                    out.append(cid[kind])
-                run = kind
-                continue
-            run = None
-            if not ch.isspace():
-                out.append(cid.get(ch, cid["<x>"] if "一" <= ch <= "鿿" else cid["<p>"]))
-        return out
+        return encode(text, self._char_id)
 
     def score(self, context: str, texts: list[str]) -> list[float]:
         """ln P(text, and the end of the line after it | context) for each text."""
         context = context[-MAX_CONTEXT:]
         missing = [t for t in dict.fromkeys(texts) if (context, t) not in self._cache]
         if missing:
-            prefix = [self._bos] + self.encode(context)
-            tail = [self._bos] if self._eos else []
             seqs, firsts = [], []
             for t in missing:
-                body = self.encode(t) + tail
-                seq = (prefix + body)[-self._max_len:]
+                seq, first = sequence(context, t, self._char_id, self._bos, self._eos, self._max_len)
                 seqs.append(seq)
-                firsts.append(max(0, len(seq) - len(body) - 1))  # first scored output position
+                firsts.append(first)
             if self._native is not None:
                 for t, s, a in zip(missing, seqs, firsts):
                     self._cache[(context, t)] = self._native.logp(s, a)
