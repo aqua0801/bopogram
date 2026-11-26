@@ -245,6 +245,11 @@ pub mod vk {
     pub const RWIN: u32 = 0x5C;
     pub const NUMPAD0: u32 = 0x60;
     pub const NUMPAD9: u32 = 0x69;
+    pub const MULTIPLY: u32 = 0x6A;
+    pub const ADD: u32 = 0x6B;
+    pub const SUBTRACT: u32 = 0x6D;
+    pub const DECIMAL: u32 = 0x6E;
+    pub const DIVIDE: u32 = 0x6F;
     pub const LSHIFT: u32 = 0xA0;
     pub const RMENU: u32 = 0xA5;
     pub const OEM_1: u32 = 0xBA; // ;
@@ -338,6 +343,19 @@ fn ascii(code: u32, shift: bool) -> Option<char> {
         vk::OEM_5 => pair('\\', '|'),
         vk::OEM_6 => pair(']', '}'),
         vk::OEM_7 => pair('\'', '"'),
+        _ => None,
+    }
+}
+
+/// What a numeric keypad key types (with Num Lock on): its digit or symbol.
+fn numpad_char(code: u32) -> Option<char> {
+    match code {
+        vk::NUMPAD0..=vk::NUMPAD9 => char::from_u32(code - vk::NUMPAD0 + 0x30),
+        vk::MULTIPLY => Some('*'),
+        vk::ADD => Some('+'),
+        vk::SUBTRACT => Some('-'),
+        vk::DECIMAL => Some('.'),
+        vk::DIVIDE => Some('/'),
         _ => None,
     }
 }
@@ -866,17 +884,17 @@ impl<E: Engine> Controller<E> {
             }
             _ => {}
         }
-        let numpad = (vk::NUMPAD0..=vk::NUMPAD9)
-            .contains(&key.vk)
-            .then(|| char::from_u32(key.vk - vk::NUMPAD0 + 0x30).unwrap_or('0'));
+        // The keypad types digits and + - * / . as they are (numbers, sums),
+        // never bopomofo or Chinese punctuation.
+        let numpad = numpad_char(key.vk);
         if !composing {
             return if busy { idle } else { self.idle_key(numpad) };
         }
         let settled = self.pending.is_empty();
+        if let (Some(c), true) = (numpad, settled) {
+            return Action::Send(Op::Text(self.width(c).to_string()));
+        }
         match key.vk {
-            vk::NUMPAD0..=vk::NUMPAD9 if settled => {
-                Action::Send(Op::Text(self.width(numpad.unwrap_or('0')).to_string()))
-            }
             vk::BACK => Action::Send(Op::Backspace),
             vk::DELETE => Action::Send(Op::Delete),
             vk::LEFT => Action::Send(Op::Left),
@@ -1556,6 +1574,8 @@ mod tests {
             vk::DOWN,
             vk::ESCAPE,
             vk::NUMPAD0,
+            vk::ADD,
+            vk::DECIMAL,
             0x33,
         ] {
             assert!(!c.test_key(code(vk)), "vk {vk:#x}");
@@ -1581,10 +1601,26 @@ mod tests {
             (vk::END, Op::End),
             (vk::UP, Op::Cycle(1)),
             (vk::NUMPAD0 + 5, Op::Text("5".into())),
+            (vk::MULTIPLY, Op::Text("*".into())),
+            (vk::ADD, Op::Text("+".into())),
+            (vk::SUBTRACT, Op::Text("-".into())),
+            (vk::DECIMAL, Op::Text(".".into())),
+            (vk::DIVIDE, Op::Text("/".into())),
         ] {
             assert!(c.key_down(code(vk)).eaten);
             assert_eq!(c.engine_mut().log.last(), Some(&op), "vk {vk:#x}");
         }
+    }
+
+    #[test]
+    fn keypad_waits_for_an_unfinished_syllable() {
+        let mut c = typed("j");
+        let before = c.engine_mut().log.len();
+        for vk in [vk::NUMPAD0 + 1, vk::ADD, vk::DECIMAL] {
+            assert!(c.key_down(code(vk)).eaten, "vk {vk:#x}");
+        }
+        assert_eq!(c.engine_mut().log.len(), before);
+        assert_eq!(c.preedit(), "j");
     }
 
     #[test]
@@ -2018,6 +2054,7 @@ mod tests {
         assert_eq!(c.key_down(Key { shift: true, ..key('1') }), eaten(Some("！")));
         assert_eq!(c.key_down(Key { caps: true, ..key('b') }), eaten(Some("Ｂ")));
         assert_eq!(c.key_down(code(vk::NUMPAD0 + 7)), eaten(Some("７")));
+        assert_eq!(c.key_down(code(vk::ADD)), eaten(Some("＋")));
         // Bopomofo keys still compose, and Ctrl shortcuts stay the application's.
         assert_eq!(c.key_down(key('j')), eaten(None));
         assert_eq!(c.preedit(), "j");
