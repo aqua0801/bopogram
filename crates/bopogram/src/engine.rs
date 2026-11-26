@@ -63,8 +63,34 @@ impl Rerank {
                     best = i;
                 }
             }
+            // Formal style: 的 / 地 / 得 stay as the n-gram model has them. The character
+            // model learned from blogs, which write 的 for all three; in casual style the
+            // three are shown as 的 anyway.
+            if decoder.style == Style::Formal && only_de(&texts[0], &texts[best]) {
+                best = 0;
+            }
             decoder.choice = Some(hyps.swap_remove(best).0);
         }
+    }
+}
+
+/// `b` differs from `a` only where both have one of 的 / 地 / 得.
+fn only_de(a: &str, b: &str) -> bool {
+    let de = |c: char| matches!(c, '的' | '地' | '得');
+    a != b && a.chars().count() == b.chars().count() && a.chars().zip(b.chars()).all(|(x, y)| x == y || (de(x) && de(y)))
+}
+
+#[cfg(test)]
+mod only_de_tests {
+    use super::only_de;
+
+    #[test]
+    fn differs_only_in_de() {
+        assert!(only_de("慢慢地走", "慢慢的走"));
+        assert!(only_de("說得好的", "說的好地"));
+        assert!(!only_de("慢慢地走", "慢慢地走")); // the same text
+        assert!(!only_de("慢慢地走", "曼曼的走")); // differs elsewhere too
+        assert!(!only_de("地走", "的走路"));
     }
 }
 
