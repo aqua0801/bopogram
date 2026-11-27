@@ -29,11 +29,19 @@ Set-Content "$bundle\userdata\user.json" '{"old": true}' -Encoding ASCII
 Set-Content "$bundle\userdata\userdict.tsv" "測試詞`tㄘㄜˋ ㄕˋ ㄘˊ`n" -Encoding UTF8
 @{ engine = "rust"; config = "$bundle\config.json" } | ConvertTo-Json | Set-Content (Join-Path $install "bopogram-host.json") -Encoding UTF8
 
+# Start-Process -Wait would also wait for the host the installer starts (it
+# keeps running): wait for the installer process alone.
+function Run-Setup([string]$Exe, [string]$Log) {
+    $p = Start-Process $Exe -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=$Log" -PassThru
+    $p.WaitForExit()
+    $p.ExitCode
+}
+
 # Install, silently.
 $setup = Get-ChildItem "C:\stage\bopogram-setup-*-full.exe" | Select-Object -First 1
 $started = Get-Date
-$p = Start-Process $setup.FullName -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=C:\out\install.log" -Wait -PassThru
-Check "installer exit code 0" ($p.ExitCode -eq 0) "exit $($p.ExitCode), $([int]((Get-Date) - $started).TotalSeconds) s"
+$code = Run-Setup $setup.FullName "C:\out\install.log"
+Check "installer exit code 0" ($code -eq 0) "exit $code, $([int]((Get-Date) - $started).TotalSeconds) s"
 
 foreach ($f in "bopogram_ime.dll", "x86\bopogram_ime.dll", "bopogram-host.exe", "bopogram-settings.exe", "bopogram.exe",
         "bopogram.ico", "keyboard.ps1", "LICENSE.txt", "THIRD-PARTY-LICENSES.html", "bopogram-host.json", "unins000.exe") {
@@ -65,15 +73,16 @@ Check "engine converts" ($converted -eq "我再看看") $converted
 Start-Sleep -Seconds 3
 $hosts = @(Get-Process bopogram-host -ErrorAction SilentlyContinue)
 Check "host running after install" ($hosts.Count -eq 1) "$($hosts.Count) running"
-$stop = Start-Process (Join-Path $install "bopogram-host.exe") -ArgumentList "--stop" -Wait -PassThru
+$stop = Start-Process (Join-Path $install "bopogram-host.exe") -ArgumentList "--stop" -PassThru
+$stop.WaitForExit()
 Start-Sleep -Milliseconds 500
 Check "bopogram-host --stop" (($stop.ExitCode -eq 0) -and -not (Get-Process bopogram-host -ErrorAction SilentlyContinue)) "exit $($stop.ExitCode)"
 Start-Process (Join-Path $install "bopogram-host.exe")
 
 # Installing again (an update) over the running host and loaded DLL.
 Start-Sleep -Seconds 3
-$p = Start-Process $setup.FullName -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=C:\out\update.log" -Wait -PassThru
-Check "update over a running install" ($p.ExitCode -eq 0) "exit $($p.ExitCode)"
+$code = Run-Setup $setup.FullName "C:\out\update.log"
+Check "update over a running install" ($code -eq 0) "exit $code"
 Check "previous models kept after update" (Test-Path "$data\models-previous\engine.json")
 
 # For trying by hand: Notepad, the settings window, and uninstalling.
