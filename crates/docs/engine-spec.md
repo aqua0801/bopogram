@@ -36,7 +36,7 @@
 ## 架構
 
 - crate `bopogram`（`crates/bopogram/`）：引擎函式庫加 CLI（執行檔 `bopogram.exe`）。
-  **不依賴任何 Windows 元件**，在 Linux 上也能編譯與測試（CLAUDE.md 的要求）。
+  **不依賴任何 Windows 元件**，在 Linux 上也能編譯與測試（專案規則的要求）。
 - 接上前端分兩步：
   1. host 改成啟動 `bopogram.exe serve`，取代現在的 `python -m bopogram serve`，管線協定不變。
      `bopogram-host.json` 設定用哪一個，可以隨時切回 Python 版。
@@ -92,7 +92,7 @@ Rust 照規格實作（`crates/bopogram/src/charlm.rs`），不需要 ONNX Runti
 | 網路 | 無。引擎不開任何連線，依賴也不能有連線功能 | 審查依賴 |
 | 個人資料 | 只存在本機，檔案格式與 Python 版相同，可以來回切換 | 對照答案的 `learning`、`userdict` 輪 |
 
-每次評估依 CLAUDE.md 同時報告：首選正確率、只用單字詞頻的對照組、延遲 P50／P95。
+每次評估依專案規則同時報告：首選正確率、只用單字詞頻的對照組、延遲 P50／P95。
 Rust 版的首選正確率必須與 Python 版完全相同；不同就是移植有錯。
 
 ## 里程碑
