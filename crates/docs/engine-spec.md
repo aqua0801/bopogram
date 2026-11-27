@@ -329,7 +329,7 @@ WSL 端的處理結果：ARPA 改為最短的精確 float32 文字，back-off �
 - 驗證：Windows（只有 zip）與 Linux（WSL，解壓過的與 zip 並存）的 `dict.tsv`、`rejected.tsv`、`need_reading.tsv`
   與 Python 版逐位元相同；`stats.json` 數字相同，只有 `len_*` 的順序不同（Python 從集合計算，順序不固定）。
   2.1 秒（Python 9.7 秒）。
-- 新的相依套件：calamine（.xlsx）、zip（只開解壓縮）；登記待辦在 `docs/pending-third-party.md`。
+- 新的相依套件：calamine（.xlsx）、zip（只開解壓縮），已登記於 `THIRD_PARTY.md`。
 
 ### 模型包（2026-11-27，`prototype/docs/release-spec.md`）
 
