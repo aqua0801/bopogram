@@ -41,6 +41,7 @@
 
 ## 待確認
 
-- Inno Setup 的繁體中文訊息檔（`compiler:Languages\ChineseTraditional.isl`）需在安裝 Inno Setup 後確認存在。
+- Inno Setup 沒有附繁體中文：`installer/ChineseTraditional.isl` 是由它的 Default.isl 自行翻譯的（保留原著作權聲明、標明為修改版）。
+- Inno Setup 6.7 起標示「Non-commercial use only」：本專案為非商業開源，可以使用；若日後有商業用途需另購授權。
 - Windows 安裝檔、設定程式的模型區塊、`bopogram-host.exe --stop` 待沙盒測試；`.deb` 待 VM 測試。
 - 程式碼簽章另外決定（`release-spec.md`）。
