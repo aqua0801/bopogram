@@ -290,6 +290,17 @@ charlm 測試向量 1,498 個逐位元相同、測試句集 93.0%）：
   | 每個音節 P50／P95 | 1.4／2.2 ms | 2.5／3.7 ms |
   | 記憶體（載入／跑完測試集） | 422／441 MB | 439／459 MB |
 
+### Linux（2026-11-27）
+
+- 引擎不需修改即可編譯成 Linux 版。在 Windows 上交叉編譯成靜態執行檔，不需要 Linux 工具鏈：
+  `rustup target add x86_64-unknown-linux-musl`，再執行
+  `CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld cargo build --release -p bopogram --target x86_64-unknown-linux-musl`。
+- WSL 上驗證：對照答案全部 0 差異，測試集正式 93.4%、口語 94.2%，與 Windows 相同。
+  每個音節 P50 約 2.1 ms，比 Windows 慢約五成，原因是 musl 的記憶體配置器；改用 glibc 編譯應可消除。
+- 非 Windows 平台上，工作集量測回傳 0；打字紀錄的時間用 UTC（標準函式庫沒有時區）。
+
+### 對照答案（2026-11-26）
+
 - Windows 上的對照答案（15:25）比新規則早，用它比對會有 99 處不同，列出的部分全部只差在的／地／得；請 WSL 端複製重新產生的版本過來。
 
 ### 請 WSL 端處理（兩項都已在 02d8775 處理）
