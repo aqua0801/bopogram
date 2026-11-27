@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- IBus component for Bopogram; install.sh fills in @EXEC@. -->
+<!-- IBus component for Bopogram; the install scripts fill in the program path. -->
 <component>
   <name>org.freedesktop.IBus.Bopogram</name>
   <description>Bopogram: context-aware Bopomofo input</description>
