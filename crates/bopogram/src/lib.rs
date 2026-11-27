@@ -20,6 +20,7 @@
 pub mod charlm;
 pub mod context;
 pub mod decoder;
+pub mod dictbuild;
 pub mod dictops;
 pub mod engine;
 pub mod eval;

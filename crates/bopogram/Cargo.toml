@@ -14,6 +14,8 @@ name = "bopogram"
 path = "src/main.rs"
 
 [dependencies]
+calamine = "0.38"
 # float_roundtrip: numbers read exactly as Python reads them (config weights,
 # test vectors); the default parser can be one unit in the last place off.
 serde_json = { workspace = true, features = ["float_roundtrip"] }
+zip = { version = "9.8.2", default-features = false, features = ["deflate-flate2-zlib-rs"] }

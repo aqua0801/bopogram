@@ -15,6 +15,10 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "Unicode-3.0",
     "Unlicense",
+    # Brought in by calamine and zip (2026-11-27): encoding_rs (BSD-3-Clause
+    # for its WHATWG data) and zlib-rs (Zlib).
+    "BSD-3-Clause",
+    "Zlib",
 ]
 confidence-threshold = 0.9
 

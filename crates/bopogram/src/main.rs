@@ -22,7 +22,7 @@ use bopogram::engine::{config_path, load_lexicon, read_config, Engine};
 use bopogram::layout::layout;
 use bopogram::lm::build::build;
 
-const USAGE: &str = "usage: bopogram [--config FILE] [--models DIR] {convert|eval|lookup|serve|build-lm} ...";
+const USAGE: &str = "usage: bopogram [--config FILE] [--models DIR] {convert|eval|lookup|serve|build-lm|build-dict} ...";
 
 struct Args {
     rest: Vec<String>,
@@ -70,6 +70,7 @@ fn main() -> ExitCode {
     let result = match command.as_str() {
         "convert" => convert(&mut args, config.as_deref(), models.as_deref()),
         "lookup" => lookup(&mut args, config.as_deref()),
+        "build-dict" => build_dict(&mut args),
         "eval" => eval(&mut args, config.as_deref(), models.as_deref()),
         "serve" => serve(&mut args, config.as_deref(), models.as_deref()),
         "build-lm" => build_lm(&mut args),
@@ -186,6 +187,29 @@ fn eval(args: &mut Args, config: Option<&str>, models: Option<&Path>) -> io::Res
         json: json.as_deref().map(Path::new),
     };
     run(&mut engine, &opts, &mut io::stdout().lock())?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `build-dict MOE_DIR EXTRA_TSV OUT_DIR`: the dictionary from the Ministry of
+/// Education's tables (as downloaded, zipped or not) and `dict_extra.tsv`.
+fn build_dict(args: &mut Args) -> io::Result<ExitCode> {
+    if args.rest.len() != 3 {
+        return Ok(fail("usage: bopogram build-dict MOE_DIR EXTRA_TSV OUT_DIR"));
+    }
+    let started = Instant::now();
+    let summary = bopogram::dictbuild::build(
+        Path::new(&args.rest[0]),
+        Path::new(&args.rest[1]),
+        Path::new(&args.rest[2]),
+        &mut io::stderr(),
+    )?;
+    eprintln!(
+        "{} entries ({} rejected, {} need a reading) in {:.1} s",
+        summary.entries,
+        summary.rejected,
+        summary.need_reading,
+        started.elapsed().as_secs_f64()
+    );
     Ok(ExitCode::SUCCESS)
 }
 

@@ -319,3 +319,14 @@ WSL 端的處理結果：ARPA 改為最短的精確 float32 文字，back-off �
 2. **原型的小問題（不影響移植，Rust 已照原樣實作）：** `Decoder.nbest()` 在 `eos_weight` 不為 0 時，
    把變數 `n` 改成組字區長度（`w, score_fn, n = ...`），所以結果數量上限變成音節數而不是要求的 n。
    要修的話在原型修正並重新產生對照答案，Rust 端再跟著改。
+
+### build-dict（2026-11-27，`prototype/docs/release-spec.md`）
+
+- `bopogram build-dict MOE_DIR EXTRA_TSV OUT_DIR`：`training/dict/build_dict.py` 的 `build` 步驟（`dictbuild.rs`）。
+  讀教育部三部辭典的 `.xlsx`，解壓過的或直接在下載的 `.zip` 裡（同名時取 zip 內的，同 Python），加上 `dict_extra.tsv`。
+- Python 的 dict／Counter 保留插入順序，有幾個步驟依賴它（輕聲另讀的嘗試順序、推斷讀音時同票的排名），
+  這裡用保留插入順序的 `Ordered` 重現；正規式與 `str.strip()`／`split()` 的空白定義照 Python。
+- 驗證：Windows（只有 zip）與 Linux（WSL，解壓過的與 zip 並存）的 `dict.tsv`、`rejected.tsv`、`need_reading.tsv`
+  與 Python 版逐位元相同；`stats.json` 數字相同，只有 `len_*` 的順序不同（Python 從集合計算，順序不固定）。
+  2.1 秒（Python 9.7 秒）。
+- 新的相依套件：calamine（.xlsx）、zip（只開解壓縮）；登記待辦在 `docs/pending-third-party.md`。
