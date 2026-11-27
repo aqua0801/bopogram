@@ -74,11 +74,11 @@ def main() -> None:
         (args.extra, "dict-source/dict_extra.tsv"),
     ]
     charlm = Path(config["charlm"]["model"])
-    copies.append((args.runtime / charlm, str(charlm)))
+    copies.append((args.runtime / charlm, charlm.as_posix()))
     table = (args.runtime / charlm).with_suffix(".json")
     if not table.exists():
         table = (args.runtime / charlm).with_name("charlm.json")
-    copies.append((table, str(charlm.with_name(table.name))))
+    copies.append((table, charlm.with_name(table.name).as_posix()))
     for m in config["models"]:
         stem = Path(m["path"]).stem
         copies.append((one(args.bglm, f"{stem}.bglm"), f"models/{stem}.bglm"))
@@ -100,6 +100,11 @@ def main() -> None:
         for path in sorted(root.rglob("*")):
             if path.is_file():
                 z.write(path, f"{name}/{path.relative_to(root).as_posix()}")
+    # The manifest must name exactly the files in the archive (forward slashes on every platform).
+    with zipfile.ZipFile(archive) as z:
+        in_zip = {n[len(name) + 1:] for n in z.namelist()}
+    if in_zip != {f["path"] for f in files} | {"manifest.json"}:
+        sys.exit(f"manifest and archive differ: {sorted(in_zip ^ ({f['path'] for f in files} | {'manifest.json'}))}")
     total = sum(f["size"] for f in files)
     print(f"{root}: {len(files)} files, {total / 1e6:.0f} MB; {archive.name} {archive.stat().st_size / 1e6:.0f} MB")
 
