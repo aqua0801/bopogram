@@ -15,7 +15,7 @@ language model and a small character-level re-ranker. Runs entirely offline.*
 | 平台 | 引擎 | 前端 | 狀態 |
 |---|---|---|---|
 | Windows 10／11（x64） | Rust | TSF（`bopogram-ime`） | 試用中，未簽章，尚無安裝包 |
-| Linux | Rust（應可編譯，待驗證） | 尚無（IBus／Fcitx5 待評估） | **待支援** |
+| Linux（x64） | Rust | IBus（`bopogram-ibus`） | 試用中（Ubuntu 24.04 虛擬機打字正常） |
 
 ## 準確率與速度
 
@@ -47,7 +47,7 @@ language model and a small character-level re-ranker. Runs entirely offline.*
 
 | 目錄 | 內容 |
 |---|---|
-| `crates/` | Rust：引擎 `bopogram`（含命令列工具）、Windows 前端 `bopogram-ime`、host、設定程式、安裝腳本 |
+| `crates/` | Rust：引擎 `bopogram`（含命令列工具）、Windows 前端 `bopogram-ime`、Linux 前端 `bopogram-ibus`、host、設定程式、安裝腳本 |
 | `prototype/` | Python 原型引擎：參考實作、評估、產生對照答案（`golden.md`） |
 | `training/` | 語料處理、字典建置、n-gram 與 charlm 訓練 |
 | `eval/` | 測試句集、開發集、評估與分析工具 |
