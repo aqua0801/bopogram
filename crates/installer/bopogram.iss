@@ -62,9 +62,12 @@ LicenseFile=..\..\LICENSE
 ; We stop the host ourselves; other applications keep the DLL they loaded.
 CloseApplications=no
 RestartIfNeededByRun=no
+; HKCU is touched only to remove what a script install left for the same user,
+; and the user data question on uninstall; both are meant for the user running setup.
+UsedUserAreasWarning=no
 
 [Languages]
-Name: "cht"; MessagesFile: "compiler:Languages\ChineseTraditional.isl"
+Name: "cht"; MessagesFile: "ChineseTraditional.isl"
 
 [Messages]
 cht.WelcomeLabel2=這會在電腦上安裝 Bopogram 注音輸入法 [name/ver]。%n%n輸入法完全在本機執行，沒有任何網路功能。
@@ -95,8 +98,11 @@ Type: files; Name: "{app}\x86\*.old-*"
 Name: "{autoprograms}\Bopogram 設定"; Filename: "{app}\bopogram-settings.exe"; WorkingDir: "{app}"; IconFilename: "{app}\bopogram.ico"
 
 [Registry]
-; The host starts at sign-in, so that the engine is ready before the first key.
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Bopogram"; ValueData: """{app}\bopogram-host.exe"""; Flags: uninsdeletevalue
+; The host starts at every user's sign-in, so that the engine is ready before
+; the first key (the input method is installed for all users).
+Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Bopogram"; ValueData: """{app}\bopogram-host.exe"""; Flags: uninsdeletevalue
+; A script install started it from the user's own Run key.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "Bopogram"; Flags: deletevalue dontcreatekey
 
 [Run]
 Filename: "{app}\bopogram-settings.exe"; Description: "開啟 Bopogram 設定"; Flags: postinstall runasoriginaluser nowait skipifsilent unchecked

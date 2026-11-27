@@ -8,7 +8,8 @@
 | calamine | https://github.com/tafia/calamine | MIT | `bopogram build-dict`：讀教育部辭典的 .xlsx | 2026-11-27 |
 | zip | https://github.com/zip-rs/zip2 | MIT | `bopogram build-dict`：直接讀下載的 .zip；模型包解壓 | 2026-11-27 |
 | sha2 | https://github.com/RustCrypto/hashes | MIT OR Apache-2.0 | 模型包：檢查每個檔案的 SHA-256 | 2026-11-27 |
-| Inno Setup | https://jrsoftware.org/isinfo.php | Inno Setup License（寬鬆授權） | Windows 安裝檔的製作工具（不隨安裝檔散布程式碼，只用來產生安裝檔） | 2026-11-27 |
+| Inno Setup 6.7 | https://jrsoftware.org/isinfo.php | Inno Setup License；6.7 起標示「Non-commercial use only」，商業用途需另購授權（本專案為非商業開源） | Windows 安裝檔的製作工具；安裝檔內含它的安裝與解除安裝程式 | 2026-11-27 |
+| ChineseTraditional.isl（自行翻譯） | 由 Inno Setup 的 Default.isl 翻譯（） | 依 Inno Setup License：保留原著作權聲明並標明為修改版 | 安裝程式的繁體中文訊息 | 2026-11-27 |
 
 calamine 與 zip 另外帶進的授權（已加入 `crates/deny.toml` 的允許清單）：
 encoding_rs 的 `(Apache-2.0 OR MIT) AND BSD-3-Clause`（BSD-3-Clause 是它附的 WHATWG 編碼資料），
