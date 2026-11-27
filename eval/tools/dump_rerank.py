@@ -38,6 +38,7 @@ def main() -> None:
     ap.add_argument("out", type=Path)
     ap.add_argument("--charlm", action="append", default=[], help="NAME=PATH of a model in the engine's format")
     ap.add_argument("--top", type=int, default=5)
+    ap.add_argument("--beam", type=int, help="decoder beam (default: the config's)")
     ap.add_argument("--limit", type=int)
     args = ap.parse_args()
     engine = Engine(args.config, use_user_model=False)
@@ -62,6 +63,8 @@ def main() -> None:
             dec = engine.new_decoder()
             dec.merge = False
             dec.style = "formal"
+            if args.beam:
+                dec.beam = args.beam
             dec.reset(context_state(ctx, engine.lexicon, engine.lm))
             for s in syls:
                 dec.push(s)

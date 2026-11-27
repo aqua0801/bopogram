@@ -35,6 +35,7 @@ def main() -> None:
     ap.add_argument("dump", type=Path)
     ap.add_argument("ckpts", type=Path, nargs="+")
     ap.add_argument("--weight", type=float, nargs="+", default=[0.5])
+    ap.add_argument("--top", type=int, nargs="+", default=[0], help="re-rank only the first N results (0: all in the file)")
     args = ap.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     rows = [json.loads(line) for line in open(args.dump, encoding="utf-8")]
@@ -54,16 +55,18 @@ def main() -> None:
                 part = rows[k: k + 64]
                 sc, _, _ = candidate_scores(model, part, cid, bos, eos, model.cfg.max_len, device)
                 scores += [s.float().cpu() for s in sc]
-        for w in args.weight:
-            right = fixed = broke = 0
-            for r, m in zip(rows, scores):
-                z = torch.tensor([h["ngram"] for h in r["hyps"]]) + w * m
-                pick = int(torch.argmax(z))
-                right += r["ok"][pick]
-                fixed += r["ok"][pick] and not r["ok"][0]
-                broke += r["ok"][0] and not r["ok"][pick]
-            print(f"{path.parent.name}/{path.name} (step {step}) w={w}: {right / len(rows):.2%}  "
-                  f"fixed {fixed}, broken {broke}", flush=True)
+        for top in args.top:
+            for w in args.weight:
+                right = fixed = broke = 0
+                for r, m in zip(rows, scores):
+                    k = top or len(r["hyps"])
+                    z = torch.tensor([h["ngram"] for h in r["hyps"][:k]]) + w * m[:k]
+                    pick = int(torch.argmax(z))
+                    right += r["ok"][pick]
+                    fixed += r["ok"][pick] and not r["ok"][0]
+                    broke += r["ok"][0] and not r["ok"][pick]
+                print(f"{path.parent.name}/{path.name} (step {step}) top={top or 'all'} w={w}: "
+                      f"{right / len(rows):.2%}  fixed {fixed}, broken {broke}", flush=True)
 
 
 if __name__ == "__main__":
