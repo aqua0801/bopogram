@@ -45,7 +45,7 @@ Rust 程式的全部相依套件（含間接相依，共 82 個）及其授權�
 
 | 名稱 | 來源 | 授權 | 用途 |
 |---|---|---|---|
-| 教育部《重編國語辭典修訂本》《國語辭典簡編本》《成語典》（2026-09-29 版） | https://language.moe.gov.tw/001/Upload/Files/site_content/M0001/respub/index.html | CC BY-ND 3.0 臺灣 | 注音字典的詞條與讀音。repo 只含建置腳本，字典成品不進 git、不隨專案散布，由使用者自行下載資料後在本機產生 |
+| 教育部《重編國語辭典修訂本》《國語辭典簡編本》《成語典》（2026-09-29 版） | https://language.moe.gov.tw/001/Upload/Files/site_content/M0001/respub/index.html | CC BY-ND 3.0 臺灣 | 注音字典的詞條與讀音。repo 只含建置腳本，字典成品不進 git、不散布。發布時附上**未改動的原始壓縮檔**與三份「公眾授權使用說明」（使用說明要求完整保留），在使用者電腦上建置字典（`prototype/docs/release-spec.md`）。出處格式依使用說明：中華民國教育部（Ministry of Education, R.O.C.）。《重編國語辭典修訂本》（版本編號：2015_20260929）網址：http://dict.revised.moe.edu.tw/ ；簡編本 http://dict.concised.moe.edu.tw/ 、成語典 http://dict.idioms.moe.edu.tw/ 同格式 |
 | CNS11643 中文標準交換碼全字庫（屬性資料 `Properties.zip`、對照表 `MapingTables.zip`，版本 20261028） | https://data.gov.tw/dataset/5961 | 政府資料開放授權條款－第1版（須註明出處；資料集另提供 OFL-1.1 供擇一，本專案採前者） | 注音字典：補上教育部辭典沒有收錄的單字及其注音（來源標記 `cns`）。資料來源：數位發展部「全字庫」。只在本機建置時讀取，原始檔不進 repo |
 
 ## 待查證（尚未使用）
