@@ -28,6 +28,7 @@ pub mod int8;
 pub mod layout;
 pub mod lexicon;
 pub mod lm;
+pub mod pack;
 pub mod pool;
 pub mod server;
 pub mod session;

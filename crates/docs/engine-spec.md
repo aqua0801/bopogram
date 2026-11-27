@@ -330,3 +330,21 @@ WSL 端的處理結果：ARPA 改為最短的精確 float32 文字，back-off �
   與 Python 版逐位元相同；`stats.json` 數字相同，只有 `len_*` 的順序不同（Python 從集合計算，順序不固定）。
   2.1 秒（Python 9.7 秒）。
 - 新的相依套件：calamine（.xlsx）、zip（只開解壓縮）；登記待辦在 `docs/pending-third-party.md`。
+
+### 模型包（2026-11-27，`prototype/docs/release-spec.md`）
+
+- `bopogram pack verify|prepare|switch|install|rollback|add-tier|tier|status [--root DIR]`（`pack.rs`）。
+  最後一行輸出是 JSON（`{"ok": ...}`），給設定程式與安裝程式讀。
+- 資料夾 ROOT（Windows `%LOCALAPPDATA%\Bopogram\data`，Linux `~/.local/share/bopogram`）：
+  `models/`（使用中的模型包，加上在這裡建的 `dict.tsv` 與引擎設定 `engine.json`）、`models-previous/`、`userdata/`。
+- `engine.json` = 模型包的 `config.json`（不改，SHA-256 才對得上），個人資料改指 `../userdata/`，
+  沿用舊 `engine.json` 的學習、打字紀錄、詞庫與 charlm 等級；新模型包沒有該等級時退回標準級（`tier_fell_back`）。
+  打字紀錄預設關閉。輕量／進階級（`bopogram-charlm` 包）裝在 `models/charlm/`，更新模型包時沿用。
+- 檢查：`format`、`engine`（`>=X.Y`，與程式版本比較，workspace 版本改為 0.2.0）、每個檔案的大小與 SHA-256、
+  zip 內不得有清單外的檔案、路徑不得跳出資料夾。自我檢查：不載入個人資料，`selftest.json` 的 40 句要完全相同。
+- `switch` 在引擎執行中也能做（Rust 開檔允許改名）：舊引擎繼續用已移到 `models-previous` 的檔案，重新啟動引擎後載入新的。
+- 驗證（Windows 與 Linux）：安裝 3.8 秒（解壓、SHA-256、建字典、自我檢查 40/40），建出的 `dict.tsv` 與 Python 版逐位元相同；
+  更新後等級保留、回到上一版、加入輕量級並切換；竄改一個位元組、清單外的檔案、`../` 路徑、需要更新版程式的包都會被拒絕，
+  失敗時不留下 `models-new`。
+- WSL 的 `make_model_pack.py` 在 Windows 上執行時，`manifest.json` 中 charlm 的路徑會寫成反斜線（`str(Path)`），
+  與 zip 內的路徑不符而被拒絕；在 WSL 執行則正常。已回報。

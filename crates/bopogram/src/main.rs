@@ -22,7 +22,7 @@ use bopogram::engine::{config_path, load_lexicon, read_config, Engine};
 use bopogram::layout::layout;
 use bopogram::lm::build::build;
 
-const USAGE: &str = "usage: bopogram [--config FILE] [--models DIR] {convert|eval|lookup|serve|build-lm|build-dict} ...";
+const USAGE: &str = "usage: bopogram [--config FILE] [--models DIR] {convert|eval|lookup|serve|build-lm|build-dict|pack} ...";
 
 struct Args {
     rest: Vec<String>,
@@ -71,6 +71,7 @@ fn main() -> ExitCode {
         "convert" => convert(&mut args, config.as_deref(), models.as_deref()),
         "lookup" => lookup(&mut args, config.as_deref()),
         "build-dict" => build_dict(&mut args),
+        "pack" => pack(&mut args),
         "eval" => eval(&mut args, config.as_deref(), models.as_deref()),
         "serve" => serve(&mut args, config.as_deref(), models.as_deref()),
         "build-lm" => build_lm(&mut args),
@@ -211,6 +212,47 @@ fn build_dict(args: &mut Args) -> io::Result<ExitCode> {
         started.elapsed().as_secs_f64()
     );
     Ok(ExitCode::SUCCESS)
+}
+
+const PACK_USAGE: &str = "usage: bopogram pack {verify ZIP | prepare ZIP | switch | install ZIP | rollback | add-tier ZIP | tier off|lite|standard|advanced | status} [--root DIR]";
+
+/// Model packs (`bopogram::pack`). The last line on stdout is a JSON object
+/// saying what happened, for the settings program and the installer.
+fn pack(args: &mut Args) -> io::Result<ExitCode> {
+    use bopogram::pack;
+    use serde_json::json;
+    let root = args.take("--root").map(std::path::PathBuf::from).unwrap_or_else(pack::default_root);
+    if args.rest.is_empty() {
+        return Ok(fail(PACK_USAGE));
+    }
+    let action = args.rest.remove(0);
+    let arg = args.rest.first().map(std::path::PathBuf::from);
+    let mut progress = io::stderr();
+    let done = |value: serde_json::Value| {
+        println!("{value}");
+        Ok(ExitCode::SUCCESS)
+    };
+    let prepared = |p: pack::Prepared| json!({"ok": true, "version": p.version, "tier_fell_back": p.tier_fell_back});
+    let result: io::Result<ExitCode> = match (action.as_str(), arg) {
+        ("verify", Some(z)) => pack::check(&z).and_then(|c| {
+            done(json!({"ok": true, "name": c.manifest.name, "version": c.manifest.version, "files": c.manifest.files.len()}))
+        }),
+        ("prepare", Some(z)) => pack::prepare(&z, &root, &mut progress).and_then(|p| done(prepared(p))),
+        ("install", Some(z)) => pack::prepare(&z, &root, &mut progress).and_then(|p| {
+            pack::switch(&root)?;
+            done(prepared(p))
+        }),
+        ("switch", None) => pack::switch(&root).and_then(|_| done(json!({"ok": true}))),
+        ("rollback", None) => pack::rollback(&root).and_then(|_| done(pack::status(&root))),
+        ("add-tier", Some(z)) => pack::add_tier(&z, &root, &mut progress).and_then(|v| done(json!({"ok": true, "version": v}))),
+        ("tier", Some(t)) => pack::set_tier(&root, &t.to_string_lossy()).and_then(|_| done(pack::status(&root))),
+        ("status", None) => done(pack::status(&root)),
+        _ => return Ok(fail(PACK_USAGE)),
+    };
+    result.or_else(|e| {
+        println!("{}", json!({"ok": false, "error": e.to_string()}));
+        Ok(fail(e))
+    })
 }
 
 fn lookup(args: &mut Args, config: Option<&str>) -> io::Result<ExitCode> {

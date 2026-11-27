@@ -3,7 +3,7 @@ resolver = "2"
 members = ["bopogram", "bopogram-controller", "bopogram-host", "bopogram-ibus", "bopogram-ime", "bopogram-protocol", "bopogram-settings"]
 
 [workspace.package]
-version = "0.0.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 

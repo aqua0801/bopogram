@@ -4,7 +4,7 @@
 `cargo deny check licenses`（`crates/deny.toml`）檢查全部都在允許清單內：MIT、Apache-2.0、
 Apache-2.0 WITH LLVM-exception、Unicode-3.0、Unlicense、BSD-3-Clause、Zlib。表示式中有 OR 的取其中允許的一項。
 
-共 109 個套件。
+共 117 個套件。
 
 | 套件 | 版本 | 授權 | 平台 | 來源 |
 |---|---|---|---|---|
@@ -22,6 +22,7 @@ Apache-2.0 WITH LLVM-exception、Unicode-3.0、Unlicense、BSD-3-Clause、Zlib�
 | atomic-waker | 1.1.2 | Apache-2.0 OR MIT | Linux | https://github.com/smol-rs/atomic-waker |
 | autocfg | 1.5.1 | Apache-2.0 OR MIT | Linux | https://github.com/cuviper/autocfg |
 | bitflags | 2.13.2 | MIT OR Apache-2.0 | Linux | https://github.com/bitflags/bitflags |
+| block-buffer | 0.12.1 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/RustCrypto/utils |
 | blocking | 1.7.0 | Apache-2.0 OR MIT | Linux | https://github.com/smol-rs/blocking |
 | bumpalo | 3.20.4 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/fitzgen/bumpalo |
 | byteorder | 1.5.0 | Unlicense OR MIT | Windows、Linux | https://github.com/BurntSushi/byteorder |
@@ -29,11 +30,15 @@ Apache-2.0 WITH LLVM-exception、Unicode-3.0、Unlicense、BSD-3-Clause、Zlib�
 | cfg-if | 1.0.5 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/rust-lang/cfg-if |
 | codepage | 0.1.3 | Apache-2.0 OR MIT | Windows、Linux | https://github.com/hsivonen/codepage |
 | concurrent-queue | 2.5.0 | Apache-2.0 OR MIT | Linux | https://github.com/smol-rs/concurrent-queue |
+| const-oid | 0.10.3 | Apache-2.0 OR MIT | Windows、Linux | https://github.com/RustCrypto/formats |
 | constant_time_eq | 0.6.2 | CC0-1.0 OR MIT-0 OR Apache-2.0 | Windows、Linux | https://codeberg.org/cesarb/constant_time_eq |
 | core_detect | 1.0.0 | MIT/Apache-2.0 | Windows、Linux | https://github.com/thomcc/core_detect |
+| cpufeatures | 0.3.1 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/RustCrypto/utils |
 | crc32fast | 1.5.6 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/srijs/rust-crc32fast |
 | crossbeam-utils | 0.8.23 | MIT OR Apache-2.0 | Linux | https://github.com/crossbeam-rs/crossbeam |
+| crypto-common | 0.2.2 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/RustCrypto/traits |
 | debug_unsafe | 0.1.4 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/RoDmitry/debug_unsafe |
+| digest | 0.11.3 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/RustCrypto/traits |
 | encoding_rs | 0.8.44 | (Apache-2.0 OR MIT) AND BSD-3-Clause | Windows、Linux | https://github.com/hsivonen/encoding_rs |
 | endi | 1.1.1 | MIT | Linux | https://github.com/zeenix/endi |
 | enumflags2 | 0.7.12 | MIT OR Apache-2.0 | Linux | https://github.com/meithecatte/enumflags2 |
@@ -51,6 +56,7 @@ Apache-2.0 WITH LLVM-exception、Unicode-3.0、Unlicense、BSD-3-Clause、Zlib�
 | getrandom | 0.4.3 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/rust-random/getrandom |
 | hashbrown | 0.17.2 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/rust-lang/hashbrown |
 | hex | 0.4.3 | MIT OR Apache-2.0 | Linux | https://github.com/KokaKiwi/rust-hex |
+| hybrid-array | 0.4.15 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/RustCrypto/hybrid-array |
 | indexmap | 2.14.2 | Apache-2.0 OR MIT | Windows、Linux | https://github.com/indexmap-rs/indexmap |
 | itoa | 1.0.19 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/dtolnay/itoa |
 | libc | 0.2.191 | MIT OR Apache-2.0 | Linux | https://github.com/rust-lang/libc |
@@ -76,6 +82,7 @@ Apache-2.0 WITH LLVM-exception、Unicode-3.0、Unlicense、BSD-3-Clause、Zlib�
 | serde_derive | 1.0.229 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/serde-rs/serde |
 | serde_json | 1.0.154 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/serde-rs/json |
 | serde_repr | 0.1.21 | MIT OR Apache-2.0 | Linux | https://github.com/dtolnay/serde-repr |
+| sha2 | 0.11.2 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/RustCrypto/hashes |
 | signal-hook-registry | 1.4.8 | MIT OR Apache-2.0 | Linux | https://github.com/vorner/signal-hook |
 | simd-adler32 | 0.3.10 | MIT | Windows、Linux | https://github.com/mcountryman/simd-adler32 |
 | simdutf8 | 0.1.5 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/rusticstuff/simdutf8 |
@@ -89,6 +96,7 @@ Apache-2.0 WITH LLVM-exception、Unicode-3.0、Unlicense、BSD-3-Clause、Zlib�
 | tracing-attributes | 0.1.31 | MIT | Linux | https://github.com/tokio-rs/tracing |
 | tracing-core | 0.1.36 | MIT | Linux | https://github.com/tokio-rs/tracing |
 | typed-path | 0.13.0 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/chipsenkbeil/typed-path |
+| typenum | 1.20.1 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/paholg/typenum |
 | unicode-ident | 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 | Windows、Linux | https://github.com/dtolnay/unicode-ident |
 | uuid | 1.29.3 | Apache-2.0 OR MIT | Linux | https://github.com/uuid-rs/uuid |
 | windows | 0.62.2 | MIT OR Apache-2.0 | Windows、Linux | https://github.com/microsoft/windows-rs |
