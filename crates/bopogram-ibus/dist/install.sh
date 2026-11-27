@@ -48,6 +48,7 @@ cat <<'EOF'
 
 Done. To use it:
   Settings > Keyboard > Input Sources > + > Chinese (Taiwan) > Bopogram
+  (close Settings first if it was open: it keeps the list it read)
 Switch input sources with Super+Space. Shift alone switches Chinese/English.
 Model packs later: bopogram pack install <zip>, then ibus restart
   (bopogram pack rollback goes back; bopogram pack tier lite|standard|advanced|off).

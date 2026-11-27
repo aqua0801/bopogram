@@ -61,8 +61,8 @@ EOF
 cat > "$D/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
-echo "Bopogram installed. Each user: bopogram pack install <bopogram-models-*.zip>, then ibus restart,"
-echo "and add it in Settings > Keyboard > Input Sources (Chinese (Taiwan) > Bopogram)."
+echo "Bopogram installed. Each user: bopogram pack install <bopogram-models-*.zip>, then ibus write-cache; ibus restart,"
+echo "and add it in Settings > Keyboard > Input Sources (Chinese (Taiwan) > Bopogram); close Settings first if it was open."
 EOF
 chmod 755 "$D/DEBIAN/postinst"
 dpkg-deb --root-owner-group --build "$D" "$OUT/bopogram_${VERSION}_amd64.deb" >/dev/null
