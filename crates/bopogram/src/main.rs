@@ -214,7 +214,7 @@ fn build_dict(args: &mut Args) -> io::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-const PACK_USAGE: &str = "usage: bopogram pack {verify ZIP | prepare ZIP | switch | install ZIP | rollback | add-tier ZIP | tier off|lite|standard|advanced | status} [--root DIR]";
+const PACK_USAGE: &str = "usage: bopogram pack {verify ZIP | prepare ZIP | switch | install ZIP | rollback | add-tier ZIP | tier off|lite|standard|advanced | adopt-userdata DIR | status} [--root DIR]";
 
 /// Model packs (`bopogram::pack`). The last line on stdout is a JSON object
 /// saying what happened, for the settings program and the installer.
@@ -246,6 +246,9 @@ fn pack(args: &mut Args) -> io::Result<ExitCode> {
         ("rollback", None) => pack::rollback(&root).and_then(|_| done(pack::status(&root))),
         ("add-tier", Some(z)) => pack::add_tier(&z, &root, &mut progress).and_then(|v| done(json!({"ok": true, "version": v}))),
         ("tier", Some(t)) => pack::set_tier(&root, &t.to_string_lossy()).and_then(|_| done(pack::status(&root))),
+        ("adopt-userdata", Some(dir)) => {
+            pack::adopt_userdata(&root, &dir).and_then(|copied| done(json!({"ok": true, "copied": copied})))
+        }
         ("status", None) => done(pack::status(&root)),
         _ => return Ok(fail(PACK_USAGE)),
     };

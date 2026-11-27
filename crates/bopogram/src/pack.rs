@@ -492,6 +492,30 @@ pub fn add_tier(zip_path: &Path, root: &Path, progress: &mut dyn Write) -> io::R
     Ok(checked.manifest.version.clone())
 }
 
+/// Copy the user's data from an older install (the runtime bundle's
+/// `userdata\`) into ROOT/userdata. Only files not already there are copied;
+/// nothing is overwritten or removed. Returns the names copied.
+pub fn adopt_userdata(root: &Path, from: &Path) -> io::Result<Vec<String>> {
+    let target = root.join("userdata");
+    fs::create_dir_all(&target)?;
+    let mut copied = Vec::new();
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let name = entry.file_name();
+        let dest = target.join(&name);
+        if dest.exists() {
+            continue;
+        }
+        fs::copy(entry.path(), &dest)?;
+        copied.push(name.to_string_lossy().into_owned());
+    }
+    copied.sort();
+    Ok(copied)
+}
+
 /// Choose the charlm tier of the pack in use (takes effect when the engine
 /// restarts). Err if the pack does not have that tier.
 pub fn set_tier(root: &Path, tier: &str) -> io::Result<()> {

@@ -36,10 +36,13 @@ use std::process::ExitCode;
 use engine::{EngineConfig, EngineKind};
 use log::log;
 
-const USAGE: &str = "usage: bopogram-host [--models <dir> | --python <python.exe>] [--config <config.json>]\n       bopogram-host --client";
+const USAGE: &str = "usage: bopogram-host [--models <dir> | --python <python.exe>] [--config <config.json>]\n       bopogram-host --client
+       bopogram-host --stop";
 
 struct Args {
     client: bool,
+    /// Ask this user's host to stop (the installer does, before replacing files).
+    stop: bool,
     models: Option<PathBuf>,
     python: Option<PathBuf>,
     config: Option<PathBuf>,
@@ -47,11 +50,12 @@ struct Args {
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut args = Args { client: false, models: None, python: None, config: None, trace: None };
+    let mut args = Args { client: false, stop: false, models: None, python: None, config: None, trace: None };
     let mut it = std::env::args_os().skip(1);
     while let Some(arg) = it.next() {
         match arg.to_str() {
             Some("--client") => args.client = true,
+            Some("--stop") => args.stop = true,
             Some("--models") => args.models = Some(it.next().ok_or("--models needs a path")?.into()),
             Some("--python") => {
                 args.python = Some(it.next().ok_or("--python needs a path")?.into())
@@ -108,6 +112,9 @@ fn run() -> Result<(), String> {
     let sid = win::user_sid().map_err(|e| format!("cannot read the user SID: {e}"))?;
     if args.client {
         return client::run(&win::pipe_name(&sid)).map_err(|e| format!("client: {e}"));
+    }
+    if args.stop {
+        return win::stop_host(&sid, std::time::Duration::from_secs(15)).map(drop).map_err(|e| format!("stop: {e}"));
     }
 
     let cfg = engine_config(args)?;

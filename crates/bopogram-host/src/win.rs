@@ -97,6 +97,43 @@ pub fn on_stop_event(sid: &str, on_stop: impl FnOnce() + Send + 'static) -> io::
     Ok(())
 }
 
+/// Ask the host of the user `sid` to stop (it saves the personal model
+/// first) and wait up to `wait` for it to be gone. False if no host was
+/// running; an error if it did not stop in time.
+pub fn stop_host(sid: &str, wait: std::time::Duration) -> io::Result<bool> {
+    use windows::Win32::System::Threading::{
+        OpenEventW, OpenMutexW, SetEvent, EVENT_MODIFY_STATE, SYNCHRONIZATION_SYNCHRONIZE,
+    };
+    let event_name = wide(&stop_event_name(sid));
+    let mutex_name = wide(&format!(r"Local\bopogram-host-{sid}"));
+    let running = || unsafe {
+        match OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE, false, PCWSTR(mutex_name.as_ptr())) {
+            Ok(handle) => {
+                let _ = CloseHandle(handle);
+                true
+            }
+            Err(_) => false,
+        }
+    };
+    if !running() {
+        return Ok(false);
+    }
+    unsafe {
+        let event = OpenEventW(EVENT_MODIFY_STATE, false, PCWSTR(event_name.as_ptr()))?;
+        let set = SetEvent(event);
+        let _ = CloseHandle(event);
+        set?;
+    }
+    let deadline = std::time::Instant::now() + wait;
+    while running() {
+        if std::time::Instant::now() > deadline {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "the host did not stop in time"));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    Ok(true)
+}
+
 /// Make this process's standard error (where the engine writes its warnings)
 /// go to `file`. A GUI program has none otherwise.
 pub fn set_stderr(file: File) {

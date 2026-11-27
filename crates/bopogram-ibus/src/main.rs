@@ -9,7 +9,9 @@
 //! No network: the only connection is the local IBus socket.
 //!
 //! Data: `$BOPOGRAM_DATA`, else `$XDG_DATA_HOME/bopogram`, else
-//! `~/.local/share/bopogram` (config.json and what it names). Log, which never
+//! `~/.local/share/bopogram`: the model pack in `models/` (`bopogram pack
+//! install`, the engine's configuration is `models/engine.json`), or a
+//! `config.json` and what it names (the test kit). Log, which never
 //! records typed text: `~/.cache/bopogram/ibus.log`.
 //!
 //! `bopogram-ibus --check` runs the whole key path without IBus: it types a
@@ -39,6 +41,14 @@ pub fn data_dir() -> PathBuf {
     home().join(".local/share/bopogram")
 }
 
+/// The engine's configuration: `models/engine.json` once a model pack is
+/// installed (`bopogram pack install`), else `config.json` (the test kit).
+pub fn engine_config() -> PathBuf {
+    let dir = data_dir();
+    let pack = dir.join("models").join("engine.json");
+    if pack.is_file() { pack } else { dir.join("config.json") }
+}
+
 pub fn home() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp"))
 }
@@ -65,7 +75,7 @@ fn main() -> ExitCode {
 #[cfg(unix)]
 fn run() -> ExitCode {
     log::log("starting");
-    let shared = remote::start(data_dir().join("config.json"));
+    let shared = remote::start(engine_config());
     match engine::serve(shared) {
         Ok(()) => {
             log::log("the bus went away; stopping");
@@ -88,7 +98,7 @@ fn run() -> ExitCode {
 /// Type sentences through the controller, as IBus would deliver the keys.
 fn check() -> ExitCode {
     use bopogram_controller::Controller;
-    let config = data_dir().join("config.json");
+    let config = engine_config();
     println!("data: {}", config.display());
     let shared = remote::start(config);
     if !shared.wait_ready() {
