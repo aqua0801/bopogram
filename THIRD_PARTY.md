@@ -32,7 +32,7 @@
 | 立法院公報原始檔案（資料集 41） | https://data.ly.gov.tw/getds.action?id=41 | 立法院網站資料開放宣告（可重製、改作，須註明出處） | 語言模型訓練語料（口語逐字稿）。資料來源：立法院開放資料服務平台 |
 | 司法院裁判書（資料集分類 051） | https://opendata.judicial.gov.tw/ | 司法院網站資料開放宣告（可重製、改作，須註明出處） | 語言模型訓練語料（法律文書，佔比上限 15%）。資料來源：司法院資料開放平台。依「Delete-Infor」清單剔除已撤下的裁判書 |
 | 行政院開放資料集與本院新聞（即時新聞、重要政策、院會決議、新聞稿） | https://www.ey.gov.tw/opendata/ 、 https://www.ey.gov.tw/Page/6485009ABEC1CB9C | 政府資料開放授權條款－第1版（須註明出處） | 語言模型訓練語料（新聞體）。資料來源：行政院全球資訊網 |
-| twngrams（臺灣華語 1–4 詞組網站數統計，v0.1.0） | https://huggingface.co/datasets/taiwan-corpora/twngrams | CC0 1.0 | 第 2 階段：詞表來源與驗證（只有統計數字，不含原文） |
+| twngrams（臺灣華語 1–4 詞組網站數統計，v0.1.0） | https://huggingface.co/datasets/taiwan-corpora/twngrams | CC0 1.0 | 第 2 階段：詞表來源與驗證；n-gram 模型「web」由其詞組次數建立（`training/lm/twngrams_arpa.py`）。只有統計數字，不含原文 |
 | MozTW 華語句庫（cc0-sentences，`zh-TW/` 內的句子檔） | https://github.com/moztw/cc0-sentences | CC0 1.0 | 不進訓練語料；保留作為測試句集草稿的素材與開發用驗證集。不使用 `gpt-4.txt`（模型生成）與 repo 內的輸入法表格檔 |
 | TWLLM-Data（yentinglin/twllm-data，20250216） | https://huggingface.co/datasets/yentinglin/twllm-data | Apache-2.0 | 語言模型訓練語料：只取真實使用者的提問；模型生成的回答與合成提問子集（twllm-evol、twllm-synthetic）一律排除 |
 | FineWeb2（HuggingFaceFW/fineweb-2，`cmn_Hani` 子集，抽取 10 個檔案） | https://huggingface.co/datasets/HuggingFaceFW/fineweb-2 | ODC-By 1.0，另須遵守 Common Crawl 使用條款（https://commoncrawl.org/terms-of-use）；網頁原文著作權屬原作者 | 字級語言模型訓練語料（一般網頁文字）。只留繁體、非香港、無簡轉繁痕跡的頁面；依 `training/pipeline/data/fineweb_exclude.txt` 排除使用條款或 robots.txt 禁止 AI 訓練的網站（2026-11-18 查核前 40 大網站）、盜版小說站與中國官方媒體；與開發集、測試集重疊的句子已剔除。2026-11-26 另抽取 1 個檔案（`000_00005`，同樣的篩選），只取部落格與論壇網域（`training/pipeline/fineweb_conv.py`），用於 charlm「挑候選」微調資料；n-gram 模型與 charlm 預訓練都不使用這個檔案 |
