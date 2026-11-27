@@ -1,0 +1,20 @@
+[package]
+name = "bopogram-ibus"
+description = "Bopogram for Linux: an IBus engine with the Rust engine inside"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "bopogram-ibus"
+path = "src/main.rs"
+
+[dependencies]
+bopogram = { path = "../bopogram" }
+bopogram-controller.workspace = true
+bopogram-protocol.workspace = true
+serde_json.workspace = true
+
+# IBus is reached over its own D-Bus (a local socket); Linux only.
+[target.'cfg(unix)'.dependencies]
+zbus = "5"

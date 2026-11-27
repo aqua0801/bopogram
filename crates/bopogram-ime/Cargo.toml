@@ -10,6 +10,7 @@ name = "bopogram_ime"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+bopogram-controller.workspace = true
 bopogram-protocol.workspace = true
 serde_json.workspace = true
 windows-core.workspace = true

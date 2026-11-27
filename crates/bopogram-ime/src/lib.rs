@@ -8,7 +8,8 @@
 //! Logic, testable without registering anything:
 //! - `protocol`: the line-based JSON requests and responses (the
 //!   `bopogram-protocol` crate, shared with the host).
-//! - `controller`: which key does what. No Windows calls.
+//! - `controller`: which key does what (the `bopogram-controller` crate,
+//!   shared with the Linux front end). No Windows calls.
 //! - `pipe`: the named pipe client, with timeouts.
 //!
 //! The text service itself:
@@ -24,7 +25,7 @@
 //! - `settings`: the style file shared by all applications.
 //! - `timing`: the optional timing log (durations only, never text).
 
-pub mod controller;
+pub use bopogram_controller as controller;
 pub mod pipe;
 pub use bopogram_protocol as protocol;
 

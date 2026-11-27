@@ -9,11 +9,14 @@
 //! it delivers the key). Everything about choosing characters stays in the
 //! engine; after every request the controller copies the state it was sent.
 //!
-//! No Windows calls here, so this is tested with plain `cargo test`.
+//! No platform calls here, so this is tested with plain `cargo test`, and
+//! both front ends share it: TSF on Windows (`bopogram-ime`), IBus on Linux
+//! (`bopogram-ibus`). Keys are described by Windows virtual-key codes (`vk`);
+//! the Linux front end translates X key symbols into them.
 
 use std::time::{Duration, Instant};
 
-use crate::protocol::{Engine, Failure, Op, Response};
+use bopogram_protocol::{Engine, Failure, Op, Response};
 
 /// What the user chose in the settings window (`keys.json`).
 #[derive(Debug, Clone, Copy, PartialEq)]
