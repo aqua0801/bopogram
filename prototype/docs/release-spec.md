@@ -36,14 +36,15 @@
   | `dict_idioms_2020_20260929.zip` | `idiomsdict_10409.pdf` |
 
   （WSL：`~/bopogram-data/raw/moe/`；來源 https://language.moe.gov.tw/001/Upload/Files/site_content/M0001/respub/index.html ）
-- 其他來源允許改作，由 WSL 端**預先處理成一個檔案** `dict_extra.tsv` 放進模型包：
-  CNS 11643 全字庫補的單字（政府資料開放授權，須註明出處）、twngrams 補的常用詞（CC0）與其讀音規則、
-  本專案的手動讀音表、注音符號本身。這些都不是教育部的內容。
-- **安裝時**（以及更新模型包時）在使用者電腦上執行 `bopogram build-dict`：讀三個原始壓縮檔與 `dict_extra.tsv`，
-  離線產生 `dict.tsv`。教育部內容的整理只發生在使用者自己的電腦上。
-- `build-dict` 是 `training/dict/build_dict.py` 的 Rust 移植。驗收：同樣的輸入，輸出的 `dict.tsv` 與 Python 版**逐位元相同**。
-  需要讀 `.xlsx`：建議 `calamine`（MIT），採用前登記於 `THIRD_PARTY.md`。
-  WSL 端先把 `build_dict.py` 拆成「讀教育部檔案」與「其他來源 → `dict_extra.tsv`」兩段，讓 Rust 只需要移植前者。
+- 不涉及教育部內容的來源，由 WSL 端預先處理成一個可散布的檔案 `dict_extra.tsv`（約 1 MB）放進模型包：
+  twngrams 的候選詞表（CC0，只有詞、沒有讀音）、本專案的手動讀音與打字變體、
+  CNS 11643 全字庫的單字讀音（政府資料開放授權，已用 OpenCC 排除簡體字）。
+- **安裝時**（以及更新模型包時）在使用者電腦上執行 `bopogram build-dict`：讀三個原始壓縮檔（不必先解壓）與 `dict_extra.tsv`，
+  離線產生 `dict.tsv`。凡是用到或調整教育部內容的步驟都在這裡做：輕聲的另一種讀音、替新詞推斷讀音、
+  臺／台雙寫、打字變體、哪些 CNS 單字是辭典沒有的、一／不變調。
+- 參考實作：`training/dict/build_dict.py` 的 `build` 步驟（`extra` 步驟產生 `dict_extra.tsv`）。
+  驗收：同樣的輸入，Rust 版輸出的 `dict.tsv` 與 Python 版**逐位元相同**（Python 版拆分後已確認與原字典逐位元相同，約 10 秒）。
+  需要讀 `.xlsx` 與 `.zip`：建議 `calamine`（MIT）與 `zip`（MIT），採用前登記於 `THIRD_PARTY.md`。
 
 ## 模型包格式
 
@@ -105,7 +106,8 @@ bopogram-models-2026.12/
 
 ## 分工與順序
 
-1. WSL：拆分 `build_dict.py`、產生 `dict_extra.tsv`、`NOTICE`、模型包內容與 `manifest.json`、自我檢查用的預期結果。
+1. WSL：拆分 `build_dict.py`、產生 `dict_extra.tsv`（已完成，`~/bopogram-data/dict/dict_extra.tsv`）；
+   `NOTICE`、模型包內容與 `manifest.json`、自我檢查用的預期結果。
 2. Windows：`bopogram build-dict`（Rust 移植，與 Python 版逐位元相同）、模型包的驗證與切換、回到上一版、安裝檔（Windows、Linux）、
    Rust 相依套件授權全文、設定程式的介面。
 3. 程式碼簽章（Windows SmartScreen 會警告未簽章的安裝檔）另外決定。

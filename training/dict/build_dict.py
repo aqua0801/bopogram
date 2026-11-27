@@ -1,18 +1,26 @@
-"""Build the Bopogram pronunciation dictionary (word -> bopomofo) locally.
+"""Build the Bopogram pronunciation dictionary (word -> bopomofo).
 
 Usage:
-    uv run python dict/build_dict.py MOE_DIR OUT_DIR [--twngrams DIR] [--manual FILE] [--cns DIR]
+    uv run python dict/build_dict.py extra OUT_TSV [--twngrams DIR] [--manual FILE] [--cns DIR]
+    uv run python dict/build_dict.py build MOE_DIR EXTRA_TSV OUT_DIR
 
-Inputs (downloaded by the user / pipeline, never committed):
-  MOE_DIR    unpacked Ministry of Education dictionary spreadsheets
-             (dict_revised_*.xlsx, dict_concised_*.xlsx, dict_idioms_*.xlsx).
-             Licence CC BY-ND 3.0 TW: the output is for local use only and
-             must not be redistributed.
-  --twngrams directory with token_1gram.tsv (CC0), used to add current words
-             that the dictionaries lack.
-  --manual   TSV of hand-assigned readings for added words (word, bopomofo).
+Two steps, because the MOE dictionaries (CC BY-ND 3.0 TW) may be redistributed
+only unchanged, with their usage notes, and the built dictionary may not
+(prototype/docs/release-spec.md):
 
-Outputs in OUT_DIR:
+  extra  reads only the other sources and writes one file that may be distributed:
+         twngrams candidate words (CC0), this project's manual readings and typing
+         variants, CNS 11643 readings of Traditional characters (OpenCC drops
+         simplified forms here, so `build` needs no OpenCC). See make_extra().
+  build  reads the MOE spreadsheets, unpacked or inside the downloaded .zip files,
+         and EXTRA_TSV, and writes the dictionary. Everything that depends on or
+         adjusts MOE content happens here, on the user's machine: neutral-tone
+         alternatives, readings guessed for added words, 臺/台 twins, typing
+         variants, which CNS characters are missing, 一/不 sandhi. This is the
+         step the Rust engine ports as `bopogram build-dict`; its output must be
+         byte-identical.
+
+Outputs of build in OUT_DIR:
   dict.tsv            word <TAB> syllables separated by spaces <TAB> source tag
   rejected.tsv        entries that could not be aligned (for inspection)
   need_reading.tsv    added words whose reading is ambiguous (to label by hand)
@@ -75,8 +83,34 @@ def clean_word(raw) -> str:
     return re.sub(r"[（(].*?[）)]|\d+$", "", word)  # drop sense markers like 行(1)
 
 
-def iter_moe(path: Path, word_col: str, bpmf_col: str, var_col: str | None):
-    wb = openpyxl.load_workbook(path, read_only=True)
+def open_xlsx(source):
+    """A path to an .xlsx, or (zip path, member name): the archive as downloaded."""
+    if isinstance(source, tuple):
+        import io
+        import zipfile
+
+        with zipfile.ZipFile(source[0]) as z:
+            return openpyxl.load_workbook(io.BytesIO(z.read(source[1])), read_only=True)
+    return openpyxl.load_workbook(source, read_only=True)
+
+
+def find_moe(moe_dir: Path, pattern: str):
+    """The newest MOE table matching `pattern`, unpacked or inside its .zip."""
+    import fnmatch
+    import zipfile
+
+    hits = [(p.name, p) for p in moe_dir.rglob(pattern) if "欄位說明" not in p.name]
+    for z in moe_dir.rglob("*.zip"):
+        with zipfile.ZipFile(z) as zf:
+            hits += [(Path(n).name, (z, n)) for n in zf.namelist()
+                     if fnmatch.fnmatch(Path(n).name, pattern) and "欄位說明" not in n]
+    if not hits:
+        raise SystemExit(f"missing {pattern} under {moe_dir}")
+    return sorted(hits, key=lambda h: h[0])[-1][1]
+
+
+def iter_moe(source, word_col: str, bpmf_col: str, var_col: str | None):
+    wb = open_xlsx(source)
     ws = wb.worksheets[0]
     rows = ws.iter_rows(values_only=True)
     header = [str(c).strip() if c is not None else "" for c in next(rows)]
@@ -92,30 +126,75 @@ def iter_moe(path: Path, word_col: str, bpmf_col: str, var_col: str | None):
     wb.close()
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("moe_dir", type=Path)
-    ap.add_argument("out_dir", type=Path)
-    ap.add_argument("--twngrams", type=Path)
-    ap.add_argument("--manual", type=Path)
-    ap.add_argument("--cns", type=Path,
-                    help="CNS 11643 open data folder (props/CNS_phonetic.txt, maps/Unicode/...): "
-                         "adds characters the dictionaries above do not have")
-    args = ap.parse_args()
-    args.out_dir.mkdir(parents=True, exist_ok=True)
+def make_extra(twngrams: Path | None, manual: Path | None, cns: Path | None, out: Path) -> None:
+    """Everything the dictionary takes from sources other than the MOE tables, in one
+    file that may be distributed (no MOE content): lines of
+        twngrams <TAB> word <TAB> count     candidate words (CC0), 2-4 Chinese characters
+        manual   <TAB> word <TAB> syllables  this project's hand-assigned readings
+        variant  <TAB> char <TAB> reading <TAB> reading people also type
+        cns      <TAB> char <TAB> syllable   CNS 11643 readings (Traditional characters only)
+    Which of them are used depends on the MOE tables, so that is decided by `build`."""
+    lines: list[str] = []
+    if twngrams:
+        with open(twngrams / "token_1gram.tsv", encoding="utf-8") as fh:
+            for line in fh:
+                count, _, word = line.rstrip("\n").partition("\t")
+                if CJK_WORD.match(word) and 2 <= len(word) <= 4:
+                    lines.append(f"twngrams\t{word}\t{count}")
+    if manual and manual.exists():
+        for line in manual.read_text(encoding="utf-8").splitlines():
+            if line and not line.startswith("#"):
+                word, bpmf = line.split("\t")[:2]
+                lines.append(f"manual\t{word}\t{bpmf.strip()}")
+    variants_file = Path(__file__).resolve().parent / "typing_variants.tsv"
+    if variants_file.exists():
+        for line in variants_file.read_text(encoding="utf-8").splitlines():
+            parts = line.split("\t")
+            if len(parts) == 3 and not line.startswith("#"):
+                lines.append("variant\t" + "\t".join(parts))
+    if cns:
+        import opencc
 
-    def find(pattern: str) -> Path:
-        hits = [p for p in sorted(args.moe_dir.rglob(pattern)) if "欄位說明" not in p.name]
-        if not hits:
-            raise SystemExit(f"missing {pattern} under {args.moe_dir}")
-        return hits[-1]
+        to_trad = opencc.OpenCC("s2t")
+        code_to_char: dict[str, str] = {}
+        with open(cns / "maps" / "Unicode" / "CNS2UNICODE_Unicode BMP.txt", encoding="utf-8-sig") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) == 2:
+                    code_to_char[parts[0]] = chr(int(parts[1], 16))
+        with open(cns / "props" / "CNS_phonetic.txt", encoding="utf-8-sig") as fh:
+            for line in fh:
+                parts = line.rstrip("\n").split("\t")
+                ch = code_to_char.get(parts[0]) if len(parts) == 2 else None
+                if ch is None or not ("一" <= ch <= "鿿") or not SYLLABLE.match(parts[1]):
+                    continue
+                # Simplified forms are left out: this is a Traditional Chinese input method.
+                if to_trad.convert(ch) != ch:
+                    continue
+                lines.append(f"cns\t{ch}\t{parts[1]}")
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"{out}: {len(lines)} lines")
 
+
+def read_extra(path: Path) -> dict[str, list[list[str]]]:
+    extra: dict[str, list[list[str]]] = defaultdict(list)
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line:
+            kind, *fields = line.split("\t")
+            extra[kind].append(fields)
+    return extra
+
+
+def build(moe_dir: Path, extra_path: Path, out_dir: Path) -> None:
+    """The dictionary from the MOE tables (as downloaded: unpacked or still zipped) and
+    `make_extra`'s file. This step reads MOE content, so it runs on the user's machine."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    extra = read_extra(extra_path)
     sources = [
-        ("concised", find("dict_concised_*.xlsx"), "字詞名", "注音一式", "變體注音"),
-        ("idiom", find("dict_idioms_*.xlsx"), "成語", "注音", None),
-        ("revised", find("dict_revised_*.xlsx"), "字詞名", "注音一式", "變體注音"),
+        ("concised", find_moe(moe_dir, "dict_concised_*.xlsx"), "字詞名", "注音一式", "變體注音"),
+        ("idiom", find_moe(moe_dir, "dict_idioms_*.xlsx"), "成語", "注音", None),
+        ("revised", find_moe(moe_dir, "dict_revised_*.xlsx"), "字詞名", "注音一式", "變體注音"),
     ]
-
     entries: dict[tuple[str, tuple[str, ...]], str] = {}
     rejected: list[tuple[str, str, str, str]] = []
     stats: Counter = Counter()
@@ -201,30 +280,24 @@ def main() -> None:
         ranked = [s for s, _ in seen.most_common()]
         return ranked + [s for s in opts if s not in ranked]
 
-    if args.manual and args.manual.exists():
-        for line in args.manual.read_text(encoding="utf-8").splitlines():
-            if line and not line.startswith("#"):
-                word, bpmf = line.split("\t")[:2]
-                add(word, bpmf.split(), "manual")
-                stats["manual"] += 1
-                if len(word) == 1:  # a single-character line also fixes that character's default
-                    overrides[word] = bpmf.strip()
+    for word, bpmf in extra["manual"]:
+        add(word, bpmf.split(), "manual")
+        stats["manual"] += 1
+        if len(word) == 1:  # a single-character line also fixes that character's default
+            overrides[word] = bpmf
 
     need: list[tuple[str, int, str]] = []
-    if args.twngrams:
-        known = {w for w, _ in entries}
-        with open(args.twngrams / "token_1gram.tsv", encoding="utf-8") as fh:
-            for line in fh:
-                count, _, word = line.rstrip("\n").partition("\t")
-                if not CJK_WORD.match(word) or not 2 <= len(word) <= 4 or word in known:
-                    continue
-                options = [guess(c, i == len(word) - 1) for i, c in enumerate(word)]
-                if all(len(o) == 1 for o in options):
-                    add(word, [o[0] for o in options], "web")
-                    stats["web_auto"] += 1
-                else:
-                    need.append((word, int(count), " ".join("/".join(o) or "?" for o in options)))
-                    stats["web_need_reading"] += 1
+    known = {w for w, _ in entries}
+    for word, count in extra["twngrams"]:
+        if word in known:
+            continue
+        options = [guess(c, i == len(word) - 1) for i, c in enumerate(word)]
+        if all(len(o) == 1 for o in options):
+            add(word, [o[0] for o in options], "web")
+            stats["web_auto"] += 1
+        else:
+            need.append((word, int(count), " ".join("/".join(o) or "?" for o in options)))
+            stats["web_need_reading"] += 1
 
     # Everyday spellings: the MOE tables write 臺, most people write 台. Give every
     # 臺-word a 台 twin with the same reading (training text is normalised the same way,
@@ -238,13 +311,7 @@ def main() -> None:
     stats["everyday_spelling_twins"] = twins
 
     # Spellings people type that differ from the dictionary reading (typing_variants.tsv).
-    variants: dict[tuple[str, str], str] = {}
-    variants_file = Path(__file__).resolve().parent / "typing_variants.tsv"
-    if variants_file.exists():
-        for line in variants_file.read_text(encoding="utf-8").splitlines():
-            parts = line.split("\t")
-            if len(parts) == 3 and not line.startswith("#"):
-                variants[(parts[0], parts[1])] = parts[2]
+    variants: dict[tuple[str, str], str] = {(ch, syl): typed for ch, syl, typed in extra["variant"]}
     typed_added = 0
     for (word, syls), tag in list(entries.items()):
         if not any((ch, syl) in variants for ch, syl in zip(word, syls)):
@@ -258,30 +325,13 @@ def main() -> None:
     # Characters missing from the dictionaries above, from the CNS 11643 character
     # database (tag "cns"). Only whole characters are added; nothing existing changes.
     # Simplified forms are left out: this is a Traditional Chinese input method.
-    if args.cns:
-        import opencc
-
-        to_trad = opencc.OpenCC("s2t")
-        code_to_char: dict[str, str] = {}
-        with open(args.cns / "maps" / "Unicode" / "CNS2UNICODE_Unicode BMP.txt", encoding="utf-8-sig") as fh:
-            for line in fh:
-                parts = line.split()
-                if len(parts) == 2:
-                    code_to_char[parts[0]] = chr(int(parts[1], 16))
-        have = {w for w, _ in entries if len(w) == 1}
-        cns_chars = set()
-        with open(args.cns / "props" / "CNS_phonetic.txt", encoding="utf-8-sig") as fh:
-            for line in fh:
-                parts = line.rstrip("\n").split("\t")
-                ch = code_to_char.get(parts[0]) if len(parts) == 2 else None
-                if ch is None or ch in have or not ("一" <= ch <= "鿿") or not SYLLABLE.match(parts[1]):
-                    continue
-                if to_trad.convert(ch) != ch:
-                    stats["cns_skipped_simplified"] += 1
-                    continue
-                entries[(ch, (parts[1],))] = "cns"
-                cns_chars.add(ch)
-        stats["cns_chars"] = len(cns_chars)
+    have = {w for w, _ in entries if len(w) == 1}
+    cns_chars = set()
+    for ch, syl in extra["cns"]:
+        if ch not in have:
+            entries[(ch, (syl,))] = "cns"
+            cns_chars.add(ch)
+    stats["cns_chars"] = len(cns_chars)
 
     # Tone sandhi of 一 and 不: people type the tone they say (一個 as ㄧˊ, 一起 as ㄧˋ,
     # 不要 as ㄅㄨˊ). Words get an ":alt" entry with the spoken tone; the single
@@ -319,13 +369,13 @@ def main() -> None:
         entries[(sym, (sym,))] = "symbol"
 
     ordered = sorted(entries.items(), key=lambda kv: (kv[0][0], kv[0][1]))
-    with open(args.out_dir / "dict.tsv", "w", encoding="utf-8") as fh:
+    with open(out_dir / "dict.tsv", "w", encoding="utf-8") as fh:
         for (word, syls), tag in ordered:
             fh.write(f"{word}\t{' '.join(syls)}\t{tag}\n")
-    with open(args.out_dir / "rejected.tsv", "w", encoding="utf-8") as fh:
+    with open(out_dir / "rejected.tsv", "w", encoding="utf-8") as fh:
         for row in rejected:
             fh.write("\t".join(row) + "\n")
-    with open(args.out_dir / "need_reading.tsv", "w", encoding="utf-8") as fh:
+    with open(out_dir / "need_reading.tsv", "w", encoding="utf-8") as fh:
         for word, count, opts in sorted(need, key=lambda x: -x[1]):
             fh.write(f"{word}\t{count}\t{opts}\n")
 
@@ -340,8 +390,29 @@ def main() -> None:
     })
     stats.update({f"tag_{t}": n for t, n in Counter(entries.values()).items()})
     stats.update({f"len_{n}": c for n, c in Counter(min(len(w), 5) for w in words).items()})
-    (args.out_dir / "stats.json").write_text(json.dumps(dict(stats), ensure_ascii=False, indent=1))
+    (out_dir / "stats.json").write_text(json.dumps(dict(stats), ensure_ascii=False, indent=1))
     print(json.dumps(dict(stats), ensure_ascii=False, indent=1))
+
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    e = sub.add_parser("extra", help="non-MOE sources -> dict_extra.tsv (distributable)")
+    e.add_argument("out", type=Path)
+    e.add_argument("--twngrams", type=Path)
+    e.add_argument("--manual", type=Path)
+    e.add_argument("--cns", type=Path,
+                   help="CNS 11643 open data folder (props/CNS_phonetic.txt, maps/Unicode/...)")
+    b = sub.add_parser("build", help="MOE tables + dict_extra.tsv -> dict.tsv (on the user's machine)")
+    b.add_argument("moe_dir", type=Path)
+    b.add_argument("extra", type=Path)
+    b.add_argument("out_dir", type=Path)
+    args = ap.parse_args()
+    if args.cmd == "extra":
+        make_extra(args.twngrams, args.manual, args.cns, args.out)
+    else:
+        build(args.moe_dir, args.extra, args.out_dir)
 
 
 if __name__ == "__main__":
