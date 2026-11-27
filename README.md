@@ -14,8 +14,8 @@ language model and a small character-level re-ranker. Runs entirely offline.*
 
 | 平台 | 引擎 | 前端 | 狀態 |
 |---|---|---|---|
-| Windows 10／11（x64） | Rust | TSF（`bopogram-ime`） | 試用版；安裝檔未簽章（SmartScreen 會警告） |
-| Linux（x64） | Rust | IBus（`bopogram-ibus`） | 試用版（Ubuntu 24.04 測試）；`.deb` 與 `.tar.gz` |
+| Windows 10／11（x64） | Rust | TSF（`bopogram-ime`） | 可用；安裝檔未簽章（SmartScreen 會警告） |
+| Linux（x64） | Rust | IBus（`bopogram-ibus`） | 可用（Ubuntu 24.04 測試）；`.deb` 與 `.tar.gz` |
 
 ## 安裝
 
