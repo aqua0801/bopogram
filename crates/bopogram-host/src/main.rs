@@ -83,7 +83,9 @@ fn engine_config(args: Args) -> Result<EngineConfig, String> {
         })?;
         let file: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
             .map_err(|e| format!("{}: {e}", path.display()))?;
-        let field = |name: &str| file.get(name).and_then(|v| v.as_str()).map(PathBuf::from);
+        let field = |name: &str| {
+            file.get(name).and_then(|v| v.as_str()).map(|v| PathBuf::from(bopogram_protocol::expand_env(v)))
+        };
         if !use_python {
             // "engine": "python" picks the prototype; anything else (or nothing) the Rust engine.
             use_python = file.get("engine").and_then(|v| v.as_str()) == Some("python");

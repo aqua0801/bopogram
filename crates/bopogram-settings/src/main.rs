@@ -16,6 +16,7 @@
 mod dictionary;
 mod engine;
 mod files;
+mod models;
 mod phrases;
 
 use std::ffi::c_void;
@@ -34,6 +35,7 @@ use windows::Win32::UI::Controls::{
     TTF_SUBCLASS, TTM_ADDTOOLW, TTM_SETMAXTIPWIDTH, TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW,
 };
 use windows::Win32::UI::HiDpi::GetDpiForSystem;
+use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
     FindWindowW, GetAncestor, GetDlgItem, GetMessageW, GetWindowLongPtrW, IsDialogMessageW, LoadCursorW, GA_ROOT,
@@ -88,6 +90,12 @@ const ID_PHRASES: i32 = 181;
 const ID_DICT_ADD_KEY: i32 = 182;
 const ID_DICT_REMOVE_KEY: i32 = 183;
 const ID_DICTIONARY: i32 = 184;
+const ID_MODEL_INFO: i32 = 190;
+/// One per entry of `models::TIERS`.
+const ID_TIER: i32 = 191;
+const ID_PACK_UPDATE: i32 = 196;
+const ID_TIER_ADD: i32 = 197;
+const ID_ROLLBACK: i32 = 198;
 const STATUS_TIMER: usize = 1;
 
 // The hot key control (commctrl.h): a field that shows the key combination pressed in it.
@@ -104,9 +112,9 @@ const WS_BORDER: u32 = 0x0080_0000;
 
 /// Client area in pixels at 96 DPI: two columns.
 const WIDTH: i32 = 780;
-const HEIGHT: i32 = 530;
+const HEIGHT: i32 = 640;
 /// Where the OK, Cancel and Apply buttons sit.
-const BUTTONS_Y: i32 = 490;
+const BUTTONS_Y: i32 = 600;
 const COLUMN: i32 = 372;
 const LEFT: i32 = 12;
 const RIGHT: i32 = LEFT + COLUMN + 12;
@@ -117,6 +125,10 @@ struct App {
     files: Files,
     /// What the files held when they were last read or written.
     saved: Settings,
+    /// The charlm tier in use (installed from a model pack only).
+    tier: Option<String>,
+    /// A model pack is being prepared.
+    busy: bool,
 }
 
 fn wide(s: &str) -> Vec<u16> {
@@ -370,6 +382,18 @@ fn build(window: HWND, app: &App) {
     b.tip(ID_TIMING, "只記每個按鍵的耗時，不記內容；24 小時後自動關閉。");
     b.button("重新啟動引擎", ID_RESTART, r + 14, 360, 126);
 
+    b.group("模型", r, 414, 176);
+    b.label("", ID_MODEL_INFO, r + 14, 436, COLUMN - 28);
+    b.label("charlm 等級", -1, r + 14, 468, 84);
+    b.radios(&models::TIER_NAMES, ID_TIER, r + 100, 464, 64);
+    b.tip(ID_TIER, "選字時的字級語言模型。輕量最快；進階較準但較慢、較耗記憶體。按「套用」後重新啟動引擎。");
+    b.button("更新模型包…", ID_PACK_UPDATE, r + 14, 504, 110);
+    b.tip(ID_PACK_UPDATE, "選擇下載好的模型包（.zip）：檢查、建立字典、自我檢查都通過才更換，舊版保留。");
+    b.button("加入等級…", ID_TIER_ADD, r + 132, 504, 110);
+    b.tip(ID_TIER_ADD, "加入輕量或進階級的 charlm 等級包（.zip）。");
+    b.button("回到上一版", ID_ROLLBACK, r + 250, 504, 108);
+    b.label("模型包需自行下載，輸入法不會連線。", -1, r + 14, 546, COLUMN - 28);
+
     b.button("確定", ID_OK, WIDTH - 12 - 80 * 3 - 16, BUTTONS_Y, 80);
     b.button("取消", ID_CANCEL, WIDTH - 12 - 80 * 2 - 8, BUTTONS_Y, 80);
     b.button("套用", ID_APPLY, WIDTH - 12 - 80, BUTTONS_Y, 80);
@@ -528,6 +552,121 @@ fn apply(window: HWND, app: &mut App) -> bool {
     true
 }
 
+/// The tier chosen in the window, if it differs from the one in use: set it
+/// and restart the engine. False if it could not be set.
+fn apply_tier(window: HWND, app: &mut App) -> bool {
+    let Some(root) = app.files.pack_root() else { return true };
+    let chosen = (0..models::TIERS.len()).find(|&i| checked(window, ID_TIER + i as i32)).map(|i| models::TIERS[i]);
+    let Some(chosen) = chosen.filter(|c| app.tier.as_deref() != Some(*c)) else { return true };
+    match models::run(&root, &["tier", chosen]) {
+        Ok(_) => {
+            app.tier = Some(chosen.to_owned());
+            restart_engine(window, app);
+            true
+        }
+        Err(err) => {
+            message(window, &format!("無法切換 charlm 等級：{err}"));
+            show_models(window, app);
+            false
+        }
+    }
+}
+
+fn enable(window: HWND, id: i32, on: bool) {
+    if let Some(control) = item(window, id) {
+        unsafe {
+            let _ = EnableWindow(control, on);
+        }
+    }
+}
+
+fn set_text(window: HWND, id: i32, text: &str) {
+    if let Some(control) = item(window, id) {
+        unsafe {
+            let _ = SetWindowTextW(control, PCWSTR(wide(text).as_ptr()));
+        }
+    }
+}
+
+/// The installed model pack, the tier, and which buttons can be used.
+fn show_models(window: HWND, app: &mut App) {
+    let root = app.files.pack_root();
+    let status = root.as_deref().and_then(models::status);
+    let info = match (&root, &status) {
+        (None, _) => "使用執行包（開發用），不支援模型包。".to_owned(),
+        (Some(_), None) => "讀不到模型狀態（bopogram.exe）。".to_owned(),
+        (Some(_), Some(s)) if app.busy => format!("正在準備模型包…（目前 {}）", s.current.as_deref().unwrap_or("無")),
+        (Some(_), Some(s)) => format!(
+            "模型版本：{}{}",
+            s.current.as_deref().unwrap_or("未安裝"),
+            s.previous.as_deref().map_or(String::new(), |p| format!("（上一版 {p}）"))
+        ),
+    };
+    set_text(window, ID_MODEL_INFO, &info);
+    app.tier = status.as_ref().and_then(|s| s.tier.clone());
+    let usable = root.is_some() && status.is_some() && !app.busy;
+    for (i, tier) in models::TIERS.iter().enumerate() {
+        let have = status.as_ref().is_some_and(|s| s.tiers.iter().any(|t| t == tier));
+        enable(window, ID_TIER + i as i32, usable && have);
+        set_checked(window, ID_TIER + i as i32, app.tier.as_deref() == Some(*tier));
+    }
+    enable(window, ID_PACK_UPDATE, usable);
+    enable(window, ID_TIER_ADD, usable && status.as_ref().is_some_and(|s| s.current.is_some()));
+    enable(window, ID_ROLLBACK, usable && status.as_ref().is_some_and(|s| s.previous.is_some()));
+}
+
+fn update_pack(window: HWND, app: &mut App) {
+    let Some(root) = app.files.pack_root() else { return };
+    let Some(zip) = models::choose_zip(window, "選擇模型包") else { return };
+    app.busy = true;
+    show_models(window, app);
+    models::start_prepare(window, root, zip);
+}
+
+/// The pack is ready in models-new: put it in place and restart the engine.
+fn pack_prepared(window: HWND, app: &mut App) {
+    app.busy = false;
+    let Some(result) = models::take_prepared() else { return };
+    let Some(root) = app.files.pack_root() else { return };
+    let done = result.and_then(|prepared| models::run(&root, &["switch"]).map(|_| prepared));
+    match done {
+        Ok(prepared) => {
+            restart_engine(window, app);
+            let version = prepared.get("version").and_then(serde_json::Value::as_str).unwrap_or("?");
+            let fell_back = prepared.get("tier_fell_back").and_then(serde_json::Value::as_bool) == Some(true);
+            let extra = if fell_back { "\n\n新的模型包沒有你選的 charlm 等級，已改用標準級。" } else { "" };
+            notice(window, &format!("已更新為模型版本 {version}，引擎已重新啟動。{extra}"));
+        }
+        Err(err) => message(window, &format!("模型包沒有更換：{err}")),
+    }
+    show_models(window, app);
+}
+
+fn add_tier(window: HWND, app: &mut App) {
+    let Some(root) = app.files.pack_root() else { return };
+    let Some(zip) = models::choose_zip(window, "選擇 charlm 等級包") else { return };
+    match models::run(&root, &["add-tier", &zip.to_string_lossy()]) {
+        Ok(_) => notice(window, "已加入。在「charlm 等級」選擇它並按「套用」即可使用。"),
+        Err(err) => message(window, &format!("沒有加入：{err}")),
+    }
+    show_models(window, app);
+}
+
+fn rollback(window: HWND, app: &mut App) {
+    let Some(root) = app.files.pack_root() else { return };
+    if !ask(window, "要回到上一版的模型嗎？\n\n目前的模型會保留為「上一版」，之後可以再切回來。個人資料不受影響。") {
+        return;
+    }
+    match models::run(&root, &["rollback"]) {
+        Ok(_) => {
+            restart_engine(window, app);
+            notice(window, "已回到上一版的模型，引擎已重新啟動。");
+        }
+        Err(err) => message(window, &format!("沒有變更：{err}")),
+    }
+    show_models(window, app);
+}
+
 /// Forget everything learned: stop the engine (or it would write the model
 /// back), delete the model, start the engine again.
 fn clear_personal(window: HWND, app: &App) {
@@ -582,7 +721,7 @@ unsafe extern "system" fn window_proc(
         (WM_COMMAND, Some(app)) => {
             match (wparam.0 & 0xFFFF) as i32 {
                 ID_OK => {
-                    if apply(window, app) {
+                    if apply(window, app) && apply_tier(window, app) {
                         unsafe {
                             let _ = DestroyWindow(window);
                         }
@@ -592,8 +731,13 @@ unsafe extern "system" fn window_proc(
                     let _ = DestroyWindow(window);
                 },
                 ID_APPLY => {
-                    apply(window, app);
+                    if apply(window, app) {
+                        apply_tier(window, app);
+                    }
                 }
+                ID_PACK_UPDATE => update_pack(window, app),
+                ID_TIER_ADD => add_tier(window, app),
+                ID_ROLLBACK => rollback(window, app),
                 ID_REVIEW => open_review(window, app),
                 ID_FOLDER => open_folder(window, app),
                 ID_RESTART => restart_engine(window, app),
@@ -602,6 +746,10 @@ unsafe extern "system" fn window_proc(
                 ID_DICTIONARY => dictionary::open(window, &app.files),
                 _ => {}
             }
+            LRESULT(0)
+        }
+        (models::WM_PACK_DONE, Some(app)) => {
+            pack_prepared(window, app);
             LRESULT(0)
         }
         (WM_TIMER, Some(app)) => {
@@ -659,10 +807,11 @@ fn main() {
 
         let files = Files::locate();
         let saved = files.load();
-        let app = Box::into_raw(Box::new(App { files, saved }));
+        let app = Box::into_raw(Box::new(App { files, saved, tier: None, busy: false }));
         set_icon(window);
         build(window, &*app);
         show(window, &(*app).saved);
+        show_models(window, &mut *app);
         show_status(window, &*app);
         SetWindowLongPtrW(window, GWLP_USERDATA, app as isize);
         SetTimer(Some(window), STATUS_TIMER, 2000, None);

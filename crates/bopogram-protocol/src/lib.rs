@@ -13,6 +13,37 @@ pub fn pipe_name(sid: &str) -> String {
     format!(r"\\.\pipe\bopogram-{sid}")
 }
 
+/// `%NAME%` replaced by the environment variable NAME, as Windows writes
+/// paths in settings files (`bopogram-host.json` is shared by every user and
+/// names each user's data as `%LOCALAPPDATA%\Bopogram\...`). An unknown
+/// name, or a lone `%`, is left as it is.
+pub fn expand_env(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find('%') {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        match after.find('%') {
+            Some(end) if end > 0 => match std::env::var(&after[..end]) {
+                Ok(value) => {
+                    out.push_str(&value);
+                    rest = &after[end + 1..];
+                }
+                Err(_) => {
+                    out.push('%');
+                    rest = after;
+                }
+            },
+            _ => {
+                out.push('%');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Field present (true) in replies made by the host itself rather than the
 /// engine: the engine cannot be reached, so the session is gone.
 pub const HOST_ERROR: &str = "host";
@@ -329,6 +360,15 @@ mod tests {
         assert_eq!(Op::Key('3').name(), "tone");
         assert_eq!(Op::Text("secret".into()).name(), "text");
         assert_eq!(Op::Context("secret".into()).name(), "context");
+    }
+
+    #[test]
+    fn environment_in_paths() {
+        std::env::set_var("BOPOGRAM_TEST_DIR", r"C:\Users\me\AppData\Local");
+        assert_eq!(expand_env(r"%BOPOGRAM_TEST_DIR%\Bopogram\data"), r"C:\Users\me\AppData\Local\Bopogram\data");
+        assert_eq!(expand_env("100% sure"), "100% sure");
+        assert_eq!(expand_env("%NO_SUCH_VAR_HERE%x"), "%NO_SUCH_VAR_HERE%x");
+        assert_eq!(expand_env("%%"), "%%");
     }
 
     #[test]

@@ -198,12 +198,28 @@ impl Files {
         std::fs::rename(&temporary, &path).map_err(|e| format!("{}: {e}", path.display()))
     }
 
+    /// The data folder when the models were installed from a model pack: the
+    /// engine's config is then `<root>\models\engine.json` and the user's data
+    /// is in `<root>\userdata` (`bopogram::pack`).
+    pub fn pack_root(&self) -> Option<PathBuf> {
+        let config = self.config.as_deref()?;
+        let models = config.parent()?;
+        let is_pack = config.file_name()? == "engine.json" && models.file_name()? == "models";
+        is_pack.then(|| models.parent().map(Path::to_path_buf)).flatten()
+    }
+
+    /// Where the user's files go, relative to the engine's config.
+    fn user_default(&self, file: &str) -> String {
+        let name = file.trim_start_matches("userdata/");
+        if self.pack_root().is_some() { format!("../userdata/{name}") } else { format!("userdata/{name}") }
+    }
+
     /// The engine's personal model, whether or not learning is on now.
     pub fn user_model(&self) -> Option<PathBuf> {
         let config = self.config.as_deref()?;
         let named = read_json(config)
             .and_then(|c| c.get("user_model")?.as_str().map(PathBuf::from))
-            .unwrap_or_else(|| PathBuf::from(DEFAULT_USER_MODEL));
+            .unwrap_or_else(|| PathBuf::from(self.user_default(DEFAULT_USER_MODEL)));
         Some(if named.is_absolute() { named } else { config.parent()?.join(named) })
     }
 
@@ -242,7 +258,9 @@ impl Files {
             .and_then(|exe| exe.parent().map(Path::to_path_buf))
             .unwrap_or_default();
         let host = read_json(&folder.join("bopogram-host.json")).unwrap_or(Value::Null);
-        let path = |name: &str| host.get(name).and_then(Value::as_str).map(PathBuf::from);
+        let path = |name: &str| {
+            host.get(name).and_then(Value::as_str).map(|v| PathBuf::from(bopogram_protocol::expand_env(v)))
+        };
         let python = path("python");
         // <prototype>\.venv\Scripts\python.exe -> <prototype>\tools\review_log.py
         let review_tool = path("review_tool")
@@ -266,6 +284,9 @@ impl Files {
     }
 
     pub fn userdata(&self) -> Option<PathBuf> {
+        if let Some(root) = self.pack_root() {
+            return Some(root.join("userdata"));
+        }
         Some(self.config.as_ref()?.parent()?.join("userdata"))
     }
 
@@ -378,8 +399,8 @@ impl Files {
                 object.insert(name.to_owned(), Value::Null);
             }
         };
-        switch("user_model", settings.learning, DEFAULT_USER_MODEL);
-        switch("typing_log", settings.typing_log, DEFAULT_TYPING_LOG);
+        switch("user_model", settings.learning, &self.user_default(DEFAULT_USER_MODEL));
+        switch("typing_log", settings.typing_log, &self.user_default(DEFAULT_TYPING_LOG));
         let text = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
         // Written beside the file and renamed, so a failure cannot leave half a config.
         let temporary = path.with_extension("json.new");
@@ -460,6 +481,25 @@ mod tests {
             review_tool: None,
             style: Some(folder.join("local").join("style.txt")),
         }
+    }
+
+    #[test]
+    fn model_pack_layout() {
+        let root = std::env::temp_dir().join(format!("bopogram-settings-pack-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("models")).unwrap();
+        std::fs::write(root.join("models").join("engine.json"), r#"{"user_model": null, "typing_log": null}"#).unwrap();
+        let bundle = files(&root);
+        let files = Files { config: Some(root.join("models").join("engine.json")), ..bundle.clone() };
+        assert_eq!(files.pack_root().as_deref(), Some(root.as_path()));
+        assert_eq!(files.userdata(), Some(root.join("userdata")));
+        // Learning switched on: the personal model goes into the data folder's userdata.
+        files.save(&Settings { learning: true, ..Settings::default() }, true).unwrap();
+        let config = read_json(&root.join("models").join("engine.json")).unwrap();
+        assert_eq!(config["user_model"], "../userdata/user.json");
+        assert_eq!(files.user_model(), Some(root.join("models").join("../userdata/user.json")));
+        // A runtime bundle is not a pack.
+        assert_eq!(bundle.pack_root(), None);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
