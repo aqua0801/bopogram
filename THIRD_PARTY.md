@@ -5,7 +5,7 @@
 
 ## 程式庫與工具
 
-Rust 程式的全部相依套件（含間接相依，共 82 個）及其授權列在 `crates/docs/licenses.md`，
+Rust 程式的全部相依套件（含間接相依）及其授權列在 `crates/docs/licenses.md`（由 `cargo metadata` 產生），
 由 `cargo deny check licenses`（`crates/deny.toml`）檢查只含允許的寬鬆授權。下表只列直接使用的主要項目。
 
 | 名稱 | 來源 | 授權 | 用途 |
@@ -20,6 +20,12 @@ Rust 程式的全部相依套件（含間接相依，共 82 個）及其授權�
 | windows（windows-rs） | https://github.com/microsoft/windows-rs | MIT OR Apache-2.0 | Windows 前端（`crates/`）：呼叫 Win32 API（具名管線、安全描述元、mutex；之後的 TSF） |
 | serde_json | https://github.com/serde-rs/json | MIT OR Apache-2.0 | Windows 前端（`crates/`）：解析與產生協定的 JSON 行 |
 | zbus（含 zvariant 等相依套件） | https://github.com/z-galaxy/zbus | MIT（相依套件多為 MIT OR Apache-2.0） | Linux 前端（`crates/bopogram-ibus`）：連到 IBus 的本機 D-Bus（unix socket），不連網路 |
+| calamine | https://github.com/tafia/calamine | MIT | `bopogram build-dict`：讀教育部辭典的 .xlsx（在使用者電腦上建置字典） |
+| zip（zip2） | https://github.com/zip-rs/zip2 | MIT（間接帶進 zlib-rs：Zlib） | `bopogram build-dict` 直接讀下載的 .zip；模型包解壓 |
+| sha2（RustCrypto） | https://github.com/RustCrypto/hashes | MIT OR Apache-2.0 | 模型包：檢查每個檔案的 SHA-256 |
+| encoding_rs（calamine 的相依套件） | https://github.com/hsivonen/encoding_rs | (Apache-2.0 OR MIT) AND BSD-3-Clause（BSD-3-Clause 為其附帶的 WHATWG 編碼資料） | 讀 .xlsx 時的文字編碼 |
+| Inno Setup 6.7 | https://jrsoftware.org/isinfo.php | Inno Setup License；6.7 起標示「Non-commercial use only」，商業用途需另購授權 | Windows 安裝檔的製作工具；安裝檔內含它的安裝與解除安裝程式。本專案為非商業開源使用 |
+| ChineseTraditional.isl（自行翻譯） | 由 Inno Setup 的 Default.isl 翻譯（`crates/installer/`） | 依 Inno Setup License：保留原著作權聲明並標明為修改版 | 安裝程式的繁體中文訊息 |
 | NumPy | https://numpy.org/ | BSD-3-Clause | 訓練階段：神經模型訓練資料的陣列檔（`training/neural/`） |
 | PyTorch（含其 CUDA 執行庫） | https://pytorch.org/ | BSD-3-Clause（CUDA 執行庫為 NVIDIA 專有授權，只在訓練機上使用，不散布） | 第 5 階段：訓練神經逐位置評分模型（`training/neural/`），不隨輸入法散布 |
 | ONNX Runtime | https://github.com/microsoft/onnxruntime | MIT | 第 5 階段：在 CPU 上執行神經模型（原型引擎的選用依賴 `onnxruntime`；訓練端用其量化工具） |
