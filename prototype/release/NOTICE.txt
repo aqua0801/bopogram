@@ -1,0 +1,36 @@
+Bopogram 模型包：出處與授權（Notices）
+========================================
+
+本模型包內的資料檔與模型由下列資料建立。程式碼以 MIT 授權（見程式安裝檔的 LICENSE）。
+This model pack contains data files and models built from the sources below.
+
+1. 字典原始檔（dict-source/，未經任何修改 / redistributed unchanged）
+   授權：創用 CC－姓名標示－禁止改作 3.0 臺灣（CC BY-ND 3.0 TW）
+   https://creativecommons.org/licenses/by-nd/3.0/tw/legalcode
+   各辭典的「公眾授權使用說明」依其要求完整保留於 dict-source/。
+   - 中華民國教育部（Ministry of Education, R.O.C.）。《重編國語辭典修訂本》（版本編號：2015_20260929）網址：http://dict.revised.moe.edu.tw/
+   - 中華民國教育部（Ministry of Education, R.O.C.）。《國語辭典簡編本》（版本編號：2014_20260929）網址：http://dict.concised.moe.edu.tw/
+   - 中華民國教育部（Ministry of Education, R.O.C.）。《成語典》（版本編號：2020_20260929）網址：http://dict.idioms.moe.edu.tw/
+   注音字典（dict.tsv）由安裝程式在使用者的電腦上，從上述原始檔建置，不隨本模型包散布。
+
+2. dict-source/dict_extra.tsv
+   - CNS 11643 中文標準交換碼全字庫（版本 20261028）。資料來源：數位發展部「全字庫」。
+     政府資料開放授權條款－第 1 版 https://data.gov.tw/license
+   - twngrams v0.1.0（taiwan-corpora/twngrams），CC0 1.0
+   - 本專案的手動讀音與打字變體（MIT）
+
+3. n-gram 語言模型（models/）與讀音機率表（reading_prior.tsv）
+   - 立法院公報。資料來源：立法院開放資料服務平台（立法院網站資料開放宣告）
+   - FineWeb2（HuggingFaceFW/fineweb-2），ODC-By 1.0 https://opendatacommons.org/licenses/by/1-0/ ；
+     另須遵守 Common Crawl 使用條款 https://commoncrawl.org/terms-of-use 。網頁原文著作權屬原作者。
+   - twngrams v0.1.0，CC0 1.0
+
+4. 字級語言模型（charlm/）
+   授權：創用 CC 姓名標示－相同方式分享 4.0 國際（CC BY-SA 4.0），見 LICENSE-models.txt。
+   訓練資料：
+   - 中文維基百科（CC BY-SA 4.0）、中文維基新聞（CC BY 2.5）：維基百科、維基新聞的貢獻者
+   - 立法院公報：立法院開放資料服務平台
+   - 司法院裁判書：司法院資料開放平台（司法院網站資料開放宣告）
+   - 行政院開放資料與新聞：行政院全球資訊網（政府資料開放授權條款－第 1 版）
+   - TWLLM-Data（yentinglin/twllm-data），Apache-2.0
+   - FineWeb2（同上）

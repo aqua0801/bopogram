@@ -106,8 +106,13 @@ bopogram-models-2026.12/
 
 ## 分工與順序
 
-1. WSL：拆分 `build_dict.py`、產生 `dict_extra.tsv`（已完成，`~/bopogram-data/dict/dict_extra.tsv`）；
-   `NOTICE`、模型包內容與 `manifest.json`、自我檢查用的預期結果。
+1. WSL（已完成）：
+   - `build_dict.py` 拆成 `extra`／`build`，`dict_extra.tsv` 在 `~/bopogram-data/dict/`；
+   - `prototype/release/`：`NOTICE.txt`、`LICENSE-models.txt`、`selftest.json`（`tools/make_selftest.py` 產生，
+     測試句集前 20 句 × 兩種模式，記錄現行引擎的輸出）；
+   - `prototype/tools/make_model_pack.py`：只用 Python 標準函式庫的打包工具，Windows 上執行
+     （`.bglm` 只有 Windows 端的 `bopogram build-lm` 能產生）。試打：17 個檔案、376 MB，zip 332 MB。
+   模型包裡的 `config.json` 照執行包原樣（模型寫成 `models/*.binary`），引擎依檔名主幹找 `models/*.bglm`。
 2. Windows：`bopogram build-dict`（Rust 移植，與 Python 版逐位元相同）、模型包的驗證與切換、回到上一版、安裝檔（Windows、Linux）、
    Rust 相依套件授權全文、設定程式的介面。
 3. 程式碼簽章（Windows SmartScreen 會警告未簽章的安裝檔）另外決定。

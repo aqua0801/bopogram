@@ -1,0 +1,245 @@
+{
+ "format": 1,
+ "cases": [
+  {
+   "bopomofo": "ㄨㄛˇ ㄗㄞˋ ㄎㄢˋ ㄎㄢˋ ㄏㄠˇ ˙ㄌㄜ",
+   "context": "",
+   "style": "formal",
+   "expect": "我再看看好了"
+  },
+  {
+   "bopomofo": "ㄨㄛˇ ㄗㄞˋ ㄐㄧㄚ ㄉㄥˇ ㄋㄧˇ",
+   "context": "",
+   "style": "formal",
+   "expect": "我在家等你"
+  },
+  {
+   "bopomofo": "ㄋㄧˇ ㄗㄞˋ ㄕㄨㄛ ㄧ ㄘˋ ㄨㄛˇ ㄇㄟˊ ㄊㄧㄥ ㄑㄧㄥ ㄔㄨˇ",
+   "context": "",
+   "style": "formal",
+   "expect": "你再說一次我沒聽清楚"
+  },
+  {
+   "bopomofo": "ㄊㄚ ㄒㄧㄢˋ ㄗㄞˋ ㄗㄞˋ ㄍㄨㄥ ㄙ ㄎㄞ ㄏㄨㄟˋ",
+   "context": "",
+   "style": "formal",
+   "expect": "他現在在公司開會"
+  },
+  {
+   "bopomofo": "ㄇㄧㄥˊ ㄊㄧㄢ ㄗㄞˋ ㄉㄚˇ ㄉㄧㄢˋ ㄏㄨㄚˋ ㄍㄟˇ ㄋㄧˇ",
+   "context": "",
+   "style": "formal",
+   "expect": "明天再打電話給你"
+  },
+  {
+   "bopomofo": "ㄉㄨㄥ ㄒㄧ ㄈㄤˋ ㄗㄞˋ ㄓㄨㄛ ㄕㄤˋ ㄐㄧㄡˋ ㄏㄠˇ",
+   "context": "",
+   "style": "formal",
+   "expect": "東西放在桌上就好"
+  },
+  {
+   "bopomofo": "ㄉㄥˇ ㄨㄛˇ ㄔ ㄨㄢˊ ㄈㄢˋ ㄗㄞˋ ㄍㄨㄛˋ ㄑㄩˋ",
+   "context": "",
+   "style": "formal",
+   "expect": "等我吃完飯再過去"
+  },
+  {
+   "bopomofo": "ㄋㄧˇ ㄗㄞˋ ㄇㄤˊ ˙ㄇㄚ",
+   "context": "",
+   "style": "formal",
+   "expect": "你在忙嗎"
+  },
+  {
+   "bopomofo": "ㄓㄜˋ ㄐㄧㄢˋ ㄕˋ ㄨㄛˇ ˙ㄇㄣ ㄓ ㄏㄡˋ ㄗㄞˋ ㄊㄠˇ ㄌㄨㄣˋ",
+   "context": "",
+   "style": "formal",
+   "expect": "這件事我們之後再討論"
+  },
+  {
+   "bopomofo": "ㄊㄚ ㄗㄞˋ ㄊㄞˊ ㄅㄟˇ ㄍㄨㄥ ㄗㄨㄛˋ ㄙㄢ ㄋㄧㄢˊ ˙ㄌㄜ",
+   "context": "",
+   "style": "formal",
+   "expect": "他在台北工作三年了"
+  },
+  {
+   "bopomofo": "ㄗㄞˋ ㄅㄨˋ ㄔㄨ ㄇㄣˊ ㄐㄧㄡˋ ㄧㄠˋ ㄔˊ ㄉㄠˋ ˙ㄌㄜ",
+   "context": "",
+   "style": "formal",
+   "expect": "在不出門就要遲到了"
+  },
+  {
+   "bopomofo": "ㄨㄛˇ ㄗㄞˋ ㄒㄧㄤˇ ㄧㄠˋ ㄅㄨˋ ㄧㄠˋ ㄗㄞˋ ㄇㄞˇ ㄧ ㄍㄜˋ",
+   "context": "",
+   "style": "formal",
+   "expect": "我在想要不要再買一個"
+  },
+  {
+   "bopomofo": "ㄊㄚ ㄆㄠˇ ˙ㄉㄜ ㄅㄧˇ ㄨㄛˇ ㄎㄨㄞˋ",
+   "context": "",
+   "style": "formal",
+   "expect": "他跑得比我快"
+  },
+  {
+   "bopomofo": "ㄓㄜˋ ㄕˋ ㄨㄛˇ ˙ㄉㄜ ㄕㄡˇ ㄐㄧ",
+   "context": "",
+   "style": "formal",
+   "expect": "這是我的手機"
+  },
+  {
+   "bopomofo": "ㄊㄚ ㄔㄤˋ ㄍㄜ ㄔㄤˋ ˙ㄉㄜ ㄏㄣˇ ㄏㄠˇ ㄊㄧㄥ",
+   "context": "",
+   "style": "formal",
+   "expect": "他唱歌唱得很好聽"
+  },
+  {
+   "bopomofo": "ㄊㄚ ㄇㄢˋ ㄇㄢˋ ˙ㄉㄜ ㄗㄡˇ ㄍㄨㄛˋ ㄑㄩˋ",
+   "context": "",
+   "style": "formal",
+   "expect": "他慢慢地走過去"
+  },
+  {
+   "bopomofo": "ㄋㄧˇ ㄕㄨㄛ ˙ㄉㄜ ㄇㄟˊ ㄘㄨㄛˋ",
+   "context": "",
+   "style": "formal",
+   "expect": "你說的沒錯"
+  },
+  {
+   "bopomofo": "ㄨㄛˇ ㄐㄩㄝˊ ˙ㄉㄜ ㄓㄜˋ ㄧㄤˋ ㄅㄨˋ ㄊㄞˋ ㄏㄠˇ",
+   "context": "",
+   "style": "formal",
+   "expect": "我覺得這樣不太好"
+  },
+  {
+   "bopomofo": "ㄊㄚ ㄍㄠ ㄒㄧㄥˋ ˙ㄉㄜ ㄊㄧㄠˋ ˙ㄌㄜ ㄑㄧˇ ㄌㄞˊ",
+   "context": "",
+   "style": "formal",
+   "expect": "他高興得跳了起來"
+  },
+  {
+   "bopomofo": "ㄓㄜˋ ㄅㄣˇ ㄕㄨ ㄒㄧㄝˇ ˙ㄉㄜ ㄏㄣˇ ㄐㄧㄥ ㄘㄞˇ",
+   "context": "",
+   "style": "formal",
+   "expect": "這本書寫得很精彩"
+  },
+  {
+   "bopomofo": "ㄨㄛˇ ㄗㄞˋ ㄎㄢˋ ㄎㄢˋ ㄏㄠˇ ˙ㄌㄜ",
+   "context": "",
+   "style": "casual",
+   "expect": "我再看看好了"
+  },
+  {
+   "bopomofo": "ㄨㄛˇ ㄗㄞˋ ㄐㄧㄚ ㄉㄥˇ ㄋㄧˇ",
+   "context": "",
+   "style": "casual",
+   "expect": "我在家等你"
+  },
+  {
+   "bopomofo": "ㄋㄧˇ ㄗㄞˋ ㄕㄨㄛ ㄧ ㄘˋ ㄨㄛˇ ㄇㄟˊ ㄊㄧㄥ ㄑㄧㄥ ㄔㄨˇ",
+   "context": "",
+   "style": "casual",
+   "expect": "你再說一次我沒聽清楚"
+  },
+  {
+   "bopomofo": "ㄊㄚ ㄒㄧㄢˋ ㄗㄞˋ ㄗㄞˋ ㄍㄨㄥ ㄙ ㄎㄞ ㄏㄨㄟˋ",
+   "context": "",
+   "style": "casual",
+   "expect": "他現在在公司開會"
+  },
+  {
+   "bopomofo": "ㄇㄧㄥˊ ㄊㄧㄢ ㄗㄞˋ ㄉㄚˇ ㄉㄧㄢˋ ㄏㄨㄚˋ ㄍㄟˇ ㄋㄧˇ",
+   "context": "",
+   "style": "casual",
+   "expect": "明天再打電話給你"
+  },
+  {
+   "bopomofo": "ㄉㄨㄥ ㄒㄧ ㄈㄤˋ ㄗㄞˋ ㄓㄨㄛ ㄕㄤˋ ㄐㄧㄡˋ ㄏㄠˇ",
+   "context": "",
+   "style": "casual",
+   "expect": "東西放在桌上就好"
+  },
+  {
+   "bopomofo": "ㄉㄥˇ ㄨㄛˇ ㄔ ㄨㄢˊ ㄈㄢˋ ㄗㄞˋ ㄍㄨㄛˋ ㄑㄩˋ",
+   "context": "",
+   "style": "casual",
+   "expect": "等我吃完飯再過去"
+  },
+  {
+   "bopomofo": "ㄋㄧˇ ㄗㄞˋ ㄇㄤˊ ˙ㄇㄚ",
+   "context": "",
+   "style": "casual",
+   "expect": "你在忙嗎"
+  },
+  {
+   "bopomofo": "ㄓㄜˋ ㄐㄧㄢˋ ㄕˋ ㄨㄛˇ ˙ㄇㄣ ㄓ ㄏㄡˋ ㄗㄞˋ ㄊㄠˇ ㄌㄨㄣˋ",
+   "context": "",
+   "style": "casual",
+   "expect": "這件事我們之後再討論"
+  },
+  {
+   "bopomofo": "ㄊㄚ ㄗㄞˋ ㄊㄞˊ ㄅㄟˇ ㄍㄨㄥ ㄗㄨㄛˋ ㄙㄢ ㄋㄧㄢˊ ˙ㄌㄜ",
+   "context": "",
+   "style": "casual",
+   "expect": "他在台北工作三年了"
+  },
+  {
+   "bopomofo": "ㄗㄞˋ ㄅㄨˋ ㄔㄨ ㄇㄣˊ ㄐㄧㄡˋ ㄧㄠˋ ㄔˊ ㄉㄠˋ ˙ㄌㄜ",
+   "context": "",
+   "style": "casual",
+   "expect": "在不出門就要遲到了"
+  },
+  {
+   "bopomofo": "ㄨㄛˇ ㄗㄞˋ ㄒㄧㄤˇ ㄧㄠˋ ㄅㄨˋ ㄧㄠˋ ㄗㄞˋ ㄇㄞˇ ㄧ ㄍㄜˋ",
+   "context": "",
+   "style": "casual",
+   "expect": "我在想要不要再買一個"
+  },
+  {
+   "bopomofo": "ㄊㄚ ㄆㄠˇ ˙ㄉㄜ ㄅㄧˇ ㄨㄛˇ ㄎㄨㄞˋ",
+   "context": "",
+   "style": "casual",
+   "expect": "他跑的比我快"
+  },
+  {
+   "bopomofo": "ㄓㄜˋ ㄕˋ ㄨㄛˇ ˙ㄉㄜ ㄕㄡˇ ㄐㄧ",
+   "context": "",
+   "style": "casual",
+   "expect": "這是我的手機"
+  },
+  {
+   "bopomofo": "ㄊㄚ ㄔㄤˋ ㄍㄜ ㄔㄤˋ ˙ㄉㄜ ㄏㄣˇ ㄏㄠˇ ㄊㄧㄥ",
+   "context": "",
+   "style": "casual",
+   "expect": "他唱歌唱的很好聽"
+  },
+  {
+   "bopomofo": "ㄊㄚ ㄇㄢˋ ㄇㄢˋ ˙ㄉㄜ ㄗㄡˇ ㄍㄨㄛˋ ㄑㄩˋ",
+   "context": "",
+   "style": "casual",
+   "expect": "他慢慢的走過去"
+  },
+  {
+   "bopomofo": "ㄋㄧˇ ㄕㄨㄛ ˙ㄉㄜ ㄇㄟˊ ㄘㄨㄛˋ",
+   "context": "",
+   "style": "casual",
+   "expect": "你說的沒錯"
+  },
+  {
+   "bopomofo": "ㄨㄛˇ ㄐㄩㄝˊ ˙ㄉㄜ ㄓㄜˋ ㄧㄤˋ ㄅㄨˋ ㄊㄞˋ ㄏㄠˇ",
+   "context": "",
+   "style": "casual",
+   "expect": "我覺得這樣不太好"
+  },
+  {
+   "bopomofo": "ㄊㄚ ㄍㄠ ㄒㄧㄥˋ ˙ㄉㄜ ㄊㄧㄠˋ ˙ㄌㄜ ㄑㄧˇ ㄌㄞˊ",
+   "context": "",
+   "style": "casual",
+   "expect": "他高興的跳了起來"
+  },
+  {
+   "bopomofo": "ㄓㄜˋ ㄅㄣˇ ㄕㄨ ㄒㄧㄝˇ ˙ㄉㄜ ㄏㄣˇ ㄐㄧㄥ ㄘㄞˇ",
+   "context": "",
+   "style": "casual",
+   "expect": "這本書寫的很精彩"
+  }
+ ]
+}

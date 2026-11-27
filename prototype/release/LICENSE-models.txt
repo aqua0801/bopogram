@@ -1,0 +1,8 @@
+The character language models in charlm/ (charlm*.bin and their .json tables)
+are licensed under the Creative Commons Attribution-ShareAlike 4.0
+International License (CC BY-SA 4.0):
+https://creativecommons.org/licenses/by-sa/4.0/legalcode
+
+charlm/ 內的字級語言模型以「創用 CC 姓名標示－相同方式分享 4.0 國際」授權。
+出處見 NOTICE.txt。
+Attribution: Bopogram contributors; training data sources are listed in NOTICE.txt.
