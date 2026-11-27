@@ -346,5 +346,5 @@ WSL 端的處理結果：ARPA 改為最短的精確 float32 文字，back-off �
 - 驗證（Windows 與 Linux）：安裝 3.8 秒（解壓、SHA-256、建字典、自我檢查 40/40），建出的 `dict.tsv` 與 Python 版逐位元相同；
   更新後等級保留、回到上一版、加入輕量級並切換；竄改一個位元組、清單外的檔案、`../` 路徑、需要更新版程式的包都會被拒絕，
   失敗時不留下 `models-new`。
-- WSL 的 `make_model_pack.py` 在 Windows 上執行時，`manifest.json` 中 charlm 的路徑會寫成反斜線（`str(Path)`），
-  與 zip 內的路徑不符而被拒絕；在 WSL 執行則正常。已回報。
+- `make_model_pack.py` 在 Windows 上產生的模型包曾因 `manifest.json` 寫成反斜線而被拒絕，已在 92c11de 修正；
+  發布用的模型包由 `installer/release.ps1` 以修正後的版本產生，並經 `pack verify` 檢查。
