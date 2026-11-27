@@ -14,8 +14,19 @@ language model and a small character-level re-ranker. Runs entirely offline.*
 
 | 平台 | 引擎 | 前端 | 狀態 |
 |---|---|---|---|
-| Windows 10／11（x64） | Rust | TSF（`bopogram-ime`） | 試用中，未簽章，尚無安裝包 |
-| Linux（x64） | Rust | IBus（`bopogram-ibus`） | 試用中（Ubuntu 24.04 虛擬機打字正常） |
+| Windows 10／11（x64） | Rust | TSF（`bopogram-ime`） | 試用版；安裝檔未簽章（SmartScreen 會警告） |
+| Linux（x64） | Rust | IBus（`bopogram-ibus`） | 試用版（Ubuntu 24.04 測試）；`.deb` 與 `.tar.gz` |
+
+## 安裝
+
+從 GitHub Releases 下載。程式與模型分開發布，各有版本；更新模型不用重裝程式。輸入法與安裝程式都不會連網，
+更新一律由你自己下載檔案。
+
+- **Windows**：`bopogram-setup-<版本>-full.exe`（程式＋模型）。之後的模型更新，在「Bopogram 設定」選擇下載的模型包。
+- **Linux**：`.deb` 或 `.tar.gz`，再安裝模型包（`bopogram pack install bopogram-models-<版本>.zip`，然後 `ibus restart`）。
+  詳見 `crates/docs/linux.md`。
+- **模型包** `bopogram-models-<版本>.zip`：n-gram 模型、標準級 charlm、教育部辭典的原始檔與使用說明。
+  安裝時會在你的電腦上從辭典原始檔建出注音字典（見下方「資料與授權」）。
 
 ## 準確率與速度
 
@@ -54,7 +65,7 @@ language model and a small character-level re-ranker. Runs entirely offline.*
 
 ## 建置
 
-**本專案不附字典與模型**（見下方「資料與授權」）。要實際使用，需要自行下載來源資料，在本機建置字典並訓練模型。
+一般使用請直接安裝 Releases 的安裝檔與模型包。以下是從原始碼建置；repo 不含字典與模型，要自己訓練需下載來源資料（見 `THIRD_PARTY.md`）。
 
 - 引擎：`cd crates && cargo build --release -p bopogram`
 - Windows 前端與安裝：見 `crates/docs/install.md`（需 MSVC 工具鏈；DLL 請先在 Windows Sandbox 測試）。
@@ -65,8 +76,11 @@ language model and a small character-level re-ranker. Runs entirely offline.*
 ## 資料與授權
 
 - **程式碼**：MIT（`LICENSE`）。Rust 相依套件的授權清單在 `crates/docs/licenses.md`（全部為寬鬆授權）。
-- **字典**：由教育部辭典（CC BY-ND 3.0 臺灣）等資料建置。授權不允許散布改作的成品，所以 repo 只含建置腳本。
-- **語言模型與語料**：不在 repo 內。各語料的來源與授權記錄在 `THIRD_PARTY.md`。
+- **字典**：由教育部《重編國語辭典修訂本》《國語辭典簡編本》《成語典》（CC BY-ND 3.0 臺灣）等資料建置。
+  授權不允許散布改作的成品，所以模型包附的是**未經修改的原始檔與其公眾授權使用說明**，字典在你的電腦上建置。
+- **模型**：模型包內的字級語言模型（charlm）以 CC BY-SA 4.0 授權；n-gram 模型與其他資料的出處見模型包的 `NOTICE.txt`。
+  語料本身不散布；來源與授權記錄在 `THIRD_PARTY.md`。
+- **Windows 安裝檔**以 Inno Setup 製作，內含其安裝與解除安裝程式（Inno Setup 6.7 起限非商業用途；本專案為非商業開源）。
 - **測試資料**：`eval/testset` 為本專案自行撰寫；`eval/devset` 取自 MozTW cc0-sentences（CC0）。
 
 ## 原創性
