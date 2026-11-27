@@ -1,6 +1,6 @@
 [package]
 name = "bopogram-ime"
-description = "Bopogram TSF text service (trial front end): keys in, composition and candidates out"
+description = "Bopogram TSF text service: keys in, composition and candidates out"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

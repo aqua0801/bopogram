@@ -17,7 +17,7 @@
       <author>Bopogram</author>
       <icon></icon>
       <layout>us</layout>
-      <longname>Bopogram</longname>
+      <longname>Bopogram 注音</longname>
       <description>Context-aware Bopomofo (Dachen layout)</description>
       <rank>0</rank>
       <symbol>注</symbol>

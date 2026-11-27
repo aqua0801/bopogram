@@ -26,7 +26,7 @@ pub const GUID_DISPLAY_ATTRIBUTE: GUID = GUID::from_u128(0x6ef85a84_f6e7_4622_b6
 pub const GUID_PHRASE_KEY: GUID = GUID::from_u128(0x33662612_0b98_4c35_8ff1_bdd963ffbc0c);
 
 /// Name shown in the language list.
-pub const DISPLAY_NAME: &str = "Bopogram 注音（試用版）";
+pub const DISPLAY_NAME: &str = "Bopogram 注音";
 /// Traditional Chinese (Taiwan).
 pub const LANGID_ZH_TW: u16 = 0x0404;
 /// The engine host, expected in the same folder as this DLL.

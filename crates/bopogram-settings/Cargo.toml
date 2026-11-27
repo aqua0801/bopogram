@@ -1,6 +1,6 @@
 [package]
 name = "bopogram-settings"
-description = "Settings window of the Bopogram trial input method"
+description = "Settings window of the Bopogram input method"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

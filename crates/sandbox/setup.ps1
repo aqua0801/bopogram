@@ -1,4 +1,4 @@
-# Runs INSIDE Windows Sandbox at logon (see prepare.ps1). Installs the trial
+﻿# Runs INSIDE Windows Sandbox at logon (see prepare.ps1). Installs the
 # input method into the sandbox and writes a log to C:\out, which the main
 # system can read. Do not run this on a real system: it registers a COM
 # class and a TSF text service machine-wide.

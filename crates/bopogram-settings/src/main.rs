@@ -1,4 +1,4 @@
-//! Settings window of the Bopogram trial input method.
+//! Settings window of the Bopogram input method.
 //!
 //! A program of its own, opened from the menu of the mode button; nothing
 //! of it is loaded into other applications. It edits two local files:
