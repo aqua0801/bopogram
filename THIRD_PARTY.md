@@ -5,6 +5,9 @@
 
 ## 程式庫與工具
 
+Rust 程式的全部相依套件（含間接相依，共 82 個）及其授權列在 `crates/docs/licenses.md`，
+由 `cargo deny check licenses`（`crates/deny.toml`）檢查只含允許的寬鬆授權。下表只列直接使用的主要項目。
+
 | 名稱 | 來源 | 授權 | 用途 |
 |---|---|---|---|
 | OpenCC | https://github.com/BYVoid/OpenCC | Apache-2.0 | 訓練階段：語料簡轉繁、轉台灣用語（`training/`） |
@@ -16,7 +19,7 @@
 | unar（The Unarchiver） | https://theunarchiver.com/command-line-tools | LGPL-2.1-or-later | 訓練階段：以外部命令列工具解壓 RAR，不連結、不散布 |
 | windows（windows-rs） | https://github.com/microsoft/windows-rs | MIT OR Apache-2.0 | Windows 前端（`crates/`）：呼叫 Win32 API（具名管線、安全描述元、mutex；之後的 TSF） |
 | serde_json | https://github.com/serde-rs/json | MIT OR Apache-2.0 | Windows 前端（`crates/`）：解析與產生協定的 JSON 行 |
-| zbus（含 zvariant 等相依套件） | https://github.com/dbus2/zbus | MIT（相依套件多為 MIT OR Apache-2.0） | Linux 前端（`crates/bopogram-ibus`）：連到 IBus 的本機 D-Bus（unix socket），不連網路 |
+| zbus（含 zvariant 等相依套件） | https://github.com/z-galaxy/zbus | MIT（相依套件多為 MIT OR Apache-2.0） | Linux 前端（`crates/bopogram-ibus`）：連到 IBus 的本機 D-Bus（unix socket），不連網路 |
 | NumPy | https://numpy.org/ | BSD-3-Clause | 訓練階段：神經模型訓練資料的陣列檔（`training/neural/`） |
 | PyTorch（含其 CUDA 執行庫） | https://pytorch.org/ | BSD-3-Clause（CUDA 執行庫為 NVIDIA 專有授權，只在訓練機上使用，不散布） | 第 5 階段：訓練神經逐位置評分模型（`training/neural/`），不隨輸入法散布 |
 | ONNX Runtime | https://github.com/microsoft/onnxruntime | MIT | 第 5 階段：在 CPU 上執行神經模型（原型引擎的選用依賴 `onnxruntime`；訓練端用其量化工具） |

@@ -64,7 +64,7 @@ language model and a small character-level re-ranker. Runs entirely offline.*
 
 ## 資料與授權
 
-- **程式碼**：MIT（`LICENSE`）。
+- **程式碼**：MIT（`LICENSE`）。Rust 相依套件的授權清單在 `crates/docs/licenses.md`（全部為寬鬆授權）。
 - **字典**：由教育部辭典（CC BY-ND 3.0 臺灣）等資料建置。授權不允許散布改作的成品，所以 repo 只含建置腳本。
 - **語言模型與語料**：不在 repo 內。各語料的來源與授權記錄在 `THIRD_PARTY.md`。
 - **測試資料**：`eval/testset` 為本專案自行撰寫；`eval/devset` 取自 MozTW cc0-sentences（CC0）。
