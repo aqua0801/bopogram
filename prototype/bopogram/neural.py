@@ -26,7 +26,7 @@ class NeuralScorer:
         import onnxruntime as ort
 
         # Official builds send usage events through Windows' event tracing; turn
-        # them off before any session exists (no network functions, CLAUDE.md).
+        # them off before any session exists (the input method has no network functions).
         ort.disable_telemetry_events()
 
         model_path = Path(model_path)

@@ -70,7 +70,7 @@ class CharLMScorer:
             import onnxruntime as ort
 
             # Official builds send usage events through Windows' event tracing; turn
-            # them off before any session exists (no network functions, CLAUDE.md).
+            # them off before any session exists (the input method has no network functions).
             ort.disable_telemetry_events()
             opts = ort.SessionOptions()
             opts.intra_op_num_threads = threads
